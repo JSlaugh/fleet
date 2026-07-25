@@ -63,6 +63,10 @@ export class StateStore {
         ticket.sessionLive = false;
         changed = true;
       }
+      if (ticket.status === "running") {
+        ticket.status = "stalled";
+        changed = true;
+      }
     }
     if (changed) this.write();
   }
