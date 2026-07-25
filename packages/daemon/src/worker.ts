@@ -1,10 +1,10 @@
 import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { WorkerResultSchema, type ProjectConfig, type WorkerResult } from "@fleet/shared";
-import type { ReadyIssue } from "./github.ts";
 import type { Journal } from "./journal.ts";
 import { log } from "./log.ts";
+import { MessageQueue } from "./queue.ts";
 
 const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>;
 
@@ -17,89 +17,126 @@ Contract:
 - Work only within this worktree. The branch already exists and is checked out; never switch branches, never push, and never open PRs — the orchestrator handles those.
 - Commit incrementally with clear conventional-commit messages as you complete coherent steps.
 - Run the project's own checks (tests, typecheck, lint) before declaring completion when they exist.
-- If you hit a decision the issue does not answer, do NOT guess: finish with status "blocked" and put the specific question in blockedReason.
+- If you hit a decision the issue does not answer, do NOT guess: finish with status "blocked" and put the specific question in blockedReason. A human may answer in a follow-up message — then continue the work.
 - Your final structured output: status "completed" requires prTitle and prBody; status "blocked" requires blockedReason.
 `.trim();
 
-export interface WorkerRunResult {
-  sessionId?: string;
-  costUsd: number;
+export interface TurnResult {
   result?: WorkerResult;
   errorSubtype?: string;
 }
 
-export async function runWorker(opts: {
-  project: ProjectConfig;
-  issue: ReadyIssue;
-  comments: string[];
-  worktreePath: string;
-  journal: Journal;
-  onActivity: () => void;
-  timeoutMinutes: number;
-  claudeExecutable?: string;
-}): Promise<WorkerRunResult> {
-  const { project, issue, comments, worktreePath, journal, onActivity } = opts;
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), opts.timeoutMinutes * 60_000);
+export class WorkerSession {
+  readonly abortController = new AbortController();
+  private readonly input = new MessageQueue<SDKUserMessage>();
+  private readonly iterator: AsyncIterator<SDKMessage>;
+  sessionId?: string;
+  costUsd = 0;
 
-  const promptParts = [
+  constructor(
+    private readonly opts: {
+      project: ProjectConfig;
+      scope: string;
+      worktreePath: string;
+      journal: Journal;
+      onActivity: () => void;
+      canUseTool: CanUseTool;
+      claudeExecutable?: string;
+      resumeSessionId?: string;
+    },
+  ) {
+    const q = query({
+      prompt: this.input,
+      options: {
+        cwd: opts.worktreePath,
+        model: opts.project.model,
+        abortController: this.abortController,
+        pathToClaudeCodeExecutable: opts.claudeExecutable,
+        resume: opts.resumeSessionId,
+        permissionMode: "acceptEdits",
+        allowedTools: opts.project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
+        canUseTool: opts.canUseTool,
+        settingSources: ["project"],
+        systemPrompt: { type: "preset", preset: "claude_code", append: WORKER_CONTRACT },
+        outputFormat: { type: "json_schema", schema: WORKER_OUTPUT_SCHEMA },
+      },
+    });
+    this.iterator = q[Symbol.asyncIterator]();
+    this.sessionId = opts.resumeSessionId;
+  }
+
+  send(text: string): void {
+    this.input.push({
+      type: "user",
+      message: { role: "user", content: text },
+      parent_tool_use_id: null,
+      session_id: this.sessionId ?? "",
+    });
+  }
+
+  async nextResult(timeoutMs: number): Promise<TurnResult> {
+    const timer = setTimeout(() => this.abortController.abort(), timeoutMs);
+    try {
+      for (;;) {
+        const { value: message, done } = await this.iterator.next();
+        if (done || !message) return { errorSubtype: "stream_ended_without_result" };
+        this.opts.onActivity();
+        this.opts.journal.append(summarize(message));
+        if (message.type === "system" && message.subtype === "init") {
+          this.sessionId = message.session_id;
+          log("worker", `${this.opts.scope}: session ${this.sessionId} started`);
+        }
+        if (message.type === "result") {
+          this.costUsd = message.total_cost_usd;
+          if (message.subtype === "success") {
+            const parsed = WorkerResultSchema.safeParse(
+              (message as { structured_output?: unknown }).structured_output,
+            );
+            if (parsed.success) return { result: normalizeResult(parsed.data) };
+            return { errorSubtype: "invalid_structured_output" };
+          }
+          return { errorSubtype: message.subtype };
+        }
+      }
+    } catch (err) {
+      if (err instanceof AbortError || this.abortController.signal.aborted) {
+        return { errorSubtype: `timed out after ${Math.round(timeoutMs / 60_000)} minutes` };
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  close(): void {
+    this.input.close();
+    const backstop = setTimeout(() => this.abortController.abort(), 10_000);
+    backstop.unref?.();
+  }
+}
+
+export function buildIssuePrompt(project: ProjectConfig, issue: { number: number; title: string; body: string }, comments: string[]): string {
+  const parts = [
     `GitHub issue #${issue.number} in ${project.githubRepo}: ${issue.title}`,
     issue.body || "(no description)",
   ];
   if (comments.length > 0) {
-    promptParts.push(`## Discussion on the issue\n\n${comments.join("\n\n")}`);
+    parts.push(`## Discussion on the issue\n\n${comments.join("\n\n")}`);
   }
+  return parts.join("\n\n");
+}
 
-  const q = query({
-    prompt: promptParts.join("\n\n"),
-    options: {
-      cwd: worktreePath,
-      model: project.model,
-      abortController,
-      pathToClaudeCodeExecutable: opts.claudeExecutable,
-      permissionMode: "acceptEdits",
-      allowedTools: project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
-      disallowedTools: ["WebFetch", "WebSearch"],
-      settingSources: ["project"],
-      systemPrompt: { type: "preset", preset: "claude_code", append: WORKER_CONTRACT },
-      outputFormat: { type: "json_schema", schema: WORKER_OUTPUT_SCHEMA },
-    },
-  });
+function unescapeNewlines(text: string): string {
+  return text.replaceAll("\\n", "\n").replaceAll("\\t", "\t");
+}
 
-  let sessionId: string | undefined;
-  let costUsd = 0;
-
-  try {
-    for await (const message of q) {
-      onActivity();
-      journal.append(summarize(message));
-      if (message.type === "system" && message.subtype === "init") {
-        sessionId = message.session_id;
-        log("worker", `${project.name}#${issue.number}: session ${sessionId} started`);
-      }
-      if (message.type === "result") {
-        costUsd = message.total_cost_usd;
-        if (message.subtype === "success") {
-          const parsed = WorkerResultSchema.safeParse(
-            (message as { structured_output?: unknown }).structured_output,
-          );
-          if (parsed.success) {
-            return { sessionId, costUsd, result: parsed.data };
-          }
-          return { sessionId, costUsd, errorSubtype: "invalid_structured_output" };
-        }
-        return { sessionId, costUsd, errorSubtype: message.subtype };
-      }
-    }
-    return { sessionId, costUsd, errorSubtype: "stream_ended_without_result" };
-  } catch (err) {
-    if (err instanceof AbortError || abortController.signal.aborted) {
-      return { sessionId, costUsd, errorSubtype: `timed out after ${opts.timeoutMinutes} minutes` };
-    }
-    throw err;
-  } finally {
-    clearTimeout(timeout);
-  }
+function normalizeResult(result: WorkerResult): WorkerResult {
+  return {
+    ...result,
+    summary: unescapeNewlines(result.summary),
+    blockedReason: result.blockedReason ? unescapeNewlines(result.blockedReason) : result.blockedReason,
+    prBody: result.prBody ? unescapeNewlines(result.prBody) : result.prBody,
+  };
 }
 
 function summarize(message: SDKMessage): Record<string, unknown> {

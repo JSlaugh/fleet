@@ -48,4 +48,15 @@ export class StateStore {
     this.upsert(updated);
     return updated;
   }
+
+  clearLiveFlags(): void {
+    let changed = false;
+    for (const ticket of this.state.tickets) {
+      if (ticket.sessionLive) {
+        ticket.sessionLive = false;
+        changed = true;
+      }
+    }
+    if (changed) this.write();
+  }
 }

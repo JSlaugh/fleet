@@ -5,6 +5,7 @@ import { formatCost } from "../lib/api.ts";
 const props = defineProps<{
   ticket: BoardTicket;
   selected: boolean;
+  pendingApprovals?: number;
 }>();
 
 const emit = defineEmits<{
@@ -50,6 +51,18 @@ const priorityShort = (label: string) => label.replace("fleet:", "");
     <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
       <span class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
         {{ ticket.project }}#{{ ticket.issueNumber }}
+      </span>
+      <span
+        v-if="ticket.record?.sessionLive"
+        class="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
+      >
+        live
+      </span>
+      <span
+        v-if="pendingApprovals"
+        class="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+      >
+        {{ pendingApprovals }} approval{{ pendingApprovals === 1 ? "" : "s" }}
       </span>
       <span
         v-if="ticket.record?.status === 'stalled'"

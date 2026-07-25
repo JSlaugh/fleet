@@ -6,6 +6,7 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { WebSocketServer } from "ws";
 import { PRIORITY_LABELS, type JournalEntry, type TicketDetail } from "@fleet/shared";
+import type { ApprovalManager } from "./approvals.ts";
 import { setPriority } from "./github.ts";
 import { log, logError } from "./log.ts";
 import type { FleetLoop } from "./loop.ts";
@@ -15,10 +16,11 @@ export function startServer(opts: {
   port: number;
   loop: FleetLoop;
   state: StateStore;
+  approvals: ApprovalManager;
   dataDir: string;
   dashboardDist: string;
 }): void {
-  const { port, loop, state, dataDir, dashboardDist } = opts;
+  const { port, loop, state, approvals, dataDir, dashboardDist } = opts;
   const app = new Hono();
 
   app.get("/api/board", (c) => c.json({ tickets: loop.getBoard(), updatedAt: new Date().toISOString() }));
@@ -44,6 +46,39 @@ export function startServer(opts: {
     return c.json({ ok: true });
   });
 
+  app.post("/api/tickets/:project/:issue/reply", async (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    const { message } = await c.req.json<{ message: string }>();
+    if (typeof message !== "string" || message.trim().length === 0) {
+      return c.json({ error: "message is required" }, 400);
+    }
+    try {
+      const mode = await loop.reply(projectName, issueNumber, message.trim());
+      return c.json({ ok: true, mode });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
+  });
+
+  app.get("/api/approvals", (c) => c.json({ approvals: approvals.list() }));
+
+  app.post("/api/approvals/:id", async (c) => {
+    const { decision, message } = await c.req.json<{ decision: "allow" | "deny" | "answer"; message?: string }>();
+    if (decision !== "allow" && decision !== "deny" && decision !== "answer") {
+      return c.json({ error: "decision must be allow, deny, or answer" }, 400);
+    }
+    if (decision === "answer" && (typeof message !== "string" || message.trim().length === 0)) {
+      return c.json({ error: "answer requires a message" }, 400);
+    }
+    const settled = approvals.resolve(c.req.param("id"), {
+      allowed: decision === "allow",
+      message: decision === "answer" ? message?.trim() : undefined,
+    });
+    if (!settled) return c.json({ error: "approval not found (already settled or timed out)" }, 404);
+    return c.json({ ok: true });
+  });
+
   if (existsSync(dashboardDist)) {
     app.use("*", serveStatic({ root: relative(process.cwd(), dashboardDist).replaceAll("\\", "/") || "." }));
     app.notFound((c) => c.html(readFileSync(join(dashboardDist, "index.html"), "utf8")));
@@ -63,12 +98,14 @@ export function startServer(opts: {
     }
   });
 
-  loop.events.on("board", () => {
-    const payload = JSON.stringify({ type: "board-updated" });
+  const broadcast = (type: string) => {
+    const payload = JSON.stringify({ type });
     for (const client of wss.clients) {
       if (client.readyState === client.OPEN) client.send(payload);
     }
-  });
+  };
+  loop.events.on("board", () => broadcast("board-updated"));
+  approvals.events.on("approvals", () => broadcast("approvals-updated"));
 
   log("server", `dashboard + API listening on http://localhost:${port}`);
 }

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ApprovalManager } from "./approvals.ts";
 import { loadConfig } from "./config.ts";
 import { ensureLabels } from "./github.ts";
 import { FleetLoop } from "./loop.ts";
@@ -41,7 +42,9 @@ async function main(): Promise<void> {
   const dryRun = args.includes("--dry-run");
   const dataDir = join(configDir, config.dataDir);
   const state = new StateStore(dataDir);
-  const loop = new FleetLoop(config, state, dataDir, dryRun);
+  state.clearLiveFlags();
+  const approvals = new ApprovalManager();
+  const loop = new FleetLoop(config, state, dataDir, approvals, dryRun);
 
   log("daemon", `fleet daemon starting — ${config.projects.length} project(s), poll every ${config.pollIntervalSeconds}s${dryRun ? " [dry-run]" : ""}${once ? " [once]" : ""}`);
 
@@ -53,7 +56,7 @@ async function main(): Promise<void> {
   }
 
   const dashboardDist = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "dashboard", "dist");
-  startServer({ port: config.dashboardPort, loop, state, dataDir, dashboardDist });
+  startServer({ port: config.dashboardPort, loop, state, approvals, dataDir, dashboardDist });
 
   for (;;) {
     await loop.cycle();

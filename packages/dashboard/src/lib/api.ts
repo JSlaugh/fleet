@@ -1,4 +1,4 @@
-import type { BoardTicket, TicketDetail } from "@fleet/shared";
+import type { BoardTicket, PendingApproval, TicketDetail } from "@fleet/shared";
 
 export interface BoardResponse {
   tickets: BoardTicket[];
@@ -28,13 +28,45 @@ export async function setTicketPriority(project: string, issueNumber: number, pr
   );
 }
 
-export function connectBoardSocket(onUpdate: () => void, onStatus: (connected: boolean) => void): () => void {
+export async function sendReply(project: string, issueNumber: number, message: string): Promise<{ mode: string }> {
+  const res = await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/reply`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  const body = (await res.json()) as { mode?: string; error?: string };
+  if (!res.ok) throw new Error(body.error ?? `reply failed: ${res.status}`);
+  return { mode: body.mode ?? "sent" };
+}
+
+export function fetchApprovals(): Promise<{ approvals: PendingApproval[] }> {
+  return fetch("/api/approvals").then((res) => json<{ approvals: PendingApproval[] }>(res));
+}
+
+export async function resolveApproval(id: string, decision: "allow" | "deny" | "answer", message?: string): Promise<void> {
+  await json(
+    await fetch(`/api/approvals/${encodeURIComponent(id)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, message }),
+    }),
+  );
+}
+
+export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (connected: boolean) => void): () => void {
   let ws: WebSocket | undefined;
   let closed = false;
   const open = () => {
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
     ws.onopen = () => onStatus(true);
-    ws.onmessage = () => onUpdate();
+    ws.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(String(event.data)) as { type?: string };
+        onEvent(parsed.type ?? "unknown");
+      } catch {
+        onEvent("unknown");
+      }
+    };
     ws.onclose = () => {
       onStatus(false);
       if (!closed) setTimeout(open, 3000);

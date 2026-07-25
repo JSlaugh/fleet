@@ -37,6 +37,8 @@ export const FleetConfigSchema = z.object({
   worktreeRoot: z.string().min(1),
   stalledAfterMinutes: z.number().int().min(1).default(10),
   ticketTimeoutMinutes: z.number().int().min(1).default(30),
+  approvalTimeoutMinutes: z.number().int().min(1).default(10),
+  replyWaitMinutes: z.number().int().min(1).default(60),
   claudeExecutable: z.string().optional(),
   dataDir: z.string().default(".fleet"),
   projects: z.array(ProjectConfigSchema).min(1),
@@ -75,6 +77,38 @@ export interface TicketRecord {
   costUsd: number;
   prUrl?: string;
   lastSummary?: string;
+  sessionLive?: boolean;
+}
+
+export interface PendingApproval {
+  id: string;
+  project: string;
+  issueNumber: number;
+  toolName: string;
+  kind: "permission" | "question";
+  input: unknown;
+  createdAt: string;
+}
+
+export interface WorkerQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface WorkerQuestion {
+  question: string;
+  header?: string;
+  options?: WorkerQuestionOption[];
+  multiSelect?: boolean;
+}
+
+export function parseWorkerQuestions(input: unknown): WorkerQuestion[] {
+  if (typeof input !== "object" || input === null) return [];
+  const questions = (input as { questions?: unknown }).questions;
+  if (!Array.isArray(questions)) return [];
+  return questions.filter(
+    (q): q is WorkerQuestion => typeof q === "object" && q !== null && typeof (q as WorkerQuestion).question === "string",
+  );
 }
 
 export interface FleetState {
