@@ -1,7 +1,7 @@
 import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
 import type { CanUseTool, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { WorkerResultSchema, type ProjectConfig, type WorkerResult } from "@fleet/shared";
+import { WorkerResultSchema, type ModelUsageSummary, type ProjectConfig, type WorkerResult } from "@fleet/shared";
 import type { Journal } from "./journal.ts";
 import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
@@ -32,6 +32,8 @@ export class WorkerSession {
   private readonly iterator: AsyncIterator<SDKMessage>;
   sessionId?: string;
   costUsd = 0;
+  model?: string;
+  modelUsage?: Record<string, ModelUsageSummary>;
 
   constructor(
     private readonly opts: {
@@ -39,7 +41,7 @@ export class WorkerSession {
       scope: string;
       worktreePath: string;
       journal: Journal;
-      onActivity: () => void;
+      onActivity: (note?: string) => void;
       canUseTool: CanUseTool;
       claudeExecutable?: string;
       resumeSessionId?: string;
@@ -80,14 +82,17 @@ export class WorkerSession {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
         if (done || !message) return { errorSubtype: "stream_ended_without_result" };
-        this.opts.onActivity();
-        this.opts.journal.append(summarize(message));
+        const entry = summarize(message);
+        this.opts.onActivity(activityNote(entry));
+        this.opts.journal.append(entry);
         if (message.type === "system" && message.subtype === "init") {
           this.sessionId = message.session_id;
-          log("worker", `${this.opts.scope}: session ${this.sessionId} started`);
+          this.model = message.model;
+          log("worker", `${this.opts.scope}: session ${this.sessionId} started (${message.model})`);
         }
         if (message.type === "result") {
           this.costUsd = message.total_cost_usd;
+          this.modelUsage = summarizeModelUsage(message.modelUsage);
           if (message.subtype === "success") {
             const parsed = WorkerResultSchema.safeParse(
               (message as { structured_output?: unknown }).structured_output,
@@ -124,6 +129,26 @@ export function buildIssuePrompt(project: ProjectConfig, issue: { number: number
     parts.push(`## Discussion on the issue\n\n${comments.join("\n\n")}`);
   }
   return parts.join("\n\n");
+}
+
+function activityNote(entry: Record<string, unknown>): string | undefined {
+  if (entry.type !== "assistant") return undefined;
+  const tools = entry.tools as string[] | undefined;
+  const text = entry.text as string | undefined;
+  if (text && text.trim()) return text.trim().slice(0, 200);
+  if (tools && tools.length > 0) return `using ${[...new Set(tools)].join(", ")}`;
+  return undefined;
+}
+
+function summarizeModelUsage(
+  usage: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }> | undefined,
+): Record<string, ModelUsageSummary> | undefined {
+  if (!usage) return undefined;
+  const out: Record<string, ModelUsageSummary> = {};
+  for (const [model, u] of Object.entries(usage)) {
+    out[model] = { inputTokens: u.inputTokens, outputTokens: u.outputTokens, costUsd: u.costUSD };
+  }
+  return out;
 }
 
 function unescapeNewlines(text: string): string {

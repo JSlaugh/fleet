@@ -14,7 +14,7 @@ export class StateStore {
 
   private read(): FleetState {
     try {
-      return JSON.parse(readFileSync(this.filePath, "utf8")) as FleetState;
+      return JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, "")) as FleetState;
     } catch {
       return { tickets: [] };
     }
@@ -47,6 +47,13 @@ export class StateStore {
     const updated = { ...record, ...patch };
     this.upsert(updated);
     return updated;
+  }
+
+  remove(project: string, issueNumber: number): void {
+    const index = this.state.tickets.findIndex((t) => t.project === project && t.issueNumber === issueNumber);
+    if (index === -1) return;
+    this.state.tickets.splice(index, 1);
+    this.write();
   }
 
   clearLiveFlags(): void {

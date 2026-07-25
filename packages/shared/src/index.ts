@@ -78,6 +78,20 @@ export interface TicketRecord {
   prUrl?: string;
   lastSummary?: string;
   sessionLive?: boolean;
+  model?: string;
+  modelUsage?: Record<string, ModelUsageSummary>;
+  lastActivityNote?: string;
+}
+
+export interface ModelUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+}
+
+export function shortModelName(model: string | undefined): string {
+  if (!model) return "";
+  return model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
 
 export interface PendingApproval {

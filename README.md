@@ -41,5 +41,7 @@ See `fleet.config.example.json`. Per project: `repoPath` (local clone), `githubR
 
 - ~~Phase 0: walking-skeleton daemon, no UI.~~ Done — verified end-to-end (issue → worker → PR).
 - ~~Phase 1: REST/WS API, Vue dashboard (board + ticket detail).~~ Done.
-- Phase 2: needs-input steering (reply into live sessions), `canUseTool` approval flow, approvals inbox.
-- Phase 3: stuck-detection tuning, periodic transcript summaries, cost dashboards, worktree cleanup.
+- ~~Phase 2: needs-input steering, approvals inbox, worker questions answered from the dashboard.~~ Done.
+- ~~Phase 3: model visibility, live activity notes, stall recovery, merged-worktree cleanup, cost totals.~~ Done.
+
+Per-project `model` in the config overrides the worker model (e.g. `"model": "claude-sonnet-5"`); unset means the Claude CLI's configured default. The model actually used shows on each board card and in the ticket detail, with a per-model token/cost breakdown after each run.

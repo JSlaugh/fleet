@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { BoardTicket, TicketDetail } from "@fleet/shared";
+import { shortModelName } from "@fleet/shared";
 import { fetchTicket, formatCost, formatTime, sendReply } from "../lib/api.ts";
+
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
 
 const props = defineProps<{
   ticket: BoardTicket;
@@ -88,9 +93,19 @@ onUnmounted(() => clearInterval(timer));
           Pull request
         </a>
         <span v-if="detail?.record?.branch">branch {{ detail.record.branch }}</span>
+        <span v-if="detail?.record?.model">model {{ shortModelName(detail.record.model) }}</span>
         <span v-if="formatCost(detail?.record?.costUsd)">{{ formatCost(detail?.record?.costUsd) }}</span>
         <span v-if="detail?.record?.lastActivityAt">active {{ formatTime(detail.record.lastActivityAt) }}</span>
       </div>
+      <dl
+        v-if="detail?.record?.modelUsage"
+        class="mt-2 space-y-0.5 text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        <div v-for="(usage, model) in detail.record.modelUsage" :key="model" class="flex gap-2">
+          <dt class="font-medium text-neutral-600 dark:text-neutral-300">{{ shortModelName(String(model)) }}</dt>
+          <dd>{{ formatTokens(usage.inputTokens) }} in / {{ formatTokens(usage.outputTokens) }} out · {{ formatCost(usage.costUsd) || "&lt;$0.01" }}</dd>
+        </div>
+      </dl>
       <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
         {{ detail.record.lastSummary }}
       </p>

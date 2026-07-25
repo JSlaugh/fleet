@@ -51,6 +51,11 @@ async function load() {
 
 const projects = computed(() => [...new Set(tickets.value.map((t) => t.project))].sort());
 
+const totalCost = computed(() => {
+  const sum = visibleTickets.value.reduce((acc, t) => acc + (t.record?.costUsd ?? 0), 0);
+  return sum > 0 ? `$${sum.toFixed(2)}` : "";
+});
+
 const visibleTickets = computed(() =>
   projectFilter.value ? tickets.value.filter((t) => t.project === projectFilter.value) : tickets.value,
 );
@@ -159,6 +164,7 @@ onUnmounted(() => {
       </button>
       <div class="flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-500">
         <span v-if="error" class="text-red-600 dark:text-red-400">{{ error }}</span>
+        <span v-if="totalCost" :title="'Total cost of tickets on the board'">Σ {{ totalCost }}</span>
         <span v-if="updatedAt">updated {{ formatTime(updatedAt) }}</span>
         <span class="flex items-center gap-1.5">
           <span class="size-2 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-neutral-300 dark:bg-neutral-700'" aria-hidden="true"></span>

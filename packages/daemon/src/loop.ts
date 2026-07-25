@@ -2,9 +2,11 @@ import { EventEmitter } from "node:events";
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ProjectConfig, type TicketRecord } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
+import { run } from "./exec.ts";
 import {
   createPullRequest,
   getIssueComments,
+  getPrState,
   listFleetIssues,
   swapLabel,
   toBoardTicket,
@@ -15,7 +17,7 @@ import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
 import { StateStore } from "./state.ts";
 import { WorkerSession, buildIssuePrompt } from "./worker.ts";
-import { createWorktree, hasCommits, pushBranch, type Worktree } from "./worktree.ts";
+import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
@@ -59,6 +61,8 @@ export class FleetLoop {
         .filter((t): t is BoardTicket => t !== null),
     );
     this.emitBoard();
+
+    await this.cleanupFinished(project, issues);
 
     const activeCount = [...this.running.keys()].filter((k) => k.startsWith(`${project.name}#`)).length;
     const capacity = project.maxConcurrent - activeCount;
@@ -133,8 +137,13 @@ export class FleetLoop {
       scope: key,
       worktreePath: worktree.path,
       journal,
-      onActivity: () => {
-        this.state.update(project.name, issue.number, { lastActivityAt: new Date().toISOString() });
+      onActivity: (note) => {
+        const record = this.state.get(project.name, issue.number);
+        this.state.update(project.name, issue.number, {
+          lastActivityAt: new Date().toISOString(),
+          ...(note ? { lastActivityNote: note } : {}),
+          ...(record?.status === "stalled" ? { status: "running" as const } : {}),
+        });
         this.emitBoard();
       },
       canUseTool: this.makeCanUseTool(project, issue.number),
@@ -168,7 +177,12 @@ export class FleetLoop {
     const key = this.key(project.name, issue.number);
     for (;;) {
       const turn = await session.nextResult(this.config.ticketTimeoutMinutes * 60_000);
-      this.state.update(project.name, issue.number, { sessionId: session.sessionId, costUsd: session.costUsd });
+      this.state.update(project.name, issue.number, {
+        sessionId: session.sessionId,
+        costUsd: session.costUsd,
+        model: session.model,
+        modelUsage: session.modelUsage,
+      });
 
       if (turn.result?.status === "completed") {
         await this.finishCompleted(project, issue, worktree.path, worktree.branch, turn.result.summary, turn.result);
@@ -360,6 +374,31 @@ export class FleetLoop {
     await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
     this.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     this.emitBoard();
+  }
+
+  private async cleanupFinished(project: ProjectConfig, openIssues: { number: number }[]): Promise<void> {
+    const openNumbers = new Set(openIssues.map((i) => i.number));
+    for (const record of this.state.all()) {
+      if (record.project !== project.name) continue;
+      if (record.status !== "review" || !record.prUrl) continue;
+      if (openNumbers.has(record.issueNumber)) continue;
+      if (this.running.has(this.key(record.project, record.issueNumber))) continue;
+
+      let prState: string;
+      try {
+        prState = await getPrState(project, record.prUrl);
+      } catch (err) {
+        logError("loop", `${record.project}#${record.issueNumber}: could not check PR state`, err);
+        continue;
+      }
+      if (prState !== "MERGED" && prState !== "CLOSED") continue;
+
+      log("loop", `${record.project}#${record.issueNumber}: PR ${prState.toLowerCase()} and issue closed — cleaning up worktree + branch ${record.branch}`);
+      await removeWorktree(project, record.worktreePath);
+      await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
+      this.state.remove(record.project, record.issueNumber);
+      this.emitBoard();
+    }
   }
 
   private flagStalled(): void {

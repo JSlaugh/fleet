@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { PRIORITY_LABELS, type BoardTicket } from "@fleet/shared";
+import { computed } from "vue";
+import { PRIORITY_LABELS, shortModelName, type BoardTicket } from "@fleet/shared";
 import { formatCost } from "../lib/api.ts";
 
 const props = defineProps<{
@@ -19,6 +20,12 @@ function onPriorityChange(event: Event) {
 }
 
 const priorityShort = (label: string) => label.replace("fleet:", "");
+
+const blurb = computed(() => {
+  const record = props.ticket.record;
+  if (record?.sessionLive && record.lastActivityNote) return record.lastActivityNote;
+  return record?.lastSummary;
+});
 </script>
 
 <template>
@@ -43,10 +50,10 @@ const priorityShort = (label: string) => label.replace("fleet:", "");
       </select>
     </div>
     <p
-      v-if="ticket.record?.lastSummary"
+      v-if="blurb"
       class="mt-1.5 line-clamp-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400"
     >
-      {{ ticket.record.lastSummary }}
+      {{ blurb }}
     </p>
     <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
       <span class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
@@ -75,6 +82,12 @@ const priorityShort = (label: string) => label.replace("fleet:", "");
         class="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
       >
         failed
+      </span>
+      <span
+        v-if="shortModelName(ticket.record?.model)"
+        class="rounded bg-violet-100 px-1.5 py-0.5 font-medium text-violet-800 dark:bg-violet-900 dark:text-violet-200"
+      >
+        {{ shortModelName(ticket.record?.model) }}
       </span>
       <span v-if="formatCost(ticket.record?.costUsd)" class="ml-auto text-neutral-400 dark:text-neutral-500">
         {{ formatCost(ticket.record?.costUsd) }}

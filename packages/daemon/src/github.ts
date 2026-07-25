@@ -137,6 +137,15 @@ export async function createPullRequest(
   return stdout.trim().split("\n").pop()?.trim() ?? "";
 }
 
+export async function getPrState(project: ProjectConfig, prUrl: string): Promise<string> {
+  const { state } = await runJson<{ state: string }>("gh", [
+    "pr", "view", prUrl,
+    "--repo", project.githubRepo,
+    "--json", "state",
+  ]);
+  return state;
+}
+
 export async function ensureLabels(project: ProjectConfig): Promise<void> {
   for (const label of ALL_FLEET_LABELS) {
     await run("gh", [
