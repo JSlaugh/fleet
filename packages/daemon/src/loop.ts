@@ -96,6 +96,8 @@ export class FleetLoop {
         onActivity: () => {
           this.state.update(project.name, issue.number, { lastActivityAt: new Date().toISOString() });
         },
+        timeoutMinutes: this.config.ticketTimeoutMinutes,
+        claudeExecutable: this.config.claudeExecutable,
       });
 
       this.state.update(project.name, issue.number, { sessionId: run.sessionId, costUsd: run.costUsd });

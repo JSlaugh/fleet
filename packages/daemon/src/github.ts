@@ -17,10 +17,14 @@ interface GhIssueJson {
   labels: { name: string }[];
 }
 
-interface GhCommentJson {
-  id: string;
+interface RestComment {
+  id: number;
   body: string;
-  author: { login: string };
+  user: { login: string };
+}
+
+function listComments(project: ProjectConfig, issueNumber: number): Promise<RestComment[]> {
+  return runJson<RestComment[]>("gh", ["api", `repos/${project.githubRepo}/issues/${issueNumber}/comments`]);
 }
 
 export function priorityRank(labels: string[]): number {
@@ -48,14 +52,10 @@ export async function listReadyIssues(project: ProjectConfig): Promise<ReadyIssu
 }
 
 export async function getIssueComments(project: ProjectConfig, issueNumber: number): Promise<string[]> {
-  const result = await runJson<{ comments: GhCommentJson[] }>("gh", [
-    "issue", "view", String(issueNumber),
-    "--repo", project.githubRepo,
-    "--json", "comments",
-  ]);
-  return result.comments
+  const comments = await listComments(project, issueNumber);
+  return comments
     .filter((c) => !c.body.startsWith(STATUS_MARKER))
-    .map((c) => `@${c.author.login}: ${c.body}`);
+    .map((c) => `@${c.user.login}: ${c.body}`);
 }
 
 export async function swapLabel(project: ProjectConfig, issueNumber: number, from: string, to: string): Promise<void> {
@@ -69,15 +69,10 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
 
 export async function upsertStatusComment(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
   const full = `${STATUS_MARKER}\n${body}`;
-  const { comments } = await runJson<{ comments: GhCommentJson[] }>("gh", [
-    "issue", "view", String(issueNumber),
-    "--repo", project.githubRepo,
-    "--json", "comments",
-  ]);
-  const existing = comments.find((c) => c.body.startsWith(STATUS_MARKER));
+  const existing = (await listComments(project, issueNumber)).find((c) => c.body.startsWith(STATUS_MARKER));
   if (existing) {
     await run("gh", [
-      "api", `repos/${project.githubRepo}/issues/comments/${extractRestId(existing.id)}`,
+      "api", `repos/${project.githubRepo}/issues/comments/${existing.id}`,
       "-X", "PATCH", "-f", `body=${full}`,
     ]);
   } else {
@@ -87,14 +82,6 @@ export async function upsertStatusComment(project: ProjectConfig, issueNumber: n
       "--body", full,
     ]);
   }
-}
-
-function extractRestId(id: string): string {
-  if (/^\d+$/.test(id)) return id;
-  const decoded = Buffer.from(id, "base64").toString("utf8");
-  const match = decoded.match(/(\d+)$/);
-  if (!match) throw new Error(`Cannot extract REST id from comment id ${id}`);
-  return match[1]!;
 }
 
 export async function createPullRequest(

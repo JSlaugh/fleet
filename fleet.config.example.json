@@ -2,6 +2,8 @@
   "pollIntervalSeconds": 60,
   "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
   "stalledAfterMinutes": 10,
+  "ticketTimeoutMinutes": 30,
+  "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
   "projects": [
     {
       "name": "example",

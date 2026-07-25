@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { WorkerResultSchema, type ProjectConfig, type WorkerResult } from "@fleet/shared";
@@ -35,8 +35,12 @@ export async function runWorker(opts: {
   worktreePath: string;
   journal: Journal;
   onActivity: () => void;
+  timeoutMinutes: number;
+  claudeExecutable?: string;
 }): Promise<WorkerRunResult> {
   const { project, issue, comments, worktreePath, journal, onActivity } = opts;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), opts.timeoutMinutes * 60_000);
 
   const promptParts = [
     `GitHub issue #${issue.number} in ${project.githubRepo}: ${issue.title}`,
@@ -51,6 +55,8 @@ export async function runWorker(opts: {
     options: {
       cwd: worktreePath,
       model: project.model,
+      abortController,
+      pathToClaudeCodeExecutable: opts.claudeExecutable,
       permissionMode: "acceptEdits",
       allowedTools: project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
       disallowedTools: ["WebFetch", "WebSearch"],
@@ -63,28 +69,37 @@ export async function runWorker(opts: {
   let sessionId: string | undefined;
   let costUsd = 0;
 
-  for await (const message of q) {
-    onActivity();
-    journal.append(summarize(message));
-    if (message.type === "system" && message.subtype === "init") {
-      sessionId = message.session_id;
-      log("worker", `${project.name}#${issue.number}: session ${sessionId} started`);
-    }
-    if (message.type === "result") {
-      costUsd = message.total_cost_usd;
-      if (message.subtype === "success") {
-        const parsed = WorkerResultSchema.safeParse(
-          (message as { structured_output?: unknown }).structured_output,
-        );
-        if (parsed.success) {
-          return { sessionId, costUsd, result: parsed.data };
-        }
-        return { sessionId, costUsd, errorSubtype: "invalid_structured_output" };
+  try {
+    for await (const message of q) {
+      onActivity();
+      journal.append(summarize(message));
+      if (message.type === "system" && message.subtype === "init") {
+        sessionId = message.session_id;
+        log("worker", `${project.name}#${issue.number}: session ${sessionId} started`);
       }
-      return { sessionId, costUsd, errorSubtype: message.subtype };
+      if (message.type === "result") {
+        costUsd = message.total_cost_usd;
+        if (message.subtype === "success") {
+          const parsed = WorkerResultSchema.safeParse(
+            (message as { structured_output?: unknown }).structured_output,
+          );
+          if (parsed.success) {
+            return { sessionId, costUsd, result: parsed.data };
+          }
+          return { sessionId, costUsd, errorSubtype: "invalid_structured_output" };
+        }
+        return { sessionId, costUsd, errorSubtype: message.subtype };
+      }
     }
+    return { sessionId, costUsd, errorSubtype: "stream_ended_without_result" };
+  } catch (err) {
+    if (err instanceof AbortError || abortController.signal.aborted) {
+      return { sessionId, costUsd, errorSubtype: `timed out after ${opts.timeoutMinutes} minutes` };
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-  return { sessionId, costUsd, errorSubtype: "stream_ended_without_result" };
 }
 
 function summarize(message: SDKMessage): Record<string, unknown> {

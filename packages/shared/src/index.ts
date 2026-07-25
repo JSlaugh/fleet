@@ -35,6 +35,8 @@ export const FleetConfigSchema = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),
   worktreeRoot: z.string().min(1),
   stalledAfterMinutes: z.number().int().min(1).default(10),
+  ticketTimeoutMinutes: z.number().int().min(1).default(30),
+  claudeExecutable: z.string().optional(),
   dataDir: z.string().default(".fleet"),
   projects: z.array(ProjectConfigSchema).min(1),
 });

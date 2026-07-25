@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProjectConfig } from "@fleet/shared";
-import { run } from "./exec.ts";
+import { run, runShell } from "./exec.ts";
 import { log } from "./log.ts";
 
 export interface Worktree {
@@ -19,6 +19,7 @@ export async function createWorktree(
   mkdirSync(join(worktreeRoot, project.name), { recursive: true });
 
   await run("git", ["-C", project.repoPath, "fetch", "origin", project.defaultBranch], { allowFailure: true });
+  await run("git", ["-C", project.repoPath, "worktree", "remove", "--force", path], { allowFailure: true });
   await run("git", ["-C", project.repoPath, "worktree", "prune"]);
   await run("git", ["-C", project.repoPath, "branch", "-D", branch], { allowFailure: true });
   await run("git", [
@@ -30,8 +31,7 @@ export async function createWorktree(
 
   if (project.setupCommand) {
     log("worktree", `${project.name}#${issueNumber}: running setup: ${project.setupCommand}`);
-    const [cmd, ...args] = project.setupCommand.split(" ");
-    await run(cmd!, args, { cwd: path });
+    await runShell(project.setupCommand, path);
   }
   return { path, branch };
 }
