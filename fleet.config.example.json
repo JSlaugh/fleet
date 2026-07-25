@@ -1,0 +1,15 @@
+{
+  "pollIntervalSeconds": 60,
+  "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
+  "stalledAfterMinutes": 10,
+  "projects": [
+    {
+      "name": "example",
+      "repoPath": "C:/Users/j/github/example",
+      "githubRepo": "owner/example",
+      "defaultBranch": "main",
+      "maxConcurrent": 1,
+      "setupCommand": "pnpm install"
+    }
+  ]
+}

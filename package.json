@@ -1,0 +1,15 @@
+{
+  "name": "fleet",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Multi-project Claude Code backlog orchestrator: GitHub Issues in, reviewed PRs out.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "daemon": "pnpm --filter @fleet/daemon start"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "pnpm@11.5.1"
+}

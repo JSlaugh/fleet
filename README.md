@@ -1,0 +1,43 @@
+# Fleet
+
+Multi-project Claude Code backlog orchestrator: GitHub Issues in, reviewed PRs out.
+
+The daemon polls registered repos for open issues labeled `fleet:ready`, claims each one into its own git worktree, runs it as a Claude Agent SDK session, and ends every ticket at a pull request for human review. Progress and blockers are written back to the issue as a single continuously-updated status comment.
+
+## How a ticket flows
+
+1. You label an open issue `fleet:ready` (optionally `fleet:p1`/`p2`/`p3` for priority).
+2. The daemon claims it (`fleet:in-progress`), creates a worktree + `fleet/<issue>` branch, and spawns a worker session with the issue text as its prompt.
+3. The worker commits incrementally and finishes with a structured result.
+4. Completed → branch pushed, PR opened, issue labeled `fleet:review`. Blocked → issue labeled `fleet:needs-input` with the worker's question in the status comment.
+5. You review the PR (or answer the question and re-label `fleet:ready`).
+
+## Setup
+
+```bash
+pnpm install
+gh auth login        # the daemon shells out to gh for all GitHub access
+cp fleet.config.example.json fleet.config.json   # then edit
+pnpm daemon init-labels                          # creates fleet:* labels in each repo
+```
+
+## Running
+
+```bash
+pnpm daemon -- --dry-run --once   # poll and report what would be claimed; changes nothing
+pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit
+pnpm daemon                       # the real loop
+```
+
+Operational state lives in `.fleet/` (ticket records in `state.json`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
+
+## Config
+
+See `fleet.config.example.json`. Per project: `repoPath` (local clone), `githubRepo` (`owner/repo`), `defaultBranch`, `maxConcurrent`, optional `setupCommand` (run in each fresh worktree, e.g. `pnpm install`), optional `model` and `allowedTools` overrides.
+
+## Roadmap
+
+- Phase 0 (this): walking-skeleton daemon, no UI.
+- Phase 1: multi-repo parallelism hardening, REST/WS API, Vue dashboard (board + ticket detail).
+- Phase 2: needs-input steering (reply into live sessions), `canUseTool` approval flow, approvals inbox.
+- Phase 3: stuck-detection tuning, periodic transcript summaries, cost dashboards, worktree cleanup.
