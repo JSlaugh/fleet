@@ -8,7 +8,7 @@ import { MessageQueue } from "./queue.ts";
 
 const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>;
 
-const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite"];
+const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
 
 const WORKER_CONTRACT = `
 You are a fleet worker: an autonomous coding agent handling exactly one GitHub issue in a dedicated git worktree.
@@ -45,13 +45,14 @@ export class WorkerSession {
       canUseTool: CanUseTool;
       claudeExecutable?: string;
       resumeSessionId?: string;
+      model?: string;
     },
   ) {
     const q = query({
       prompt: this.input,
       options: {
         cwd: opts.worktreePath,
-        model: opts.project.model,
+        model: opts.model ?? opts.project.model,
         abortController: this.abortController,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         resume: opts.resumeSessionId,

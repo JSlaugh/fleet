@@ -1,11 +1,19 @@
 import { EventEmitter } from "node:events";
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ProjectConfig, type TicketRecord } from "@fleet/shared";
+import {
+  ELEVATE_LABEL,
+  FLEET_LABELS,
+  type BoardTicket,
+  type FleetConfig,
+  type ProjectConfig,
+  type TicketRecord,
+} from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { run } from "./exec.ts";
 import {
   createPullRequest,
   getIssueComments,
+  getIssueLabels,
   getPrState,
   listFleetIssues,
   swapLabel,
@@ -97,6 +105,7 @@ export class FleetLoop {
       const comments = await getIssueComments(project, issue.number);
       const worktree = await createWorktree(project, issue.number, this.config.worktreeRoot);
 
+      const elevated = issue.labels.includes(ELEVATE_LABEL);
       this.state.upsert({
         project: project.name,
         issueNumber: issue.number,
@@ -107,12 +116,13 @@ export class FleetLoop {
         startedAt: now,
         lastActivityAt: now,
         costUsd: 0,
+        elevated,
       });
 
       const journal = new Journal(this.dataDirPath, project.name, issue.number);
-      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title });
+      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title, elevated });
 
-      await this.runSession(project, issue, worktree, journal, undefined, buildIssuePrompt(project, issue, comments));
+      await this.runSession(project, issue, worktree, journal, undefined, buildIssuePrompt(project, issue, comments), elevated);
     } catch (err) {
       logError("loop", `${scope} failed`, err);
       try {
@@ -130,13 +140,19 @@ export class FleetLoop {
     journal: Journal,
     resumeSessionId: string | undefined,
     firstMessage: string,
+    elevated: boolean,
   ): Promise<void> {
     const key = this.key(project.name, issue.number);
+    const model = elevated ? project.elevatedModel ?? project.model : project.model;
+    if (elevated && project.elevatedModel) {
+      log("loop", `${key}: running elevated on ${project.elevatedModel}`);
+    }
     const session = new WorkerSession({
       project,
       scope: key,
       worktreePath: worktree.path,
       journal,
+      model,
       onActivity: (note) => {
         const record = this.state.get(project.name, issue.number);
         this.state.update(project.name, issue.number, {
@@ -254,9 +270,16 @@ export class FleetLoop {
     const scope = this.key(project.name, record.issueNumber);
     log("loop", `${scope}: resuming session ${record.sessionId}`);
     try {
+      let elevated = record.elevated ?? false;
+      try {
+        elevated = (await getIssueLabels(project, record.issueNumber)).includes(ELEVATE_LABEL);
+      } catch {
+        // label check is best-effort; fall back to the recorded flag
+      }
+      this.state.update(project.name, record.issueNumber, { elevated });
       await this.markWorking(project, record.issueNumber);
       const journal = new Journal(this.dataDirPath, project.name, record.issueNumber);
-      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId });
+      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated });
       await this.runSession(
         project,
         issue,
@@ -264,6 +287,7 @@ export class FleetLoop {
         journal,
         record.sessionId,
         message,
+        elevated,
       );
     } catch (err) {
       logError("loop", `${scope} resume failed`, err);

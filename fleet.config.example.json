@@ -11,7 +11,8 @@
       "githubRepo": "owner/example",
       "defaultBranch": "main",
       "maxConcurrent": 1,
-      "setupCommand": "pnpm install"
+      "setupCommand": "pnpm install",
+      "elevatedModel": "claude-opus-4-8"
     }
   ]
 }

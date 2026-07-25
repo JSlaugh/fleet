@@ -44,4 +44,14 @@ See `fleet.config.example.json`. Per project: `repoPath` (local clone), `githubR
 - ~~Phase 2: needs-input steering, approvals inbox, worker questions answered from the dashboard.~~ Done.
 - ~~Phase 3: model visibility, live activity notes, stall recovery, merged-worktree cleanup, cost totals.~~ Done.
 
-Per-project `model` in the config overrides the worker model (e.g. `"model": "claude-sonnet-5"`); unset means the Claude CLI's configured default. The model actually used shows on each board card and in the ticket detail, with a per-model token/cost breakdown after each run.
+## Skills, agents, and models
+
+Workers load each project's own `.claude/` setup (`settingSources: ['project']`): CLAUDE.md instructions, **skills** (`.claude/skills/`), and **subagents** (`.claude/agents/`) all work inside worker sessions, auto-triggering from their descriptions exactly like interactive Claude Code. The `Skill`/`Agent` tools are in the default worker allowlist.
+
+Model selection is layered, most specific wins:
+
+1. **Skills and agents in the repo** — `model:` frontmatter in a SKILL.md or agent .md pins the model for that skill/agent's work. This is the recommended place to encode "this kind of task needs this model."
+2. **`fleet:elevate` label** on an issue — runs that ticket's session on the project's `elevatedModel` (config). Add the label + reply to a blocked ticket to retry harder with a stronger model.
+3. **Per-project `model`** in the config — the session default for all of that project's workers; unset means the Claude CLI's configured default.
+
+The model actually used shows on each board card and in ticket detail, with a per-model token/cost breakdown after each run (subagent models included).

@@ -25,7 +25,9 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 const canReply = computed(() => {
   const record = detail.value?.record;
-  return Boolean(record?.sessionLive || record?.sessionId);
+  if (!record) return false;
+  if (record.sessionLive) return true;
+  return Boolean(record.sessionId) && ["needs-input", "stalled", "failed"].includes(record.status);
 });
 
 async function submitReply() {

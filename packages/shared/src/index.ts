@@ -9,11 +9,14 @@ export const FLEET_LABELS = {
 
 export const PRIORITY_LABELS = ["fleet:p1", "fleet:p2", "fleet:p3"] as const;
 
+export const ELEVATE_LABEL = "fleet:elevate";
+
 export const ALL_FLEET_LABELS: { name: string; color: string; description: string }[] = [
   { name: FLEET_LABELS.ready, color: "0e8a16", description: "Eligible for pickup by a fleet worker" },
   { name: FLEET_LABELS.inProgress, color: "fbca04", description: "A fleet worker session is on it" },
   { name: FLEET_LABELS.needsInput, color: "d93f0b", description: "Worker is blocked on a human decision" },
   { name: FLEET_LABELS.review, color: "1d76db", description: "PR open, awaiting human review" },
+  { name: ELEVATE_LABEL, color: "5319e7", description: "Run this ticket on the project's elevated model" },
   { name: "fleet:p1", color: "b60205", description: "Highest priority" },
   { name: "fleet:p2", color: "d93f0b", description: "Medium priority" },
   { name: "fleet:p3", color: "fef2c0", description: "Low priority" },
@@ -27,6 +30,7 @@ export const ProjectConfigSchema = z.object({
   maxConcurrent: z.number().int().min(1).default(1),
   setupCommand: z.string().optional(),
   model: z.string().optional(),
+  elevatedModel: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
@@ -81,6 +85,7 @@ export interface TicketRecord {
   model?: string;
   modelUsage?: Record<string, ModelUsageSummary>;
   lastActivityNote?: string;
+  elevated?: boolean;
 }
 
 export interface ModelUsageSummary {
