@@ -1,9 +1,11 @@
-import { FLEET_LABELS, type FleetConfig, type ProjectConfig } from "@fleet/shared";
+import { EventEmitter } from "node:events";
+import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ProjectConfig } from "@fleet/shared";
 import {
   createPullRequest,
   getIssueComments,
-  listReadyIssues,
+  listFleetIssues,
   swapLabel,
+  toBoardTicket,
   upsertStatusComment,
   type ReadyIssue,
 } from "./github.ts";
@@ -17,6 +19,9 @@ const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-c
 
 export class FleetLoop {
   private readonly running = new Map<string, Promise<void>>();
+  private readonly boardCache = new Map<string, BoardTicket[]>();
+  private lastBoardEmit = 0;
+  readonly events = new EventEmitter();
 
   constructor(
     private readonly config: FleetConfig,
@@ -41,12 +46,23 @@ export class FleetLoop {
   }
 
   private async cycleProject(project: ProjectConfig): Promise<void> {
+    const issues = await listFleetIssues(project);
+    this.boardCache.set(
+      project.name,
+      issues
+        .map((issue) => toBoardTicket(project, issue))
+        .filter((t): t is BoardTicket => t !== null)
+        .map((t) => ({ ...t, record: this.state.get(t.project, t.issueNumber) })),
+    );
+    this.emitBoard();
+
     const activeCount = [...this.running.keys()].filter((k) => k.startsWith(`${project.name}#`)).length;
     const capacity = project.maxConcurrent - activeCount;
     if (capacity <= 0) return;
 
-    const ready = (await listReadyIssues(project)).filter(
-      (issue) => !this.running.has(this.key(project, issue.number)),
+    const ready = issues.filter(
+      (issue) =>
+        issue.labels.includes(FLEET_LABELS.ready) && !this.running.has(this.key(project, issue.number)),
     );
     if (ready.length === 0) return;
 
@@ -95,6 +111,7 @@ export class FleetLoop {
         journal,
         onActivity: () => {
           this.state.update(project.name, issue.number, { lastActivityAt: new Date().toISOString() });
+          this.emitBoard();
         },
         timeoutMinutes: this.config.ticketTimeoutMinutes,
         claudeExecutable: this.config.claudeExecutable,
@@ -190,5 +207,23 @@ export class FleetLoop {
 
   get activeCount(): number {
     return this.running.size;
+  }
+
+  getBoard(): BoardTicket[] {
+    return [...this.boardCache.values()].flat().map((t) => ({
+      ...t,
+      record: this.state.get(t.project, t.issueNumber),
+    }));
+  }
+
+  getProject(name: string): ProjectConfig | undefined {
+    return this.config.projects.find((p) => p.name === name);
+  }
+
+  private emitBoard(): void {
+    const now = Date.now();
+    if (now - this.lastBoardEmit < 1000) return;
+    this.lastBoardEmit = now;
+    this.events.emit("board");
   }
 }

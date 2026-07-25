@@ -1,4 +1,12 @@
-import { ALL_FLEET_LABELS, FLEET_LABELS, PRIORITY_LABELS, type ProjectConfig } from "@fleet/shared";
+import {
+  ALL_FLEET_LABELS,
+  FLEET_LABELS,
+  PRIORITY_LABELS,
+  boardStatusFromLabels,
+  priorityOf,
+  type BoardTicket,
+  type ProjectConfig,
+} from "@fleet/shared";
 import { run, runJson } from "./exec.ts";
 
 const STATUS_MARKER = "<!-- fleet-status -->";
@@ -10,11 +18,16 @@ export interface ReadyIssue {
   labels: string[];
 }
 
+export interface FleetIssue extends ReadyIssue {
+  url: string;
+}
+
 interface GhIssueJson {
   number: number;
   title: string;
   body: string;
   labels: { name: string }[];
+  url: string;
 }
 
 interface RestComment {
@@ -32,14 +45,13 @@ export function priorityRank(labels: string[]): number {
   return index === -1 ? PRIORITY_LABELS.length : index;
 }
 
-export async function listReadyIssues(project: ProjectConfig): Promise<ReadyIssue[]> {
+export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssue[]> {
   const issues = await runJson<GhIssueJson[]>("gh", [
     "issue", "list",
     "--repo", project.githubRepo,
-    "--label", FLEET_LABELS.ready,
     "--state", "open",
-    "--json", "number,title,body,labels",
-    "--limit", "50",
+    "--json", "number,title,body,labels,url",
+    "--limit", "100",
   ]);
   return issues
     .map((issue) => ({
@@ -47,8 +59,32 @@ export async function listReadyIssues(project: ProjectConfig): Promise<ReadyIssu
       title: issue.title,
       body: issue.body ?? "",
       labels: issue.labels.map((l) => l.name),
+      url: issue.url,
     }))
+    .filter((issue) => issue.labels.some((l) => l.startsWith("fleet:")))
     .sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels) || a.number - b.number);
+}
+
+export function toBoardTicket(project: ProjectConfig, issue: FleetIssue): BoardTicket | null {
+  const status = boardStatusFromLabels(issue.labels);
+  if (!status) return null;
+  return {
+    project: project.name,
+    issueNumber: issue.number,
+    title: issue.title,
+    url: issue.url,
+    status,
+    priority: priorityOf(issue.labels),
+  };
+}
+
+export async function setPriority(project: ProjectConfig, issueNumber: number, priority: string | null): Promise<void> {
+  const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
+  for (const label of PRIORITY_LABELS) {
+    if (label !== priority) args.push("--remove-label", label);
+  }
+  if (priority) args.push("--add-label", priority);
+  await run("gh", args);
 }
 
 export async function getIssueComments(project: ProjectConfig, issueNumber: number): Promise<string[]> {

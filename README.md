@@ -26,8 +26,10 @@ pnpm daemon init-labels                          # creates fleet:* labels in eac
 ```bash
 pnpm daemon -- --dry-run --once   # poll and report what would be claimed; changes nothing
 pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit
-pnpm daemon                       # the real loop
+pnpm daemon                       # the real loop + dashboard at http://localhost:4400
 ```
+
+The daemon serves the dashboard (build it once with `pnpm dashboard:build`) and a REST/WS API: `GET /api/board`, `GET /api/tickets/:project/:issue` (record + transcript tail), `POST /api/tickets/:project/:issue/priority`, and `/ws` pushing `board-updated` events. For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to the daemon.
 
 Operational state lives in `.fleet/` (ticket records in `state.json`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
 
@@ -37,7 +39,7 @@ See `fleet.config.example.json`. Per project: `repoPath` (local clone), `githubR
 
 ## Roadmap
 
-- Phase 0 (this): walking-skeleton daemon, no UI.
-- Phase 1: multi-repo parallelism hardening, REST/WS API, Vue dashboard (board + ticket detail).
+- ~~Phase 0: walking-skeleton daemon, no UI.~~ Done — verified end-to-end (issue → worker → PR).
+- ~~Phase 1: REST/WS API, Vue dashboard (board + ticket detail).~~ Done.
 - Phase 2: needs-input steering (reply into live sessions), `canUseTool` approval flow, approvals inbox.
 - Phase 3: stuck-detection tuning, periodic transcript summaries, cost dashboards, worktree cleanup.

@@ -33,6 +33,7 @@ export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
 export const FleetConfigSchema = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),
+  dashboardPort: z.number().int().min(1).default(4400),
   worktreeRoot: z.string().min(1),
   stalledAfterMinutes: z.number().int().min(1).default(10),
   ticketTimeoutMinutes: z.number().int().min(1).default(30),
@@ -78,4 +79,51 @@ export interface TicketRecord {
 
 export interface FleetState {
   tickets: TicketRecord[];
+}
+
+export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review";
+
+export const BOARD_COLUMNS: { status: BoardStatus; title: string }[] = [
+  { status: "ready", title: "Ready" },
+  { status: "in-progress", title: "In progress" },
+  { status: "needs-input", title: "Needs input" },
+  { status: "review", title: "In review" },
+];
+
+export interface BoardTicket {
+  project: string;
+  issueNumber: number;
+  title: string;
+  url: string;
+  status: BoardStatus;
+  priority: string | null;
+  record?: TicketRecord;
+}
+
+export function boardStatusFromLabels(labels: string[]): BoardStatus | null {
+  if (labels.includes(FLEET_LABELS.ready)) return "ready";
+  if (labels.includes(FLEET_LABELS.inProgress)) return "in-progress";
+  if (labels.includes(FLEET_LABELS.needsInput)) return "needs-input";
+  if (labels.includes(FLEET_LABELS.review)) return "review";
+  return null;
+}
+
+export function priorityOf(labels: string[]): string | null {
+  return PRIORITY_LABELS.find((p) => labels.includes(p)) ?? null;
+}
+
+export interface JournalEntry {
+  ts: string;
+  type: string;
+  subtype?: string;
+  text?: string;
+  tools?: string[];
+  costUsd?: number;
+  [key: string]: unknown;
+}
+
+export interface TicketDetail {
+  ticket?: BoardTicket;
+  record?: TicketRecord;
+  journal: JournalEntry[];
 }

@@ -1,8 +1,10 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.ts";
 import { ensureLabels } from "./github.ts";
 import { FleetLoop } from "./loop.ts";
 import { log, logError } from "./log.ts";
+import { startServer } from "./server.ts";
 import { StateStore } from "./state.ts";
 
 const USAGE = `Usage:
@@ -49,6 +51,9 @@ async function main(): Promise<void> {
     log("daemon", "single cycle complete");
     return;
   }
+
+  const dashboardDist = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "dashboard", "dist");
+  startServer({ port: config.dashboardPort, loop, state, dataDir, dashboardDist });
 
   for (;;) {
     await loop.cycle();
