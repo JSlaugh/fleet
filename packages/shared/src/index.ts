@@ -177,6 +177,8 @@ export interface BoardTicket {
   url: string;
   status: BoardStatus;
   priority: string | null;
+  /** Unsatisfied `Depends-on` issue numbers — only set while they're still open. */
+  blockedBy?: number[];
   record?: TicketRecord;
 }
 

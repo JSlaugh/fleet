@@ -14,11 +14,14 @@ import type { ApprovalManager } from "./approvals.ts";
 import { run } from "./exec.ts";
 import {
   createPullRequest,
+  dependencyStatus,
   getIssueComments,
   getIssueLabels,
   getPrState,
   listFleetIssues,
+  listIssueStates,
   markReady,
+  parseDependsOn,
   swapLabel,
   toBoardTicket,
   upsertStatusComment,
@@ -91,6 +94,28 @@ export function pickAutoResumable(
     .slice(0, capacity);
 }
 
+/**
+ * The `fleet:ready` issues that are actually claimable this cycle: not already
+ * in flight, and with every `Depends-on` reference satisfied (closed, or
+ * pointing at an issue number this repo has never had). Preserves the input
+ * order, which callers sort by priority-then-number before this filter runs.
+ */
+export function selectEligibleReady(
+  issues: ReadyIssue[],
+  opts: {
+    openIssueNumbers: ReadonlySet<number>;
+    allIssueNumbers: ReadonlySet<number>;
+    isRunning: (issueNumber: number) => boolean;
+  },
+): ReadyIssue[] {
+  return issues.filter((issue) => {
+    if (!issue.labels.includes(FLEET_LABELS.ready)) return false;
+    if (opts.isRunning(issue.number)) return false;
+    const { blockedBy } = dependencyStatus(parseDependsOn(issue.body), opts.openIssueNumbers, opts.allIssueNumbers);
+    return blockedBy.length === 0;
+  });
+}
+
 export class FleetLoop {
   private readonly running = new Map<string, Promise<void>>();
   private readonly live = new Map<string, WorkerSession>();
@@ -128,10 +153,21 @@ export class FleetLoop {
 
   private async cycleProject(project: ProjectConfig): Promise<void> {
     const issues = await listFleetIssues(project);
+    const { open: openIssueNumbers, all: allIssueNumbers } = await listIssueStates(project);
+
+    const blockedByIssue = new Map<number, number[]>();
+    for (const issue of issues) {
+      const { blockedBy, unknown } = dependencyStatus(parseDependsOn(issue.body), openIssueNumbers, allIssueNumbers);
+      for (const n of unknown) {
+        log("loop", `${project.name}#${issue.number}: Depends-on references #${n}, which doesn't exist in this repo — treating as satisfied`);
+      }
+      blockedByIssue.set(issue.number, blockedBy);
+    }
+
     this.boardCache.set(
       project.name,
       issues
-        .map((issue) => toBoardTicket(project, issue))
+        .map((issue) => toBoardTicket(project, issue, blockedByIssue.get(issue.number)))
         .filter((t): t is BoardTicket => t !== null),
     );
     this.emitBoard();
@@ -146,10 +182,11 @@ export class FleetLoop {
     const capacity = project.maxConcurrent - activeCount;
     if (capacity <= 0) return;
 
-    const ready = issues.filter(
-      (issue) =>
-        issue.labels.includes(FLEET_LABELS.ready) && !this.running.has(this.key(project.name, issue.number)),
-    );
+    const ready = selectEligibleReady(issues, {
+      openIssueNumbers,
+      allIssueNumbers,
+      isRunning: (issueNumber) => this.running.has(this.key(project.name, issueNumber)),
+    });
 
     for (const issue of ready.slice(0, Math.max(0, capacity))) {
       if (this.dryRun) {

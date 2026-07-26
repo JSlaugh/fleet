@@ -22,6 +22,7 @@ export const CreateTicketSchema = z.object({
   body: z.string(),
   priority: z.enum(PRIORITY_LABELS).optional(),
   ready: z.boolean().default(true),
+  dependsOn: z.array(z.number().int().positive()).optional(),
 });
 
 export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): string[] {
@@ -29,6 +30,13 @@ export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): s
   if (input.ready) labels.push(FLEET_LABELS.ready);
   if (input.priority) labels.push(input.priority);
   return labels;
+}
+
+/** Appends a `Depends-on: #...` line the daemon's own gating will parse back out. */
+export function bodyWithDependsOn(body: string, dependsOn: number[] | undefined): string {
+  if (!dependsOn || dependsOn.length === 0) return body;
+  const line = `Depends-on: ${dependsOn.map((n) => `#${n}`).join(", ")}`;
+  return body.trim().length > 0 ? `${body}\n\n${line}` : line;
 }
 
 export function startServer(opts: {
@@ -113,7 +121,7 @@ export function startServer(opts: {
     try {
       const { number, url } = await createIssue(project, {
         title: parsed.data.title,
-        body: parsed.data.body,
+        body: bodyWithDependsOn(parsed.data.body, parsed.data.dependsOn),
         labels,
       });
       log("server", `filed ${name}#${number} [${labels.join(", ") || "no labels"}]`);

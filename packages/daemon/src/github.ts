@@ -65,7 +65,7 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
     .sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels) || a.number - b.number);
 }
 
-export function toBoardTicket(project: ProjectConfig, issue: FleetIssue): BoardTicket | null {
+export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blockedBy: number[] = []): BoardTicket | null {
   const status = boardStatusFromLabels(issue.labels);
   if (!status) return null;
   return {
@@ -75,6 +75,66 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue): BoardT
     url: issue.url,
     status,
     priority: priorityOf(issue.labels),
+    ...(blockedBy.length > 0 ? { blockedBy } : {}),
+  };
+}
+
+/**
+ * Reads a `Depends-on: #12, #14` line anywhere in the issue body (case-insensitive
+ * key, `#`-prefixed numbers, comma/space separated). Entries that aren't a bare
+ * `#<digits>` token are ignored rather than rejecting the whole line, so a stray
+ * typo in the list doesn't drop every other dependency.
+ */
+export function parseDependsOn(body: string): number[] {
+  const match = /^\s*depends-on\s*:\s*(.+)$/im.exec(body);
+  if (!match) return [];
+  const numbers = (match[1] ?? "")
+    .split(/[\s,]+/)
+    .map((token) => /^#(\d+)$/.exec(token.trim()))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Number(m[1] ?? ""))
+    .filter((n) => !Number.isNaN(n));
+  return [...new Set(numbers)];
+}
+
+/**
+ * `blockedBy` is deps that are still open (unsatisfied); `unknown` is deps that
+ * reference an issue number this repo has never had — treated as satisfied so a
+ * typo can't wedge a ticket forever, but worth logging so it can be fixed.
+ */
+export function dependencyStatus(
+  deps: number[],
+  openIssueNumbers: ReadonlySet<number>,
+  allIssueNumbers: ReadonlySet<number>,
+): { blockedBy: number[]; unknown: number[] } {
+  return {
+    blockedBy: deps.filter((n) => openIssueNumbers.has(n)),
+    unknown: deps.filter((n) => !allIssueNumbers.has(n)),
+  };
+}
+
+interface GhIssueStateJson {
+  number: number;
+  state: string;
+}
+
+/**
+ * Every open *and* closed issue number in the repo, unfiltered by label — a
+ * dependency may reference an issue that never carried a `fleet:*` label.
+ * `all` also covers closed issues so a nonexistent dep number can be told apart
+ * from a legitimately closed one.
+ */
+export async function listIssueStates(project: ProjectConfig): Promise<{ open: Set<number>; all: Set<number> }> {
+  const issues = await runJson<GhIssueStateJson[]>("gh", [
+    "issue", "list",
+    "--repo", project.githubRepo,
+    "--state", "all",
+    "--json", "number,state",
+    "--limit", "500",
+  ]);
+  return {
+    open: new Set(issues.filter((i) => i.state === "OPEN").map((i) => i.number)),
+    all: new Set(issues.map((i) => i.number)),
   };
 }
 

@@ -31,7 +31,10 @@ const blurb = computed(() => {
 <template>
   <article
     class="cursor-pointer rounded-lg border bg-white p-3 text-left shadow-sm transition hover:border-neutral-400 dark:bg-neutral-800 dark:hover:border-neutral-500"
-    :class="selected ? 'border-blue-500 ring-1 ring-blue-500' : 'border-neutral-200 dark:border-neutral-700'"
+    :class="[
+      selected ? 'border-blue-500 ring-1 ring-blue-500' : 'border-neutral-200 dark:border-neutral-700',
+      ticket.blockedBy?.length ? 'opacity-50' : '',
+    ]"
     @click="emit('select')"
   >
     <div class="flex items-start gap-2">
@@ -88,6 +91,12 @@ const blurb = computed(() => {
         class="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
       >
         failed
+      </span>
+      <span
+        v-if="ticket.blockedBy?.length"
+        class="rounded bg-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
+      >
+        waiting on #{{ ticket.blockedBy.join(", #") }}
       </span>
       <span
         v-if="shortModelName(ticket.record?.model)"

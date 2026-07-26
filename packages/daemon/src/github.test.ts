@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { issueNumberFromUrl, priorityRank, readyLabelArgs } from "./github.ts";
+import { dependencyStatus, issueNumberFromUrl, parseDependsOn, priorityRank, readyLabelArgs } from "./github.ts";
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -55,5 +55,66 @@ describe("issueNumberFromUrl", () => {
   it("throws when gh printed something unexpected", () => {
     expect(() => issueNumberFromUrl("")).toThrow();
     expect(() => issueNumberFromUrl("Creating issue in JSlaugh/fleet")).toThrow();
+  });
+});
+
+describe("parseDependsOn", () => {
+  it("returns [] when there is no Depends-on line", () => {
+    expect(parseDependsOn("Just a plain description.")).toEqual([]);
+  });
+
+  it("parses a single dependency", () => {
+    expect(parseDependsOn("Depends-on: #12")).toEqual([12]);
+  });
+
+  it("parses multiple comma-separated dependencies", () => {
+    expect(parseDependsOn("Depends-on: #12, #14")).toEqual([12, 14]);
+  });
+
+  it("accepts mixed comma and space separators", () => {
+    expect(parseDependsOn("Depends-on: #12 #14, #16")).toEqual([12, 14, 16]);
+  });
+
+  it("ignores malformed entries but keeps the valid ones", () => {
+    expect(parseDependsOn("Depends-on: #12, banana, 14, #16")).toEqual([12, 16]);
+  });
+
+  it("is case-insensitive on the key", () => {
+    expect(parseDependsOn("depends-on: #5")).toEqual([5]);
+    expect(parseDependsOn("DEPENDS-ON: #5")).toEqual([5]);
+  });
+
+  it("finds the line anywhere in a multi-line body", () => {
+    const body = ["## Problem", "Some description.", "", "Depends-on: #3", "", "## More"].join("\n");
+    expect(parseDependsOn(body)).toEqual([3]);
+  });
+
+  it("dedupes repeated references", () => {
+    expect(parseDependsOn("Depends-on: #4, #4")).toEqual([4]);
+  });
+});
+
+describe("dependencyStatus", () => {
+  it("reports no dependency as blocking or unknown when there are none", () => {
+    expect(dependencyStatus([], new Set(), new Set())).toEqual({ blockedBy: [], unknown: [] });
+  });
+
+  it("treats an open dependency as blocking", () => {
+    expect(dependencyStatus([12], new Set([12]), new Set([12]))).toEqual({ blockedBy: [12], unknown: [] });
+  });
+
+  it("treats a closed dependency as satisfied", () => {
+    expect(dependencyStatus([12], new Set(), new Set([12]))).toEqual({ blockedBy: [], unknown: [] });
+  });
+
+  it("treats a nonexistent dependency as satisfied but flags it as unknown", () => {
+    expect(dependencyStatus([999], new Set(), new Set())).toEqual({ blockedBy: [], unknown: [999] });
+  });
+
+  it("handles a mix of blocking, satisfied, and unknown deps", () => {
+    expect(dependencyStatus([1, 2, 999], new Set([1]), new Set([1, 2]))).toEqual({
+      blockedBy: [1],
+      unknown: [999],
+    });
   });
 });
