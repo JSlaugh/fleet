@@ -7,17 +7,18 @@ import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
 
 /**
- * The Anthropic API rejects tool input schemas with `oneOf`/`allOf`/`anyOf` at
- * the top level, and `outputFormat` is delivered to the API as a tool schema —
- * so "prTitle is required when status is completed" cannot be expressed here
- * (draft-7 `allOf`+`if`/`then` bricks every worker session with a 400).
- * Conditional requirements live in the field descriptions and the worker
- * contract; the fallbacks in `loop.ts` are the safety net for partial results.
+ * The SDK hands `outputFormat`'s schema to the API as the `StructuredOutput`
+ * tool's `input_schema`, and the API rejects `oneOf`/`allOf`/`anyOf` at the top
+ * level of a tool schema. Bolting draft-7 conditionals on here to express
+ * "prTitle is required when status is completed" therefore 400s every worker
+ * session on its first request, before the model sees anything. The conditional
+ * half of the output contract lives in `WORKER_CONTRACT` prose and in the
+ * per-property descriptions instead; the fallbacks in `loop.ts` are the safety
+ * net when a worker ignores it.
  */
-export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<
-  string,
-  unknown
->;
+export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, {
+  target: "draft-7",
+}) as Record<string, unknown>;
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
 

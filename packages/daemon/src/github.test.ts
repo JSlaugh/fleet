@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { priorityRank } from "./github.ts";
+import { issueNumberFromUrl, priorityRank } from "./github.ts";
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -14,5 +14,20 @@ describe("priorityRank", () => {
 
   it("uses the highest priority when several are present", () => {
     expect(priorityRank(["fleet:p3", "fleet:p1"])).toBe(0);
+  });
+});
+
+describe("issueNumberFromUrl", () => {
+  it("takes the number from the last path segment", () => {
+    expect(issueNumberFromUrl("https://github.com/JSlaugh/fleet/issues/42")).toBe(42);
+  });
+
+  it("tolerates surrounding whitespace", () => {
+    expect(issueNumberFromUrl("  https://github.com/JSlaugh/fleet/issues/7\n")).toBe(7);
+  });
+
+  it("throws when gh printed something unexpected", () => {
+    expect(() => issueNumberFromUrl("")).toThrow();
+    expect(() => issueNumberFromUrl("Creating issue in JSlaugh/fleet")).toThrow();
   });
 });

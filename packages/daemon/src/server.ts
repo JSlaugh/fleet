@@ -5,12 +5,31 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { WebSocketServer } from "ws";
-import { PRIORITY_LABELS, type JournalEntry, type TicketDetail } from "@fleet/shared";
+import { z } from "zod";
+import { FLEET_LABELS, PRIORITY_LABELS, type JournalEntry, type TicketDetail } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
-import { setPriority } from "./github.ts";
+import { createIssue, setPriority } from "./github.ts";
 import { log, logError } from "./log.ts";
 import type { FleetLoop } from "./loop.ts";
 import type { StateStore } from "./state.ts";
+
+/**
+ * `ready: false` files a plain issue carrying only the priority label, so a
+ * human can curate it before a worker picks it up.
+ */
+export const CreateTicketSchema = z.object({
+  title: z.string().min(1),
+  body: z.string(),
+  priority: z.enum(PRIORITY_LABELS).optional(),
+  ready: z.boolean().default(true),
+});
+
+export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): string[] {
+  const labels: string[] = [];
+  if (input.ready) labels.push(FLEET_LABELS.ready);
+  if (input.priority) labels.push(input.priority);
+  return labels;
+}
 
 export function startServer(opts: {
   port: number;
@@ -59,6 +78,42 @@ export function startServer(opts: {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
     }
+  });
+
+  // Agent-facing intake: file a fleet ticket without touching `gh` directly, so
+  // GitHub stays the single source of truth for the board.
+  app.post("/api/projects/:project/tickets", async (c) => {
+    const name = c.req.param("project");
+    const project = loop.getProject(name);
+    if (!project) return c.json({ error: `unknown project ${name}` }, 404);
+    const parsed = CreateTicketSchema.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: "invalid request body", issues: parsed.error.issues }, 400);
+    const labels = labelsForNewTicket(parsed.data);
+    try {
+      const { number, url } = await createIssue(project, {
+        title: parsed.data.title,
+        body: parsed.data.body,
+        labels,
+      });
+      log("server", `filed ${name}#${number} [${labels.join(", ") || "no labels"}]`);
+      return c.json({ ok: true, number, url });
+    } catch (err) {
+      logError("server", `creating an issue in ${name}`, err);
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  });
+
+  // The dedup surface: callers check this before filing. It reads the board
+  // cache, which only refreshes on the poll loop's cycle, so a ticket filed
+  // moments ago may not appear here yet.
+  app.get("/api/projects/:project/backlog", (c) => {
+    const name = c.req.param("project");
+    if (!loop.getProject(name)) return c.json({ error: `unknown project ${name}` }, 404);
+    const tickets = loop
+      .getBoard()
+      .filter((t) => t.project === name)
+      .map((t) => ({ number: t.issueNumber, title: t.title, status: t.status, priority: t.priority, url: t.url }));
+    return c.json({ tickets });
   });
 
   app.get("/api/approvals", (c) => c.json({ approvals: approvals.list() }));
