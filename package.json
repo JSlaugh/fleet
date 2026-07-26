@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "description": "Multi-project Claude Code backlog orchestrator: GitHub Issues in, reviewed PRs out.",
   "scripts": {
+    "test": "vitest run",
     "typecheck": "tsc --noEmit && pnpm --filter @fleet/dashboard typecheck",
     "daemon": "pnpm --filter @fleet/daemon start",
     "dashboard:dev": "pnpm --filter @fleet/dashboard dev",
@@ -11,7 +12,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
   },
   "packageManager": "pnpm@11.5.1"
 }

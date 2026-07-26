@@ -152,7 +152,19 @@ function summarizeModelUsage(
   return out;
 }
 
+/**
+ * Models sometimes double-escape newlines in structured output, emitting the
+ * literal two-character sequence `\n` where a real newline was meant. Only treat
+ * a string as double-escaped when it contains a literal `\n` and no actual
+ * newline character — otherwise a summary that legitimately mentions the
+ * sequence `\n` (e.g. quoting a code snippet) would be corrupted.
+ */
+export function looksDoubleEscaped(text: string): boolean {
+  return text.includes("\\n") && !text.includes("\n");
+}
+
 function unescapeNewlines(text: string): string {
+  if (!looksDoubleEscaped(text)) return text;
   return text.replaceAll("\\n", "\n").replaceAll("\\t", "\t");
 }
 

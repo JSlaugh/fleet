@@ -24,6 +24,7 @@ import {
 import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
 import { StateStore } from "./state.ts";
+import { TrailingThrottle } from "./throttle.ts";
 import { WorkerSession, buildIssuePrompt } from "./worker.ts";
 import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
 
@@ -34,7 +35,7 @@ export class FleetLoop {
   private readonly live = new Map<string, WorkerSession>();
   private readonly replyWaiters = new Map<string, (message: string) => void>();
   private readonly boardCache = new Map<string, BoardTicket[]>();
-  private lastBoardEmit = 0;
+  private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   readonly events = new EventEmitter();
 
   constructor(
@@ -70,7 +71,11 @@ export class FleetLoop {
     );
     this.emitBoard();
 
-    await this.cleanupFinished(project, issues);
+    if (this.dryRun) {
+      log("loop", `[dry-run] would clean up finished tickets for ${project.name}`);
+    } else {
+      await this.cleanupFinished(project, issues);
+    }
 
     const activeCount = [...this.running.keys()].filter((k) => k.startsWith(`${project.name}#`)).length;
     const capacity = project.maxConcurrent - activeCount;
@@ -455,9 +460,6 @@ export class FleetLoop {
   }
 
   private emitBoard(): void {
-    const now = Date.now();
-    if (now - this.lastBoardEmit < 1000) return;
-    this.lastBoardEmit = now;
-    this.events.emit("board");
+    this.boardThrottle.trigger();
   }
 }
