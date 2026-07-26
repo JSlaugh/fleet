@@ -78,6 +78,32 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue): BoardT
   };
 }
 
+/**
+ * `gh issue create` prints the new issue's URL on stdout (after any hint lines),
+ * and the number is its last path segment.
+ */
+export function issueNumberFromUrl(url: string): number {
+  const number = Number(url.trim().split("/").pop());
+  if (!Number.isInteger(number) || number <= 0) throw new Error(`could not parse an issue number from ${url.trim()}`);
+  return number;
+}
+
+export async function createIssue(
+  project: ProjectConfig,
+  opts: { title: string; body: string; labels: string[] },
+): Promise<{ number: number; url: string }> {
+  const args = [
+    "issue", "create",
+    "--repo", project.githubRepo,
+    "--title", opts.title,
+    "--body", opts.body,
+  ];
+  for (const label of opts.labels) args.push("--label", label);
+  const { stdout } = await run("gh", args);
+  const url = stdout.trim().split("\n").pop()?.trim() ?? "";
+  return { number: issueNumberFromUrl(url), url };
+}
+
 export async function setPriority(project: ProjectConfig, issueNumber: number, priority: string | null): Promise<void> {
   const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
   for (const label of PRIORITY_LABELS) {
