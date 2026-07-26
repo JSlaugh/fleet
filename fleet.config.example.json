@@ -12,7 +12,7 @@
       "defaultBranch": "main",
       "maxConcurrent": 1,
       "setupCommand": "pnpm install",
-      "elevatedModel": "claude-opus-4-8"
+      "elevatedModel": "claude-opus-5"
     }
   ]
 }
