@@ -1,4 +1,4 @@
-{
+﻿{
   "pollIntervalSeconds": 60,
   "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
   "stalledAfterMinutes": 10,
@@ -12,7 +12,9 @@
       "defaultBranch": "main",
       "maxConcurrent": 1,
       "setupCommand": "pnpm install",
+      "model": "claude-sonnet-5",
       "elevatedModel": "claude-opus-5"
     }
   ]
 }
+
