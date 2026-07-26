@@ -25,7 +25,9 @@ export function loadConfig(configPath: string | undefined): LoadedConfig {
       `Config not found${absolute ? ` at ${absolute}` : ""} (searched upward from ${process.cwd()}). Copy fleet.config.example.json to fleet.config.json and edit it.`,
     );
   }
-  const raw = readFileSync(absolute, "utf8");
+  // Windows tooling (PowerShell 5.1's -Encoding utf8, some editors) writes a
+  // UTF-8 BOM, which JSON.parse rejects. StateStore strips it too.
+  const raw = readFileSync(absolute, "utf8").replace(/^\uFEFF/, "");
   const parsed = FleetConfigSchema.safeParse(JSON.parse(raw));
   if (!parsed.success) {
     throw new Error(`Invalid config at ${absolute}:\n${parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n")}`);
