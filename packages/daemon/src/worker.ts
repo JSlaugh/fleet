@@ -7,32 +7,17 @@ import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
 
 /**
- * `outputFormat` only enforces what the JSON schema says, and zod cannot express
- * "prTitle is required when status is completed" in a way `z.toJSONSchema` can
- * emit. Bolt the draft-7 conditionals on afterwards so the API makes the model
- * retry instead of the daemon quietly falling back to the issue title.
- * `WorkerResultSchema` itself stays lenient — the fallbacks in `loop.ts` are the
- * safety net for older sessions and partial results.
+ * The Anthropic API rejects tool input schemas with `oneOf`/`allOf`/`anyOf` at
+ * the top level, and `outputFormat` is delivered to the API as a tool schema —
+ * so "prTitle is required when status is completed" cannot be expressed here
+ * (draft-7 `allOf`+`if`/`then` bricks every worker session with a 400).
+ * Conditional requirements live in the field descriptions and the worker
+ * contract; the fallbacks in `loop.ts` are the safety net for partial results.
  */
-export function withConditionalRequirements(schema: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...schema,
-    allOf: [
-      {
-        if: { properties: { status: { const: "completed" } }, required: ["status"] },
-        then: { required: ["prTitle", "prBody"] },
-      },
-      {
-        if: { properties: { status: { const: "blocked" } }, required: ["status"] },
-        then: { required: ["blockedReason"] },
-      },
-    ],
-  };
-}
-
-export const WORKER_OUTPUT_SCHEMA = withConditionalRequirements(
-  z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>,
-);
+export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<
+  string,
+  unknown
+>;
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
 

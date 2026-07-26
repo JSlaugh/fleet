@@ -106,16 +106,9 @@ describe("WORKER_OUTPUT_SCHEMA", () => {
     );
   });
 
-  it("requires prTitle/prBody when completed and blockedReason when blocked", () => {
-    expect(WORKER_OUTPUT_SCHEMA.allOf).toEqual([
-      {
-        if: { properties: { status: { const: "completed" } }, required: ["status"] },
-        then: { required: ["prTitle", "prBody"] },
-      },
-      {
-        if: { properties: { status: { const: "blocked" } }, required: ["status"] },
-        then: { required: ["blockedReason"] },
-      },
-    ]);
+  it("has no top-level combinators (the API 400s tool schemas with oneOf/allOf/anyOf at the top level)", () => {
+    expect(WORKER_OUTPUT_SCHEMA.allOf).toBeUndefined();
+    expect(WORKER_OUTPUT_SCHEMA.anyOf).toBeUndefined();
+    expect(WORKER_OUTPUT_SCHEMA.oneOf).toBeUndefined();
   });
 });
