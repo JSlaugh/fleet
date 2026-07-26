@@ -1,12 +1,38 @@
 import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
-import type { CanUseTool, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, HookCallback, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { WorkerResultSchema, type ModelUsageSummary, type ProjectConfig, type WorkerResult } from "@fleet/shared";
 import type { Journal } from "./journal.ts";
 import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
 
-const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>;
+/**
+ * `outputFormat` only enforces what the JSON schema says, and zod cannot express
+ * "prTitle is required when status is completed" in a way `z.toJSONSchema` can
+ * emit. Bolt the draft-7 conditionals on afterwards so the API makes the model
+ * retry instead of the daemon quietly falling back to the issue title.
+ * `WorkerResultSchema` itself stays lenient — the fallbacks in `loop.ts` are the
+ * safety net for older sessions and partial results.
+ */
+export function withConditionalRequirements(schema: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...schema,
+    allOf: [
+      {
+        if: { properties: { status: { const: "completed" } }, required: ["status"] },
+        then: { required: ["prTitle", "prBody"] },
+      },
+      {
+        if: { properties: { status: { const: "blocked" } }, required: ["status"] },
+        then: { required: ["blockedReason"] },
+      },
+    ],
+  };
+}
+
+export const WORKER_OUTPUT_SCHEMA = withConditionalRequirements(
+  z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>,
+);
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
 
@@ -20,6 +46,48 @@ Contract:
 - If you hit a decision the issue does not answer, do NOT guess: finish with status "blocked" and put the specific question in blockedReason. A human may answer in a follow-up message — then continue the work.
 - Your final structured output: status "completed" requires prTitle and prBody; status "blocked" requires blockedReason.
 `.trim();
+
+export const FORBIDDEN_BASH_REASON =
+  "The fleet orchestrator handles pushing, PRs, and issue state. Finish your work and report via your structured result instead.";
+
+/**
+ * `Bash` is allowlisted, and allowlisted tools bypass `canUseTool` entirely, so
+ * the "never push, never open PRs" half of the worker contract has to be
+ * enforced here or not at all.
+ *
+ * Each pattern spans a single command: `[^;|&\n]` keeps a match from running
+ * across `&&`, `;`, `|` or a newline, so `git status && pnpm push` is not read as
+ * `git push`, while `git -C ../x push` still is. Quoted text is not parsed out —
+ * `echo "git push"` is denied too. Over-blocking costs the worker one retry;
+ * under-blocking corrupts the orchestrator's state machine.
+ */
+const FORBIDDEN_BASH_PATTERNS: RegExp[] = [
+  // git push, including `git -C <path> push` and `git push --force`
+  /\bgit\b[^;|&\n]*?\s+push\b/i,
+  // the whole `gh pr` surface except the read-only `gh pr view` / `gh pr diff`
+  /\bgh\b[^;|&\n]*?\s+pr\b(?!\s+(?:view|diff)\b)/i,
+  // issue state the orchestrator owns
+  /\bgh\b[^;|&\n]*?\s+issue\s+(?:edit|close|comment)\b/i,
+  /\bgh\b[^;|&\n]*?\s+label\b/i,
+];
+
+export function isForbiddenBashCommand(command: string): boolean {
+  return FORBIDDEN_BASH_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+export const denyForbiddenBash: HookCallback = async (input) => {
+  if (input.hook_event_name !== "PreToolUse" || input.tool_name !== "Bash") return { continue: true };
+  const command = (input.tool_input as { command?: unknown } | null | undefined)?.command;
+  if (typeof command !== "string" || !isForbiddenBashCommand(command)) return { continue: true };
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: FORBIDDEN_BASH_REASON,
+    },
+  };
+};
 
 export interface TurnResult {
   result?: WorkerResult;
@@ -59,6 +127,7 @@ export class WorkerSession {
         permissionMode: "acceptEdits",
         allowedTools: opts.project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
         canUseTool: opts.canUseTool,
+        hooks: { PreToolUse: [{ matcher: "Bash", hooks: [denyForbiddenBash] }] },
         settingSources: ["project"],
         systemPrompt: { type: "preset", preset: "claude_code", append: WORKER_CONTRACT },
         outputFormat: { type: "json_schema", schema: WORKER_OUTPUT_SCHEMA },
