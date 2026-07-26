@@ -78,6 +78,12 @@ const blurb = computed(() => {
         stalled
       </span>
       <span
+        v-if="ticket.record?.status === 'restarting'"
+        class="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-800 dark:bg-sky-900 dark:text-sky-200"
+      >
+        restarting
+      </span>
+      <span
         v-if="ticket.record?.status === 'failed'"
         class="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
       >

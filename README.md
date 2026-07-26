@@ -29,7 +29,9 @@ pnpm daemon -- --once             # one cycle: claim, run workers to completion,
 pnpm daemon                       # the real loop + dashboard at http://localhost:4400
 ```
 
-The daemon serves the dashboard (build it once with `pnpm dashboard:build`) and a REST/WS API: `GET /api/board`, `GET /api/tickets/:project/:issue` (record + transcript tail), `POST /api/tickets/:project/:issue/priority`, and `/ws` pushing `board-updated` events. For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to the daemon.
+The daemon serves the dashboard (build it once with `pnpm dashboard:build`) and a REST/WS API: `GET /api/board`, `GET /api/tickets/:project/:issue` (record + transcript tail), `POST /api/tickets/:project/:issue/priority`, `POST /api/tickets/:project/:issue/restart`, and `/ws` pushing `board-updated` events. For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to the daemon.
+
+Ticket detail has a **Restart** button for stuck, stalled, or failed tickets: it force-closes the session and puts the issue back in `fleet:ready`, so the next cycle re-runs it from scratch. The fresh claim recreates the branch and worktree from `origin/<defaultBranch>`, which **discards the previous session's commits** — the dashboard confirms before firing.
 
 Operational state lives in `.fleet/` (ticket records in `state.json`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
 
