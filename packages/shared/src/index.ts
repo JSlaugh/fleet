@@ -66,7 +66,9 @@ export type TicketStatus =
   | "stalled"
   | "needs-input"
   | "review"
-  | "failed";
+  | "failed"
+  /** Operator hit Restart: the old session is gone and the issue is back in `fleet:ready`, awaiting a fresh claim. */
+  | "restarting";
 
 export interface TicketRecord {
   project: string;

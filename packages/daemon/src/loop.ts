@@ -18,6 +18,7 @@ import {
   getIssueLabels,
   getPrState,
   listFleetIssues,
+  markReady,
   swapLabel,
   toBoardTicket,
   upsertStatusComment,
@@ -37,6 +38,25 @@ const STALL_NUDGE = [
   "Inspect the current state of the worktree (git status, git log) to see what has already been done, then continue the ticket.",
   "If you had already finished, produce your final structured result again.",
 ].join(" ");
+
+/** How long a restart waits for an aborted run to unwind before resetting anyway. */
+const ABORT_DRAIN_MS = 30_000;
+
+/** Resolves when `promise` settles or `ms` elapses — whichever is first, never rejecting. */
+function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    void promise.then(done, done);
+  });
+}
+
+const RESTART_SUMMARY =
+  "Restarted from the dashboard — a fresh session will pick this up. The previous session was terminated and its branch and worktree will be recreated from scratch.";
 
 /** Cost and per-model usage a ticket had accrued before the current session started. */
 interface SessionBase {
@@ -74,7 +94,10 @@ export function pickAutoResumable(
 export class FleetLoop {
   private readonly running = new Map<string, Promise<void>>();
   private readonly live = new Map<string, WorkerSession>();
-  private readonly replyWaiters = new Map<string, (message: string) => void>();
+  /** Keys whose session an operator is force-closing; see `finishFailed`. */
+  private readonly restarting = new Set<string>();
+  /** Resolvers for sessions parked after reporting `blocked`; `undefined` releases the park without a reply. */
+  private readonly replyWaiters = new Map<string, (message: string | undefined) => void>();
   private readonly boardCache = new Map<string, BoardTicket[]>();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   readonly events = new EventEmitter();
@@ -354,6 +377,94 @@ export class FleetLoop {
     }
   }
 
+  /**
+   * Force-close a ticket's session and put the issue back in `fleet:ready` so the
+   * next poll cycle claims it from scratch. `processTicket` → `createWorktree`
+   * force-removes the worktree and recreates the branch from
+   * `origin/<defaultBranch>`, so a restart **discards the previous session's
+   * commits** — that is the point, and the dashboard says so before firing.
+   *
+   * The claim is deliberately left to the normal loop rather than done here, so
+   * restarts obey `maxConcurrent` like any other pickup.
+   */
+  async restartTicket(projectName: string, issueNumber: number): Promise<void> {
+    const key = this.key(projectName, issueNumber);
+    const project = this.getProject(projectName);
+    if (!project) throw new Error(`unknown project ${projectName}`);
+    if (this.restarting.has(key)) throw new Error(`${key} is already restarting`);
+
+    const session = this.live.get(key);
+    const inFlight = this.running.get(key);
+    // In flight with no session to abort means the ticket is between phases
+    // (claiming, opening a PR, tearing a session down) where interrupting would
+    // leave GitHub and the worktree disagreeing. Same guard as `reply`.
+    if (!session && inFlight) throw new Error(`${key} is mid-transition; try again shortly`);
+
+    if (session) {
+      // The flag must be set before the abort: aborting surfaces to `supervise`
+      // as an errored turn, and `finishFailed` has to know not to report it.
+      this.restarting.add(key);
+      this.state.update(projectName, issueNumber, { status: "restarting", lastSummary: RESTART_SUMMARY });
+      this.emitBoard();
+      log("loop", `${key}: restart requested — aborting session ${session.sessionId ?? "(not yet started)"}`);
+      session.abortController.abort();
+      // A session parked after reporting `blocked` is waiting on a reply, not on
+      // the SDK, so it would ignore the abort for the rest of `replyWaitMinutes`.
+      // Release the park so `supervise` returns now.
+      this.replyWaiters.get(key)?.(undefined);
+      // The flag is cleared when the run actually settles, however long that
+      // takes — a wedged session that errors out much later must still not report
+      // a failure over the reset. The reset itself waits only `ABORT_DRAIN_MS` so
+      // the dashboard always gets an answer; `running` still holds the key
+      // meanwhile, so no fresh claim can start until the old run is truly gone.
+      const clear = () => void this.restarting.delete(key);
+      const drained = (inFlight ?? Promise.resolve()).then(clear, clear);
+      // Wait for the run to unwind so its teardown (state writes, session close)
+      // lands before the reset below overwrites the record.
+      await settleWithin(drained, ABORT_DRAIN_MS);
+      if (this.restarting.has(key)) {
+        log("loop", `${key}: session did not unwind within ${ABORT_DRAIN_MS / 1000}s — resetting to ready anyway`);
+      }
+    }
+
+    await this.resetForFreshClaim(project, issueNumber);
+  }
+
+  /**
+   * Drop everything that would make the next cycle resume rather than restart:
+   * the recorded session id, the live flag, and the once-only auto-resume budget.
+   * The journal file is kept — only an entry is appended — so the restarted
+   * ticket's history stays readable in the dashboard.
+   */
+  private async resetForFreshClaim(project: ProjectConfig, issueNumber: number): Promise<void> {
+    const key = this.key(project.name, issueNumber);
+    new Journal(this.dataDirPath, project.name, issueNumber).append({
+      type: "fleet",
+      event: "restarted-by-operator",
+    });
+    this.state.update(project.name, issueNumber, {
+      status: "restarting",
+      sessionId: undefined,
+      sessionLive: false,
+      autoResumed: false,
+      lastSummary: RESTART_SUMMARY,
+      lastActivityAt: new Date().toISOString(),
+      lastActivityNote: undefined,
+    });
+    // Label last: from here the ticket is claimable, so nothing after this may
+    // write to the state record.
+    await markReady(project, issueNumber);
+    this.emitBoard();
+    log("loop", `${key}: reset to ${FLEET_LABELS.ready} for a fresh session`);
+    // Best-effort: the ticket is already restarted, so a failed comment is worth
+    // logging but not worth reporting back as a failed restart.
+    try {
+      await upsertStatusComment(project, issueNumber, [`**Status: restarting**`, RESTART_SUMMARY].join("\n\n"));
+    } catch (err) {
+      logError("loop", `${key}: could not post the restart status comment`, err);
+    }
+  }
+
   private async markWorking(project: ProjectConfig, issueNumber: number): Promise<void> {
     try {
       await swapLabel(project, issueNumber, FLEET_LABELS.needsInput, FLEET_LABELS.inProgress);
@@ -446,7 +557,20 @@ export class FleetLoop {
     log("loop", `${project.name}#${issue.number}: needs input — ${reason}`);
   }
 
+  /**
+   * An operator restart aborts the session, which reaches `supervise` (or the
+   * `processTicket`/`resumeTicket` catch blocks) as an ordinary errored turn.
+   * Reporting that would post a "failed" comment and swap the issue to
+   * `fleet:needs-input`, fighting the reset `restartTicket` is about to do — so
+   * a restarting key is logged and dropped instead. Guarding here rather than at
+   * the call sites means no failure path can leak past it.
+   */
   private async finishFailed(project: ProjectConfig, issue: ReadyIssue, error: string): Promise<void> {
+    const key = this.key(project.name, issue.number);
+    if (this.restarting.has(key)) {
+      log("loop", `${key}: run ended during an operator restart (${error}) — not reporting it as a failure`);
+      return;
+    }
     await upsertStatusComment(
       project,
       issue.number,

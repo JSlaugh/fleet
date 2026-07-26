@@ -39,6 +39,13 @@ export async function sendReply(project: string, issueNumber: number, message: s
   return { mode: body.mode ?? "sent" };
 }
 
+/** Destructive: terminates the ticket's session and discards its branch work. */
+export async function restartTicket(project: string, issueNumber: number): Promise<void> {
+  const res = await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" });
+  const body = (await res.json().catch(() => ({}))) as { error?: string };
+  if (!res.ok) throw new Error(body.error ?? `restart failed: ${res.status}`);
+}
+
 export function fetchApprovals(): Promise<{ approvals: PendingApproval[] }> {
   return fetch("/api/approvals").then((res) => json<{ approvals: PendingApproval[] }>(res));
 }

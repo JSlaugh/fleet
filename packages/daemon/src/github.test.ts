@@ -1,5 +1,6 @@
+import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { issueNumberFromUrl, priorityRank } from "./github.ts";
+import { issueNumberFromUrl, priorityRank, readyLabelArgs } from "./github.ts";
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -14,6 +15,31 @@ describe("priorityRank", () => {
 
   it("uses the highest priority when several are present", () => {
     expect(priorityRank(["fleet:p3", "fleet:p1"])).toBe(0);
+  });
+});
+
+describe("readyLabelArgs", () => {
+  const project = {
+    name: "alpha",
+    repoPath: "/repo/alpha",
+    githubRepo: "acme/alpha",
+    defaultBranch: "main",
+    maxConcurrent: 1,
+  } satisfies ProjectConfig;
+
+  it("removes every other fleet state label and adds fleet:ready", () => {
+    expect(readyLabelArgs(project, 7)).toEqual([
+      "issue", "edit", "7",
+      "--repo", "acme/alpha",
+      "--remove-label", "fleet:in-progress",
+      "--remove-label", "fleet:needs-input",
+      "--remove-label", "fleet:review",
+      "--add-label", "fleet:ready",
+    ]);
+  });
+
+  it("never removes fleet:ready itself", () => {
+    expect(readyLabelArgs(project, 7).filter((a) => a === "fleet:ready")).toEqual(["fleet:ready"]);
   });
 });
 

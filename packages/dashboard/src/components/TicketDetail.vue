@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, TicketDetail } from "@fleet/shared";
+import type { BoardTicket, TicketDetail, TicketStatus } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
-import { fetchTicket, formatCost, formatTime, sendReply } from "../lib/api.ts";
+import { fetchTicket, formatCost, formatTime, restartTicket, sendReply } from "../lib/api.ts";
+
+/** Statuses where a from-scratch re-run is a sensible recovery. */
+const RESTARTABLE: TicketStatus[] = ["running", "stalled", "needs-input", "failed"];
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -21,6 +24,8 @@ const error = ref<string>();
 const reply = ref("");
 const sending = ref(false);
 const replyStatus = ref<string>();
+const restarting = ref(false);
+const restartStatus = ref<string>();
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const canReply = computed(() => {
@@ -29,6 +34,38 @@ const canReply = computed(() => {
   if (record.sessionLive) return true;
   return Boolean(record.sessionId) && ["needs-input", "stalled", "failed"].includes(record.status);
 });
+
+const canRestart = computed(() => {
+  const status = detail.value?.record?.status;
+  return status !== undefined && RESTARTABLE.includes(status);
+});
+
+async function confirmRestart() {
+  if (restarting.value) return;
+  const branch = detail.value?.record?.branch ?? `fleet/${props.ticket.issueNumber}`;
+  const confirmed = window.confirm(
+    [
+      `Restart ${props.ticket.project}#${props.ticket.issueNumber}?`,
+      "",
+      "This terminates the current session and discards its work: the branch " +
+        `${branch} and its worktree are deleted and recreated from scratch, so any commits the worker made are lost.`,
+      "",
+      "The ticket goes back to fleet:ready and a brand-new session picks it up on the next poll cycle.",
+    ].join("\n"),
+  );
+  if (!confirmed) return;
+  restarting.value = true;
+  restartStatus.value = undefined;
+  try {
+    await restartTicket(props.ticket.project, props.ticket.issueNumber);
+    restartStatus.value = "Restarted — waiting for a fresh session.";
+    void load();
+  } catch (err) {
+    restartStatus.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    restarting.value = false;
+  }
+}
 
 async function submitReply() {
   const message = reply.value.trim();
@@ -74,6 +111,16 @@ onUnmounted(() => clearInterval(timer));
           {{ ticket.title }}
         </h2>
         <button
+          v-if="canRestart"
+          type="button"
+          class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+          :disabled="restarting"
+          title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
+          @click="confirmRestart"
+        >
+          {{ restarting ? "Restarting…" : "Restart" }}
+        </button>
+        <button
           type="button"
           class="rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
           @click="emit('close')"
@@ -81,6 +128,7 @@ onUnmounted(() => clearInterval(timer));
           Close
         </button>
       </div>
+      <p v-if="restartStatus" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{{ restartStatus }}</p>
       <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
         <a :href="ticket.url" target="_blank" rel="noopener" class="text-blue-600 hover:underline dark:text-blue-400">
           {{ ticket.project }}#{{ ticket.issueNumber }}
