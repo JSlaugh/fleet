@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   boardStatusFromLabels,
+  mergeModelUsage,
   parseWorkerQuestions,
   priorityOf,
   shortModelName,
@@ -48,6 +49,38 @@ describe("shortModelName", () => {
 
   it("returns an empty string for undefined", () => {
     expect(shortModelName(undefined)).toBe("");
+  });
+});
+
+describe("mergeModelUsage", () => {
+  const opus = { inputTokens: 100, outputTokens: 10, costUsd: 0.5 };
+  const haiku = { inputTokens: 20, outputTokens: 5, costUsd: 0.01 };
+
+  it("returns undefined when both sides are undefined", () => {
+    expect(mergeModelUsage(undefined, undefined)).toBeUndefined();
+  });
+
+  it("returns a copy of whichever side is present", () => {
+    expect(mergeModelUsage(undefined, { opus })).toEqual({ opus });
+    expect(mergeModelUsage({ opus }, undefined)).toEqual({ opus });
+  });
+
+  it("sums overlapping keys field by field", () => {
+    expect(mergeModelUsage({ opus }, { opus })).toEqual({
+      opus: { inputTokens: 200, outputTokens: 20, costUsd: 1 },
+    });
+  });
+
+  it("unions disjoint keys", () => {
+    expect(mergeModelUsage({ opus }, { haiku })).toEqual({ opus, haiku });
+  });
+
+  it("does not mutate either input", () => {
+    const base = { opus: { ...opus } };
+    const delta = { opus: { ...opus }, haiku: { ...haiku } };
+    mergeModelUsage(base, delta);
+    expect(base).toEqual({ opus });
+    expect(delta).toEqual({ opus, haiku });
   });
 });
 
