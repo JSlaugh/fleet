@@ -3,8 +3,10 @@ import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import {
   ELEVATE_LABEL,
   FLEET_LABELS,
+  mergeModelUsage,
   type BoardTicket,
   type FleetConfig,
+  type ModelUsageSummary,
   type ProjectConfig,
   type TicketRecord,
 } from "@fleet/shared";
@@ -30,6 +32,45 @@ import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree }
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
+const STALL_NUDGE = [
+  "Your session was interrupted.",
+  "Inspect the current state of the worktree (git status, git log) to see what has already been done, then continue the ticket.",
+  "If you had already finished, produce your final structured result again.",
+].join(" ");
+
+/** Cost and per-model usage a ticket had accrued before the current session started. */
+interface SessionBase {
+  costUsd: number;
+  modelUsage?: Record<string, ModelUsageSummary>;
+}
+
+/**
+ * Stalled tickets that should be auto-resumed for `project`: they have a session
+ * to resume, are not already in flight, and have not been auto-resumed before
+ * (a second stall is left for a human). Capped by the project's `maxConcurrent`,
+ * counting tickets already running.
+ */
+export function pickAutoResumable(
+  records: TicketRecord[],
+  project: { name: string; maxConcurrent: number },
+  runningKeys: Iterable<string>,
+): TicketRecord[] {
+  const running = new Set(runningKeys);
+  const active = [...running].filter((k) => k.startsWith(`${project.name}#`)).length;
+  const capacity = project.maxConcurrent - active;
+  if (capacity <= 0) return [];
+  return records
+    .filter(
+      (record) =>
+        record.project === project.name &&
+        record.status === "stalled" &&
+        !!record.sessionId &&
+        !record.autoResumed &&
+        !running.has(`${record.project}#${record.issueNumber}`),
+    )
+    .slice(0, capacity);
+}
+
 export class FleetLoop {
   private readonly running = new Map<string, Promise<void>>();
   private readonly live = new Map<string, WorkerSession>();
@@ -52,6 +93,7 @@ export class FleetLoop {
 
   async cycle(): Promise<void> {
     this.flagStalled();
+    this.recoverStalled();
     for (const project of this.config.projects) {
       try {
         await this.cycleProject(project);
@@ -148,6 +190,10 @@ export class FleetLoop {
     elevated: boolean,
   ): Promise<void> {
     const key = this.key(project.name, issue.number);
+    const existing = this.state.get(project.name, issue.number);
+    // `total_cost_usd`/`modelUsage` restart at zero for every resumed session, so
+    // remember what the ticket had already spent and add to it.
+    const base: SessionBase = { costUsd: existing?.costUsd ?? 0, modelUsage: existing?.modelUsage };
     const model = elevated ? project.elevatedModel ?? project.model : project.model;
     if (elevated && project.elevatedModel) {
       log("loop", `${key}: running elevated on ${project.elevatedModel}`);
@@ -175,7 +221,7 @@ export class FleetLoop {
     this.state.update(project.name, issue.number, { sessionLive: true });
     try {
       session.send(firstMessage);
-      await this.supervise(project, issue, worktree, session);
+      await this.supervise(project, issue, worktree, session, base);
     } finally {
       this.live.delete(key);
       this.replyWaiters.delete(key);
@@ -183,7 +229,8 @@ export class FleetLoop {
       this.state.update(project.name, issue.number, {
         sessionLive: false,
         sessionId: session.sessionId,
-        costUsd: session.costUsd,
+        costUsd: base.costUsd + session.costUsd,
+        modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
       });
       this.emitBoard();
     }
@@ -194,15 +241,16 @@ export class FleetLoop {
     issue: ReadyIssue,
     worktree: Worktree,
     session: WorkerSession,
+    base: SessionBase,
   ): Promise<void> {
     const key = this.key(project.name, issue.number);
     for (;;) {
       const turn = await session.nextResult(this.config.ticketTimeoutMinutes * 60_000);
       this.state.update(project.name, issue.number, {
         sessionId: session.sessionId,
-        costUsd: session.costUsd,
+        costUsd: base.costUsd + session.costUsd,
         model: session.model,
-        modelUsage: session.modelUsage,
+        modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
       });
 
       if (turn.result?.status === "completed") {
@@ -246,6 +294,8 @@ export class FleetLoop {
 
   async reply(projectName: string, issueNumber: number, message: string): Promise<"steered" | "resumed"> {
     const key = this.key(projectName, issueNumber);
+    // A human-driven session earns a fresh auto-recovery if it stalls.
+    this.state.update(projectName, issueNumber, { autoResumed: false });
 
     const waiter = this.replyWaiters.get(key);
     if (waiter) {
@@ -310,7 +360,9 @@ export class FleetLoop {
     } catch (err) {
       logError("loop", `${this.key(project.name, issueNumber)}: label swap to in-progress failed`, err);
     }
-    this.state.update(project.name, issueNumber, { status: "running" });
+    // Stamp activity too: a resumed ticket whose last activity is already past the
+    // stall cutoff would otherwise be re-flagged as stalled before its first message.
+    this.state.update(project.name, issueNumber, { status: "running", lastActivityAt: new Date().toISOString() });
     this.emitBoard();
   }
 
@@ -427,6 +479,26 @@ export class FleetLoop {
       await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
       this.state.remove(record.project, record.issueNumber);
       this.emitBoard();
+    }
+  }
+
+  /**
+   * Resume stalled tickets that still have a session, once each. Covers both boot
+   * reconciliation (`clearLiveFlags` turns orphaned `running` tickets into
+   * `stalled`) and mid-run stalls flagged by `flagStalled`.
+   */
+  private recoverStalled(): void {
+    for (const project of this.config.projects) {
+      for (const record of pickAutoResumable(this.state.all(), project, this.running.keys())) {
+        const scope = this.key(record.project, record.issueNumber);
+        if (this.dryRun) {
+          log("loop", `[dry-run] would auto-resume stalled ${scope} from session ${record.sessionId}`);
+          continue;
+        }
+        log("loop", `${scope}: stalled — auto-resuming session ${record.sessionId} (once)`);
+        const updated = this.state.update(record.project, record.issueNumber, { autoResumed: true }) ?? record;
+        this.track(record.project, record.issueNumber, this.resumeTicket(project, updated, STALL_NUDGE));
+      }
     }
   }
 

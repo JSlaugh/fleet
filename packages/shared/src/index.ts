@@ -86,12 +86,37 @@ export interface TicketRecord {
   modelUsage?: Record<string, ModelUsageSummary>;
   lastActivityNote?: string;
   elevated?: boolean;
+  autoResumed?: boolean;
 }
 
 export interface ModelUsageSummary {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+}
+
+/**
+ * Per-model usage is cumulative only within a single SDK session, so resuming a
+ * ticket restarts the counters. Sum the running total already on the record with
+ * the live session's usage instead of overwriting it.
+ */
+export function mergeModelUsage(
+  base: Record<string, ModelUsageSummary> | undefined,
+  delta: Record<string, ModelUsageSummary> | undefined,
+): Record<string, ModelUsageSummary> | undefined {
+  if (!base && !delta) return undefined;
+  const out: Record<string, ModelUsageSummary> = { ...base };
+  for (const [model, usage] of Object.entries(delta ?? {})) {
+    const prev = out[model];
+    out[model] = prev
+      ? {
+          inputTokens: prev.inputTokens + usage.inputTokens,
+          outputTokens: prev.outputTokens + usage.outputTokens,
+          costUsd: prev.costUsd + usage.costUsd,
+        }
+      : { ...usage };
+  }
+  return out;
 }
 
 export function shortModelName(model: string | undefined): string {
