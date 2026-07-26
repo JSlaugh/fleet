@@ -129,6 +129,26 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
   ]);
 }
 
+/**
+ * Whatever fleet state label the issue currently carries, drop it and add
+ * `fleet:ready`. Removing a label the issue does not have is a no-op for `gh`
+ * (the labels themselves exist in the repo — `init-labels` creates them), which
+ * is what lets an operator restart work from any state without reading the
+ * issue's labels first.
+ */
+export function readyLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
+  const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
+  for (const label of [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
+    args.push("--remove-label", label);
+  }
+  args.push("--add-label", FLEET_LABELS.ready);
+  return args;
+}
+
+export async function markReady(project: ProjectConfig, issueNumber: number): Promise<void> {
+  await run("gh", readyLabelArgs(project, issueNumber));
+}
+
 export async function upsertStatusComment(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
   const full = `${STATUS_MARKER}\n${body}`;
   const existing = (await listComments(project, issueNumber)).find((c) => c.body.startsWith(STATUS_MARKER));

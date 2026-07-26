@@ -80,6 +80,27 @@ export function startServer(opts: {
     }
   });
 
+  // Destructive: force-closes the session and re-queues the issue, which
+  // discards the branch and worktree the old session built. The dashboard
+  // confirms with the operator before calling this.
+  app.post("/api/tickets/:project/:issue/restart", async (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const known =
+      state.get(projectName, issueNumber) ??
+      loop.getBoard().find((t) => t.project === projectName && t.issueNumber === issueNumber);
+    if (!known) return c.json({ error: `${projectName}#${issueNumber} is not a known fleet ticket` }, 404);
+    try {
+      await loop.restartTicket(projectName, issueNumber);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
+  });
+
   // Agent-facing intake: file a fleet ticket without touching `gh` directly, so
   // GitHub stays the single source of truth for the board.
   app.post("/api/projects/:project/tickets", async (c) => {
