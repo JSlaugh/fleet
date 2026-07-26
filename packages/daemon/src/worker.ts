@@ -7,32 +7,18 @@ import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
 
 /**
- * `outputFormat` only enforces what the JSON schema says, and zod cannot express
- * "prTitle is required when status is completed" in a way `z.toJSONSchema` can
- * emit. Bolt the draft-7 conditionals on afterwards so the API makes the model
- * retry instead of the daemon quietly falling back to the issue title.
- * `WorkerResultSchema` itself stays lenient — the fallbacks in `loop.ts` are the
- * safety net for older sessions and partial results.
+ * The SDK hands `outputFormat`'s schema to the API as the `StructuredOutput`
+ * tool's `input_schema`, and the API rejects `oneOf`/`allOf`/`anyOf` at the top
+ * level of a tool schema. Bolting draft-7 conditionals on here to express
+ * "prTitle is required when status is completed" therefore 400s every worker
+ * session on its first request, before the model sees anything. The conditional
+ * half of the output contract lives in `WORKER_CONTRACT` prose and in the
+ * per-property descriptions instead; the fallbacks in `loop.ts` are the safety
+ * net when a worker ignores it.
  */
-export function withConditionalRequirements(schema: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...schema,
-    allOf: [
-      {
-        if: { properties: { status: { const: "completed" } }, required: ["status"] },
-        then: { required: ["prTitle", "prBody"] },
-      },
-      {
-        if: { properties: { status: { const: "blocked" } }, required: ["status"] },
-        then: { required: ["blockedReason"] },
-      },
-    ],
-  };
-}
-
-export const WORKER_OUTPUT_SCHEMA = withConditionalRequirements(
-  z.toJSONSchema(WorkerResultSchema, { target: "draft-7" }) as Record<string, unknown>,
-);
+export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, {
+  target: "draft-7",
+}) as Record<string, unknown>;
 
 const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
 

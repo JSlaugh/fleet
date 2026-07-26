@@ -106,16 +106,17 @@ describe("WORKER_OUTPUT_SCHEMA", () => {
     );
   });
 
-  it("requires prTitle/prBody when completed and blockedReason when blocked", () => {
-    expect(WORKER_OUTPUT_SCHEMA.allOf).toEqual([
-      {
-        if: { properties: { status: { const: "completed" } }, required: ["status"] },
-        then: { required: ["prTitle", "prBody"] },
-      },
-      {
-        if: { properties: { status: { const: "blocked" } }, required: ["status"] },
-        then: { required: ["blockedReason"] },
-      },
-    ]);
+  it("carries no top-level combinator, which the API rejects in a tool input_schema", () => {
+    expect(WORKER_OUTPUT_SCHEMA.allOf).toBeUndefined();
+    expect(WORKER_OUTPUT_SCHEMA.anyOf).toBeUndefined();
+    expect(WORKER_OUTPUT_SCHEMA.oneOf).toBeUndefined();
+  });
+
+  it("requires only the fields every result carries, whatever the status", () => {
+    expect(WORKER_OUTPUT_SCHEMA.required).toEqual(
+      expect.arrayContaining(["status", "summary", "filesChanged", "confidence"]),
+    );
+    expect(WORKER_OUTPUT_SCHEMA.required).not.toContain("prTitle");
+    expect(WORKER_OUTPUT_SCHEMA.required).not.toContain("blockedReason");
   });
 });
