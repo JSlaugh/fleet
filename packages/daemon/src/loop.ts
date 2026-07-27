@@ -16,12 +16,14 @@ import {
 import type { ApprovalManager } from "./approvals.ts";
 import { run } from "./exec.ts";
 import {
+  buildReviewFeedbackPrompt,
   createIssue,
   createPullRequest,
   dependencyStatus,
   escalateToElevated,
   getIssueComments,
   getIssueLabels,
+  getPrFeedback,
   getPrState,
   listFleetIssues,
   listIssueStates,
@@ -30,6 +32,7 @@ import {
   swapLabel,
   toBoardTicket,
   upsertStatusComment,
+  type PrFeedback,
   type ReadyIssue,
 } from "./github.ts";
 import { Journal } from "./journal.ts";
@@ -133,6 +136,35 @@ export function shouldAutoElevate(
 }
 
 /**
+ * Ticket records eligible for PR-review-feedback resumption this cycle: sitting
+ * in `review` with a PR and a resumable session, not already in flight, their
+ * issue still open, and the project hasn't opted out.
+ */
+export function pickReviewCandidates(
+  records: TicketRecord[],
+  project: { name: string; autoAddressReviews?: boolean },
+  openIssueNumbers: ReadonlySet<number>,
+  runningKeys: Iterable<string>,
+): TicketRecord[] {
+  if (project.autoAddressReviews === false) return [];
+  const running = new Set(runningKeys);
+  return records.filter(
+    (record) =>
+      record.project === project.name &&
+      record.status === "review" &&
+      !!record.prUrl &&
+      !!record.sessionId &&
+      openIssueNumbers.has(record.issueNumber) &&
+      !running.has(`${record.project}#${record.issueNumber}`),
+  );
+}
+
+/** Approved-with-no-comment reviews (and no fresh inline comments) trigger nothing. */
+export function shouldActOnFeedback(feedback: Pick<PrFeedback, "hasChangesRequested" | "reviews" | "comments">): boolean {
+  return feedback.hasChangesRequested || feedback.reviews.length > 0 || feedback.comments.length > 0;
+}
+
+/**
  * The `fleet:ready` issues that are actually claimable this cycle: not already
  * in flight, and with every `Depends-on` reference satisfied (closed, or
  * pointing at an issue number this repo has never had). Preserves the input
@@ -214,6 +246,12 @@ export class FleetLoop {
       log("loop", `[dry-run] would clean up finished tickets for ${project.name}`);
     } else {
       await this.cleanupFinished(project, issues);
+    }
+
+    if (this.dryRun) {
+      log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);
+    } else {
+      await this.addressReviews(project, openIssueNumbers);
     }
 
     const activeCount = [...this.running.keys()].filter((k) => k.startsWith(`${project.name}#`)).length;
@@ -768,6 +806,38 @@ export class FleetLoop {
     await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
     this.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     this.emitBoard();
+  }
+
+  /**
+   * Changes-requested reviews (or fresh inline comments) on an open fleet PR
+   * resume that ticket's session in its existing worktree/branch. Runs before
+   * claiming new `fleet:ready` issues so in-flight work gets capacity first;
+   * the per-candidate active-count check below is what makes it count against
+   * `maxConcurrent` rather than bypassing it.
+   */
+  private async addressReviews(project: ProjectConfig, openIssueNumbers: ReadonlySet<number>): Promise<void> {
+    const candidates = pickReviewCandidates(this.state.all(), project, openIssueNumbers, this.running.keys());
+
+    for (const record of candidates) {
+      const activeCount = [...this.running.keys()].filter((k) => k.startsWith(`${project.name}#`)).length;
+      if (activeCount >= project.maxConcurrent) return;
+
+      const scope = this.key(project.name, record.issueNumber);
+      let feedback: PrFeedback;
+      try {
+        feedback = await getPrFeedback(project, record.prUrl as string, record.lastReviewHandledAt);
+      } catch (err) {
+        logError("loop", `${scope}: could not fetch PR review feedback`, err);
+        continue;
+      }
+      if (!shouldActOnFeedback(feedback) || !feedback.latestAt) continue;
+
+      // Watermark set before resuming so a crash can't reprocess the same feedback.
+      this.state.update(project.name, record.issueNumber, { lastReviewHandledAt: feedback.latestAt });
+      await swapLabel(project, record.issueNumber, FLEET_LABELS.review, FLEET_LABELS.inProgress);
+      log("loop", `${scope}: PR review feedback arrived — resuming session ${record.sessionId}`);
+      this.track(project.name, record.issueNumber, this.resumeTicket(project, record, buildReviewFeedbackPrompt(feedback)));
+    }
   }
 
   private async cleanupFinished(project: ProjectConfig, openIssues: { number: number }[]): Promise<void> {

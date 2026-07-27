@@ -16,7 +16,8 @@
       "elevatedModel": "claude-opus-5",
       "lightModel": "claude-haiku-4-5-20251001",
       "planChildrenReady": false,
-      "autoElevateOnFailure": true
+      "autoElevateOnFailure": true,
+      "autoAddressReviews": true
     }
   ]
 }

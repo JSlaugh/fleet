@@ -41,6 +41,7 @@ export const ProjectConfigSchema = z.object({
   allowedTools: z.array(z.string()).optional(),
   planChildrenReady: z.boolean().default(false),
   autoElevateOnFailure: z.boolean().default(true),
+  autoAddressReviews: z.boolean().default(true),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -121,6 +122,8 @@ export interface TicketRecord {
   isPlan?: boolean;
   /** Set once this ticket has auto-retried on the elevated model after a failure — caps escalation to once, ever. */
   autoElevated?: boolean;
+  /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
+  lastReviewHandledAt?: string;
 }
 
 export interface ModelUsageSummary {

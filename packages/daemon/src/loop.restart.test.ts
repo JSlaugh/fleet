@@ -29,6 +29,7 @@ const project: ProjectConfig = {
   maxConcurrent: 1,
   planChildrenReady: false,
   autoElevateOnFailure: true,
+  autoAddressReviews: true,
 };
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {

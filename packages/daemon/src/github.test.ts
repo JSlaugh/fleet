@@ -1,6 +1,15 @@
 import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { dependencyStatus, escalateLabelArgs, issueNumberFromUrl, parseDependsOn, priorityRank, readyLabelArgs } from "./github.ts";
+import {
+  buildPrFeedback,
+  buildReviewFeedbackPrompt,
+  dependencyStatus,
+  escalateLabelArgs,
+  issueNumberFromUrl,
+  parseDependsOn,
+  priorityRank,
+  readyLabelArgs,
+} from "./github.ts";
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -27,6 +36,7 @@ describe("readyLabelArgs", () => {
     maxConcurrent: 1,
     planChildrenReady: false,
     autoElevateOnFailure: true,
+    autoAddressReviews: true,
   } satisfies ProjectConfig;
 
   it("removes every other fleet state label and adds fleet:ready", () => {
@@ -54,6 +64,7 @@ describe("escalateLabelArgs", () => {
     maxConcurrent: 1,
     planChildrenReady: false,
     autoElevateOnFailure: true,
+    autoAddressReviews: true,
   } satisfies ProjectConfig;
 
   it("swaps in-progress for elevate + ready", () => {
@@ -140,5 +151,138 @@ describe("dependencyStatus", () => {
       blockedBy: [1],
       unknown: [999],
     });
+  });
+});
+
+function review(patch: Partial<{ user: { login: string } | null; state: string; body: string | null; submitted_at: string }> = {}) {
+  return {
+    user: { login: "reviewer" },
+    state: "COMMENTED",
+    body: "looks good",
+    submitted_at: "2026-01-01T00:00:00.000Z",
+    ...patch,
+  };
+}
+
+function reviewComment(patch: Partial<{ path: string; line: number | null; body: string | null; user: { login: string } | null; created_at: string }> = {}) {
+  return {
+    path: "src/index.ts",
+    line: 10,
+    body: "please fix this",
+    user: { login: "reviewer" },
+    created_at: "2026-01-01T00:00:00.000Z",
+    ...patch,
+  };
+}
+
+describe("buildPrFeedback", () => {
+  it("returns nothing when there is nothing new", () => {
+    expect(buildPrFeedback([], [], undefined)).toEqual({
+      reviews: [],
+      comments: [],
+      hasChangesRequested: false,
+      latestAt: undefined,
+    });
+  });
+
+  it("ignores an approved review with no body", () => {
+    const feedback = buildPrFeedback([review({ state: "APPROVED", body: "" })], [], undefined);
+    expect(feedback.reviews).toEqual([]);
+    expect(feedback.hasChangesRequested).toBe(false);
+  });
+
+  it("flags hasChangesRequested even when the review has no body", () => {
+    const feedback = buildPrFeedback([review({ state: "CHANGES_REQUESTED", body: null })], [], undefined);
+    expect(feedback.hasChangesRequested).toBe(true);
+    expect(feedback.reviews).toEqual([]);
+    expect(feedback.latestAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("includes reviews and comments with a meaningful body", () => {
+    const feedback = buildPrFeedback(
+      [review({ state: "CHANGES_REQUESTED", body: "fix the thing" })],
+      [reviewComment()],
+      undefined,
+    );
+    expect(feedback.reviews).toEqual([
+      { author: "reviewer", state: "CHANGES_REQUESTED", body: "fix the thing", submittedAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+    expect(feedback.comments).toEqual([
+      { path: "src/index.ts", line: 10, body: "please fix this", author: "reviewer", createdAt: "2026-01-01T00:00:00.000Z" },
+    ]);
+  });
+
+  it("drops the fleet status marker", () => {
+    const feedback = buildPrFeedback(
+      [],
+      [reviewComment({ body: "<!-- fleet-status -->\nsomething" })],
+      undefined,
+    );
+    expect(feedback.comments).toEqual([]);
+  });
+
+  it("filters out items at or before the since watermark", () => {
+    const older = review({ submitted_at: "2026-01-01T00:00:00.000Z" });
+    const newer = review({ submitted_at: "2026-01-02T00:00:00.000Z" });
+    const feedback = buildPrFeedback([older, newer], [], "2026-01-01T00:00:00.000Z");
+    expect(feedback.reviews).toEqual([
+      { author: "reviewer", state: "COMMENTED", body: "looks good", submittedAt: "2026-01-02T00:00:00.000Z" },
+    ]);
+  });
+
+  it("returns everything when since is undefined", () => {
+    const feedback = buildPrFeedback([review()], [reviewComment()], undefined);
+    expect(feedback.reviews.length).toBe(1);
+    expect(feedback.comments.length).toBe(1);
+  });
+
+  it("computes latestAt as the max timestamp across every new item, not just the filtered ones", () => {
+    const feedback = buildPrFeedback(
+      [review({ state: "CHANGES_REQUESTED", body: null, submitted_at: "2026-01-05T00:00:00.000Z" })],
+      [reviewComment({ created_at: "2026-01-02T00:00:00.000Z" })],
+      undefined,
+    );
+    expect(feedback.latestAt).toBe("2026-01-05T00:00:00.000Z");
+  });
+
+  it("falls back to 'unknown' when the author user is null", () => {
+    const feedback = buildPrFeedback([], [reviewComment({ user: null })], undefined);
+    expect(feedback.comments[0]?.author).toBe("unknown");
+  });
+});
+
+describe("buildReviewFeedbackPrompt", () => {
+  it("puts review bodies first, then inline comments grouped by path:line", () => {
+    const prompt = buildReviewFeedbackPrompt({
+      reviews: [{ author: "alice", state: "CHANGES_REQUESTED", body: "please add tests", submittedAt: "2026-01-01T00:00:00.000Z" }],
+      comments: [
+        { path: "src/a.ts", line: 5, body: "typo here", author: "bob", createdAt: "2026-01-01T00:00:00.000Z" },
+        { path: "src/a.ts", line: 5, body: "also this", author: "carol", createdAt: "2026-01-01T00:00:01.000Z" },
+        { path: "src/b.ts", line: 12, body: "rename this", author: "bob", createdAt: "2026-01-01T00:00:02.000Z" },
+      ],
+    });
+
+    const reviewIndex = prompt.indexOf("please add tests");
+    const commentIndex = prompt.indexOf("src/a.ts:5");
+    expect(reviewIndex).toBeGreaterThan(-1);
+    expect(commentIndex).toBeGreaterThan(reviewIndex);
+    expect(prompt.indexOf("typo here")).toBeGreaterThan(commentIndex);
+    expect(prompt.indexOf("also this")).toBeGreaterThan(prompt.indexOf("typo here"));
+    expect(prompt).toContain("src/b.ts:12");
+    expect(prompt).toContain("Address each point, commit your changes, and finish with an updated structured result.");
+  });
+
+  it("omits sections that have nothing to say", () => {
+    const prompt = buildReviewFeedbackPrompt({ reviews: [], comments: [] });
+    expect(prompt).not.toContain("## Review comments");
+    expect(prompt).not.toContain("## Inline comments");
+  });
+
+  it("uses '?' as the line key for a comment with no line", () => {
+    const prompt = buildReviewFeedbackPrompt({
+      reviews: [],
+      comments: [{ path: "README.md", line: null, body: "fix typo", author: "bob", createdAt: "2026-01-01T00:00:00.000Z" }],
+    });
+    expect(prompt).toContain("README.md:?");
   });
 });
