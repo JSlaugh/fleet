@@ -11,6 +11,8 @@ export const PRIORITY_LABELS = ["fleet:p1", "fleet:p2", "fleet:p3"] as const;
 
 export const ELEVATE_LABEL = "fleet:elevate";
 
+export const LIGHT_LABEL = "fleet:light";
+
 export const PLAN_LABEL = "fleet:plan";
 
 export const ALL_FLEET_LABELS: { name: string; color: string; description: string }[] = [
@@ -19,6 +21,7 @@ export const ALL_FLEET_LABELS: { name: string; color: string; description: strin
   { name: FLEET_LABELS.needsInput, color: "d93f0b", description: "Worker is blocked on a human decision" },
   { name: FLEET_LABELS.review, color: "1d76db", description: "PR open, awaiting human review" },
   { name: ELEVATE_LABEL, color: "5319e7", description: "Run this ticket on the project's elevated model" },
+  { name: LIGHT_LABEL, color: "bfd4f2", description: "Run this ticket on the project's light model" },
   { name: PLAN_LABEL, color: "c2e0c6", description: "Decompose this epic into child tickets instead of coding it" },
   { name: "fleet:p1", color: "b60205", description: "Highest priority" },
   { name: "fleet:p2", color: "d93f0b", description: "Medium priority" },
@@ -34,6 +37,7 @@ export const ProjectConfigSchema = z.object({
   setupCommand: z.string().optional(),
   model: z.string().optional(),
   elevatedModel: z.string().optional(),
+  lightModel: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
   planChildrenReady: z.boolean().default(false),
 });
@@ -71,6 +75,12 @@ export const PlanResultSchema = z.object({
     title: z.string().describe("Concise title for the child ticket"),
     body: z.string().describe("Full issue body for the child ticket: it must be self-contained (problem statement, acceptance criteria, and how to verify it), independently implementable, and PR-sized"),
     priority: z.enum(["fleet:p1", "fleet:p2", "fleet:p3"]).optional().describe("Priority label to apply to the child issue, if any"),
+    tier: z
+      .enum(["light", "standard", "elevated"])
+      .optional()
+      .describe(
+        "Suggested model tier for this child ticket, judged honestly by complexity: light = mechanical/small-surface (doc tweaks, renames, simple sweeps), elevated = cross-cutting or design-heavy work, standard = everything else (default)",
+      ),
   })).describe("Independent, PR-sized child tickets decomposed from this epic; each must be self-contained (problem, acceptance criteria, verification) and independently implementable"),
   blockedReason: z.string().optional().describe("The specific question or decision a human must answer (required when status is blocked)"),
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that this decomposition is correct and complete"),
@@ -105,6 +115,7 @@ export interface TicketRecord {
   modelUsage?: Record<string, ModelUsageSummary>;
   lastActivityNote?: string;
   elevated?: boolean;
+  light?: boolean;
   autoResumed?: boolean;
   isPlan?: boolean;
 }
