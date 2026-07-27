@@ -7,6 +7,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit && pnpm --filter @fleet/dashboard typecheck",
     "daemon": "pnpm --filter @fleet/daemon start",
+    "mcp": "pnpm --filter @fleet/mcp start",
     "dashboard:dev": "pnpm --filter @fleet/dashboard dev",
     "dashboard:build": "pnpm --filter @fleet/dashboard build"
   },

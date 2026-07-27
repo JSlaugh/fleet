@@ -20,7 +20,7 @@ export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, {
   target: "draft-7",
 }) as Record<string, unknown>;
 
-const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task"];
+const DEFAULT_ALLOWED_TOOLS = ["Read", "Glob", "Grep", "Write", "Edit", "Bash", "TodoWrite", "Skill", "Agent", "Task", "mcp__fleet"];
 
 const WORKER_CONTRACT = `
 You are a fleet worker: an autonomous coding agent handling exactly one GitHub issue in a dedicated git worktree.
