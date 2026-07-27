@@ -11,6 +11,8 @@ interface PendingInternal {
   approval: PendingApproval;
   resolve: (outcome: ApprovalOutcome) => void;
   timer: NodeJS.Timeout;
+  signal?: AbortSignal;
+  onAbort?: () => void;
 }
 
 export class ApprovalManager {
@@ -40,8 +42,12 @@ export class ApprovalManager {
     log("approvals", `${opts.project}#${opts.issueNumber}: ${opts.toolName} awaiting ${opts.kind === "question" ? "answers" : "approval"} (${id})`);
     return new Promise<ApprovalOutcome>((resolve) => {
       const timer = setTimeout(() => this.settle(id, { allowed: false }, "timed out"), opts.timeoutMs);
-      this.pending.set(id, { approval, resolve, timer });
-      opts.signal?.addEventListener("abort", () => this.settle(id, { allowed: false }, "session aborted"), { once: true });
+      const entry: PendingInternal = { approval, resolve, timer, signal: opts.signal };
+      if (opts.signal) {
+        entry.onAbort = () => this.settle(id, { allowed: false }, "session aborted");
+        opts.signal.addEventListener("abort", entry.onAbort, { once: true });
+      }
+      this.pending.set(id, entry);
       this.events.emit("approvals");
     });
   }
@@ -60,6 +66,7 @@ export class ApprovalManager {
     if (!entry) return false;
     this.pending.delete(id);
     clearTimeout(entry.timer);
+    if (entry.onAbort) entry.signal?.removeEventListener("abort", entry.onAbort);
     log("approvals", `${entry.approval.project}#${entry.approval.issueNumber}: ${entry.approval.toolName} ${reason} (${id})`);
     entry.resolve(outcome);
     this.events.emit("approvals");

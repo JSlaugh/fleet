@@ -1,3 +1,4 @@
+import { getEventListeners } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApprovalManager } from "./approvals.ts";
 
@@ -62,6 +63,28 @@ describe("ApprovalManager", () => {
     controller.abort();
     await expect(promise).resolves.toEqual({ allowed: false });
     expect(mgr.list()).toHaveLength(0);
+  });
+
+  it("removes the abort listener once resolved normally", async () => {
+    const mgr = new ApprovalManager();
+    const controller = new AbortController();
+    const promise = baseReq(mgr, { signal: controller.signal });
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+    const id = mgr.list()[0]!.id;
+    mgr.resolve(id, { allowed: true });
+    await promise;
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+
+  it("removes the abort listener when it times out", async () => {
+    vi.useFakeTimers();
+    const mgr = new ApprovalManager();
+    const controller = new AbortController();
+    const promise = baseReq(mgr, { timeoutMs: 1000, signal: controller.signal });
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(1);
+    vi.advanceTimersByTime(1000);
+    await promise;
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
   });
 
   it("double-resolve returns false the second time", async () => {
