@@ -40,6 +40,11 @@ export async function removeWorktree(project: ProjectConfig, worktreePath: strin
   await run("git", ["-C", project.repoPath, "worktree", "remove", "--force", worktreePath], { allowFailure: true });
 }
 
+/** Best-effort: the remote branch may already be gone (GitHub auto-delete, manual prune). */
+export async function deleteRemoteBranch(project: ProjectConfig, branch: string): Promise<void> {
+  await run("git", ["-C", project.repoPath, "push", "origin", "--delete", branch], { allowFailure: true });
+}
+
 export async function pushBranch(worktreePath: string, branch: string): Promise<void> {
   await run("git", ["-C", worktreePath, "push", "-u", "origin", branch]);
 }
