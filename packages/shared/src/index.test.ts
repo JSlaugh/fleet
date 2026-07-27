@@ -146,6 +146,33 @@ describe("PlanResultSchema", () => {
     expect(parsed.success).toBe(false);
   });
 
+  it("parses tickets with a tier and defaults tier to undefined", () => {
+    const parsed = PlanResultSchema.safeParse({
+      status: "completed",
+      summary: "s",
+      tickets: [
+        { title: "light one", body: "b", tier: "light" },
+        { title: "elevated one", body: "b", tier: "elevated" },
+        { title: "no tier", body: "b" },
+      ],
+      confidence: "high",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.tickets.map((t) => t.tier)).toEqual(["light", "elevated", undefined]);
+    }
+  });
+
+  it("rejects an unknown tier", () => {
+    const parsed = PlanResultSchema.safeParse({
+      status: "completed",
+      summary: "s",
+      tickets: [{ title: "t", body: "b", tier: "urgent" }],
+      confidence: "high",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
   it("requires status, summary, tickets, and confidence", () => {
     expect(PlanResultSchema.safeParse({}).success).toBe(false);
     expect(

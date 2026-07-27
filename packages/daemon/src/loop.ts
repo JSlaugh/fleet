@@ -3,6 +3,7 @@ import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import {
   ELEVATE_LABEL,
   FLEET_LABELS,
+  LIGHT_LABEL,
   PLAN_LABEL,
   mergeModelUsage,
   type BoardTicket,
@@ -95,6 +96,21 @@ export function pickAutoResumable(
         !running.has(`${record.project}#${record.issueNumber}`),
     )
     .slice(0, capacity);
+}
+
+/**
+ * Which model a ticket's session should run on. `fleet:elevate` wins over
+ * `fleet:light` when both are present — elevation is an escalation signal.
+ * Either label falls through to the project default when its matching tier
+ * model isn't configured.
+ */
+export function selectModel(
+  project: { model?: string; elevatedModel?: string; lightModel?: string },
+  opts: { elevated: boolean; light: boolean },
+): string | undefined {
+  if (opts.elevated) return project.elevatedModel ?? project.model;
+  if (opts.light) return project.lightModel ?? project.model;
+  return project.model;
 }
 
 /**
@@ -216,6 +232,7 @@ export class FleetLoop {
       const worktree = await createWorktree(project, issue.number, this.config.worktreeRoot);
 
       const elevated = issue.labels.includes(ELEVATE_LABEL);
+      const light = issue.labels.includes(LIGHT_LABEL);
       const isPlan = issue.labels.includes(PLAN_LABEL);
       this.state.upsert({
         project: project.name,
@@ -228,11 +245,12 @@ export class FleetLoop {
         lastActivityAt: now,
         costUsd: 0,
         elevated,
+        light,
         isPlan,
       });
 
       const journal = new Journal(this.dataDirPath, project.name, issue.number);
-      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title, elevated, isPlan });
+      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title, elevated, light, isPlan });
 
       await this.runSession(
         project,
@@ -242,6 +260,7 @@ export class FleetLoop {
         undefined,
         buildIssuePrompt(project, issue, comments),
         elevated,
+        light,
         isPlan ? "plan" : "code",
       );
     } catch (err) {
@@ -262,6 +281,7 @@ export class FleetLoop {
     resumeSessionId: string | undefined,
     firstMessage: string,
     elevated: boolean,
+    light: boolean,
     kind: SessionKind,
   ): Promise<void> {
     const key = this.key(project.name, issue.number);
@@ -269,9 +289,14 @@ export class FleetLoop {
     // `total_cost_usd`/`modelUsage` restart at zero for every resumed session, so
     // remember what the ticket had already spent and add to it.
     const base: SessionBase = { costUsd: existing?.costUsd ?? 0, modelUsage: existing?.modelUsage };
-    const model = elevated ? project.elevatedModel ?? project.model : project.model;
+    const model = selectModel(project, { elevated, light });
+    if (elevated && light) {
+      log("loop", `${key}: both ${ELEVATE_LABEL} and ${LIGHT_LABEL} are present — elevate wins`);
+    }
     if (elevated && project.elevatedModel) {
       log("loop", `${key}: running elevated on ${project.elevatedModel}`);
+    } else if (!elevated && light && project.lightModel) {
+      log("loop", `${key}: running light on ${project.lightModel}`);
     }
     const session = new WorkerSession({
       project,
@@ -427,18 +452,20 @@ export class FleetLoop {
     log("loop", `${scope}: resuming session ${record.sessionId}`);
     try {
       let elevated = record.elevated ?? false;
+      let light = record.light ?? false;
       let isPlan = record.isPlan ?? false;
       try {
         const labels = await getIssueLabels(project, record.issueNumber);
         elevated = labels.includes(ELEVATE_LABEL);
+        light = labels.includes(LIGHT_LABEL);
         isPlan = labels.includes(PLAN_LABEL);
       } catch {
         // label check is best-effort; fall back to the recorded flags
       }
-      this.state.update(project.name, record.issueNumber, { elevated, isPlan });
+      this.state.update(project.name, record.issueNumber, { elevated, light, isPlan });
       await this.markWorking(project, record.issueNumber);
       const journal = new Journal(this.dataDirPath, project.name, record.issueNumber);
-      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, isPlan });
+      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, light, isPlan });
       await this.runSession(
         project,
         issue,
@@ -447,6 +474,7 @@ export class FleetLoop {
         record.sessionId,
         message,
         elevated,
+        light,
         isPlan ? "plan" : "code",
       );
     } catch (err) {
@@ -636,7 +664,12 @@ export class FleetLoop {
     const autoReady = project.planChildrenReady;
     const created: { number: number; url: string; title: string }[] = [];
     for (const ticket of result.tickets) {
-      const labels = [...(ticket.priority ? [ticket.priority] : []), ...(autoReady ? [FLEET_LABELS.ready] : [])];
+      const tierLabel = ticket.tier === "light" ? LIGHT_LABEL : ticket.tier === "elevated" ? ELEVATE_LABEL : undefined;
+      const labels = [
+        ...(ticket.priority ? [ticket.priority] : []),
+        ...(tierLabel ? [tierLabel] : []),
+        ...(autoReady ? [FLEET_LABELS.ready] : []),
+      ];
       const child = await createIssue(project, { title: ticket.title, body: ticket.body, labels });
       created.push({ ...child, title: ticket.title });
     }

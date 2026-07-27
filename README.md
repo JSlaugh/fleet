@@ -56,7 +56,8 @@ Workers load each project's own `.claude/` setup (`settingSources: ['project']`)
 Model selection is layered, most specific wins:
 
 1. **Skills and agents in the repo** — `model:` frontmatter in a SKILL.md or agent .md pins the model for that skill/agent's work. This is the recommended place to encode "this kind of task needs this model."
-2. **`fleet:elevate` label** on an issue — runs that ticket's session on the project's `elevatedModel` (config). Add the label + reply to a blocked ticket to retry harder with a stronger model.
-3. **Per-project `model`** in the config — the session default for all of that project's workers; unset means the Claude CLI's configured default.
+2. **`fleet:elevate` label** on an issue — runs that ticket's session on the project's `elevatedModel` (config). Add the label + reply to a blocked ticket to retry harder with a stronger model. Wins over `fleet:light` if both are present.
+3. **`fleet:light` label** on an issue — runs that ticket's session on the project's `lightModel` (config), for cheap mechanical work (doc tweaks, renames, small sweeps). No-op without `lightModel` configured. A `fleet:plan` decomposition can tag a child ticket's suggested tier when it judges the work light or elevated; standard tier gets no label.
+4. **Per-project `model`** in the config — the session default for all of that project's workers; unset means the Claude CLI's configured default.
 
 The model actually used shows on each board card and in ticket detail, with a per-model token/cost breakdown after each run (subagent models included).
