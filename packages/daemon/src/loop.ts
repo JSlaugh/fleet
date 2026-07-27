@@ -1145,6 +1145,10 @@ export class FleetLoop {
     return this.config.projects.find((p) => p.name === name);
   }
 
+  getHistoryRecord(project: string, issueNumber: number): ClosedTicketRecord | undefined {
+    return this.history.get(project, issueNumber);
+  }
+
   private emitBoard(): void {
     this.boardThrottle.trigger();
   }
