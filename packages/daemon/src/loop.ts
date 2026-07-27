@@ -8,7 +8,7 @@ import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
 import { logError } from "./log.ts";
 import { reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
-import { handlePlanLimit, isPaused, updatePauseState } from "./pause.ts";
+import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { HistoryStore, StateStore } from "./state.ts";
 import { machineReviewGate } from "./supervise.ts";
@@ -43,6 +43,7 @@ export class FleetLoop {
     dataDirPath: string,
     approvals: ApprovalManager,
     dryRun: boolean,
+    once: boolean = false,
   ) {
     this.history = new HistoryStore(dataDirPath);
     this.ctx = {
@@ -52,6 +53,7 @@ export class FleetLoop {
       dataDirPath,
       approvals,
       dryRun,
+      once,
       running: this.running,
       live: this.live,
       restarting: this.restarting,
@@ -86,6 +88,10 @@ export class FleetLoop {
 
   ticketCapabilities(projectName: string, issueNumber: number, known: boolean): { canRestart: boolean; canReply: boolean } {
     return ticketCapabilities(this.ctx, projectName, issueNumber, known);
+  }
+
+  setPaused(paused: boolean): void {
+    setPaused(this.ctx, paused);
   }
 
   async drain(): Promise<void> {

@@ -147,6 +147,17 @@ describe("StateStore", () => {
     expect(new StateStore(dataDir).getPausedUntil()).toBe("2026-02-01T00:00:00.000Z");
   });
 
+  it("getPaused/setPaused round-trip, default to false, and persist across instances", () => {
+    const dataDir = tempDataDir();
+    const store = new StateStore(dataDir);
+    expect(store.getPaused()).toBe(false);
+    store.setPaused(true);
+    expect(store.getPaused()).toBe(true);
+    expect(new StateStore(dataDir).getPaused()).toBe(true);
+    store.setPaused(false);
+    expect(new StateStore(dataDir).getPaused()).toBe(false);
+  });
+
   describe("clearLiveFlags", () => {
     it("downgrades running tickets to stalled and clears sessionLive, as crash recovery on daemon restart", () => {
       const dataDir = tempDataDir();

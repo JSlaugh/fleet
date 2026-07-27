@@ -28,7 +28,7 @@ pnpm daemon sync-templates                       # stamps the fleet skill + .mcp
 
 ```bash
 pnpm daemon -- --dry-run --once   # poll and report what would be claimed; changes nothing
-pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit
+pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit (no dashboard, so approvals auto-deny)
 pnpm daemon                       # the real loop + dashboard at http://localhost:4400
 pnpm test                         # vitest: daemon loop/state/github logic, worker contract guards, mcp client
 ```

@@ -51,8 +51,21 @@ export function createApp(opts: {
   const app = new Hono();
 
   app.get("/api/board", (c) =>
-    c.json({ tickets: loop.getBoard(), updatedAt: new Date().toISOString(), pausedUntil: state.getPausedUntil() }),
+    c.json({
+      tickets: loop.getBoard(),
+      updatedAt: new Date().toISOString(),
+      pausedUntil: state.getPausedUntil(),
+      paused: state.getPaused(),
+      runningCount: loop.activeCount,
+    }),
   );
+
+  app.post("/api/daemon/pause", async (c) => {
+    const { paused } = await c.req.json<{ paused: boolean }>().catch(() => ({ paused: undefined }));
+    if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);
+    loop.setPaused(paused);
+    return c.json({ ok: true, paused });
+  });
 
   app.get("/api/tickets/:project/:issue", (c) => {
     const projectName = c.req.param("project");

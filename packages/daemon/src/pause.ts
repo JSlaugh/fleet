@@ -4,10 +4,22 @@ import { upsertStatusComment } from "./github.ts";
 import { log, logError } from "./log.ts";
 import type { ReadyIssue } from "./github.ts";
 
-/** True while a plan usage-limit pause is in effect; board polling and cleanup still run, claims and resumes do not. */
+/**
+ * True while claims and resumes should be skipped: either an operator-initiated
+ * drain (`paused`) or a plan usage-limit pause (`pausedUntil` in the future).
+ * Board polling and cleanup still run either way.
+ */
 export function isPaused(ctx: LoopContext): boolean {
+  if (ctx.state.getPaused()) return true;
   const pausedUntil = ctx.state.getPausedUntil();
   return !!pausedUntil && Date.now() < Date.parse(pausedUntil);
+}
+
+/** Operator-initiated pause toggle (drain mode) — persists across restarts until explicitly resumed. */
+export function setPaused(ctx: LoopContext, paused: boolean): void {
+  ctx.state.setPaused(paused);
+  log("loop", paused ? "daemon paused — draining, no new claims or resumes" : "daemon resumed — claiming and resuming as normal");
+  ctx.emitBoard();
 }
 
 /** Clears an expired pause; called once at the top of every cycle before anything checks `isPaused`. */

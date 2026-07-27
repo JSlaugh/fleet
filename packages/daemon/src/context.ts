@@ -23,6 +23,8 @@ export interface LoopContext {
   readonly dataDirPath: string;
   readonly approvals: ApprovalManager;
   readonly dryRun: boolean;
+  /** `--once` runs have no dashboard server, so approvals can never be answered — auto-deny instead of waiting out `approvalTimeoutMinutes`. */
+  readonly once: boolean;
   /** Runs in flight, keyed `project#issue` — the concurrency ledger. */
   readonly running: Map<string, Promise<void>>;
   /** Live sessions, same keys, for steering and aborting. */

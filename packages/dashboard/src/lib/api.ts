@@ -4,6 +4,8 @@ export interface BoardResponse {
   tickets: BoardTicket[];
   updatedAt: string;
   pausedUntil?: string;
+  paused: boolean;
+  runningCount: number;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -46,6 +48,17 @@ export async function sendReply(project: string, issueNumber: number, message: s
 /** Destructive: terminates the ticket's session and discards its branch work. */
 export async function restartTicket(project: string, issueNumber: number): Promise<void> {
   await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" }));
+}
+
+/** Toggles drain mode: stops new claims/resumes while leaving running sessions to finish. */
+export async function setDaemonPaused(paused: boolean): Promise<void> {
+  await json(
+    await fetch("/api/daemon/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused }),
+    }),
+  );
 }
 
 export function fetchApprovals(): Promise<{ approvals: PendingApproval[] }> {
