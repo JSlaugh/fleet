@@ -49,7 +49,7 @@ import {
 import { HistoryStore, StateStore } from "./state.ts";
 import { TrailingThrottle } from "./throttle.ts";
 import { WorkerSession, buildIssuePrompt, type SessionKind } from "./worker.ts";
-import { collectBranchDiff, createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
+import { collectBranchDiff, createWorktree, deleteRemoteBranch, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
@@ -1088,6 +1088,7 @@ export class FleetLoop {
       log("loop", `${record.project}#${record.issueNumber}: PR ${prState.toLowerCase()} and issue closed — cleaning up worktree + branch ${record.branch}`);
       await removeWorktree(project, record.worktreePath);
       await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
+      await deleteRemoteBranch(project, record.branch);
       this.history.add({ ...record, closedAt: new Date().toISOString(), prState });
       this.state.remove(record.project, record.issueNumber);
       this.emitBoard();
