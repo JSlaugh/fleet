@@ -1,6 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { FleetState, TicketRecord } from "@fleet/shared";
+import type { ClosedTicketRecord, FleetState, TicketRecord } from "@fleet/shared";
+
+/** How many archived tickets `HistoryStore` keeps on disk. */
+export const HISTORY_LIMIT = 50;
+
+/** Newest-first, capped to `max` — applied on every write so the file never grows unbounded. */
+export function trimHistory(records: ClosedTicketRecord[], max: number = HISTORY_LIMIT): ClosedTicketRecord[] {
+  return [...records].sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt)).slice(0, max);
+}
 
 export class StateStore {
   private readonly filePath: string;
@@ -78,5 +86,43 @@ export class StateStore {
       }
     }
     if (changed) this.write();
+  }
+}
+
+/**
+ * Archive of tickets removed from `StateStore` once their PR and issue both
+ * close — `cleanupFinished` deletes the live `TicketRecord`, so this is the
+ * only surviving trace of a finished ticket for the dashboard's Done column.
+ */
+export class HistoryStore {
+  private readonly filePath: string;
+  private records: ClosedTicketRecord[];
+
+  constructor(dataDir: string) {
+    this.filePath = join(dataDir, "history.json");
+    mkdirSync(dirname(this.filePath), { recursive: true });
+    this.records = this.read();
+  }
+
+  private read(): ClosedTicketRecord[] {
+    try {
+      const parsed = JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, "")) as ClosedTicketRecord[];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private write(): void {
+    writeFileSync(this.filePath, JSON.stringify(this.records, null, 2));
+  }
+
+  add(record: ClosedTicketRecord): void {
+    this.records = trimHistory([record, ...this.records]);
+    this.write();
+  }
+
+  all(): ClosedTicketRecord[] {
+    return [...this.records];
   }
 }

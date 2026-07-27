@@ -32,6 +32,7 @@ const ACCENTS: Record<BoardStatus, string> = {
   "in-progress": "bg-amber-500",
   "needs-input": "bg-red-500",
   review: "bg-blue-500",
+  done: "bg-neutral-400",
 };
 
 async function load() {

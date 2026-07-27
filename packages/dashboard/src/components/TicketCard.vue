@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { PRIORITY_LABELS, shortModelName, type BoardTicket } from "@fleet/shared";
+import { PRIORITY_LABELS, shortModelName, type BoardTicket, type ClosedTicketRecord } from "@fleet/shared";
 import { formatCost } from "../lib/api.ts";
 
 const props = defineProps<{
@@ -20,6 +20,10 @@ function onPriorityChange(event: Event) {
 }
 
 const priorityShort = (label: string) => label.replace("fleet:", "");
+
+const isDone = computed(() => props.ticket.status === "done");
+
+const closedRecord = computed(() => (isDone.value ? (props.ticket.record as ClosedTicketRecord | undefined) : undefined));
 
 const blurb = computed(() => {
   const record = props.ticket.record;
@@ -42,6 +46,7 @@ const blurb = computed(() => {
         {{ ticket.title }}
       </h3>
       <select
+        v-if="!isDone"
         :aria-label="`Priority for ${ticket.project} issue ${ticket.issueNumber}`"
         class="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 text-xs text-neutral-700 dark:border-neutral-600 dark:bg-neutral-700 dark:text-neutral-200"
         :value="ticket.priority ?? ''"
@@ -59,7 +64,17 @@ const blurb = computed(() => {
       {{ blurb }}
     </p>
     <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-      <span class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+      <a
+        v-if="isDone"
+        :href="ticket.url"
+        target="_blank"
+        rel="noopener"
+        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 hover:underline dark:bg-neutral-700 dark:text-neutral-300"
+        @click.stop
+      >
+        {{ ticket.project }}#{{ ticket.issueNumber }}
+      </a>
+      <span v-else class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
         {{ ticket.project }}#{{ ticket.issueNumber }}
       </span>
       <span
@@ -68,6 +83,22 @@ const blurb = computed(() => {
       >
         plan
       </span>
+      <span
+        v-if="closedRecord"
+        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
+      >
+        {{ closedRecord.prState === "MERGED" ? "merged" : "closed" }} {{ new Date(closedRecord.closedAt).toLocaleString() }}
+      </span>
+      <a
+        v-if="closedRecord?.prUrl"
+        :href="closedRecord.prUrl"
+        target="_blank"
+        rel="noopener"
+        class="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-800 hover:underline dark:bg-blue-900 dark:text-blue-200"
+        @click.stop
+      >
+        PR
+      </a>
       <span
         v-if="ticket.record?.sessionLive"
         class="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
