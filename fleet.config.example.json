@@ -13,7 +13,8 @@
       "maxConcurrent": 1,
       "setupCommand": "pnpm install",
       "model": "claude-sonnet-5",
-      "elevatedModel": "claude-opus-5"
+      "elevatedModel": "claude-opus-5",
+      "planChildrenReady": false
     }
   ]
 }

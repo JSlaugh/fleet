@@ -3,16 +3,19 @@ import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import {
   ELEVATE_LABEL,
   FLEET_LABELS,
+  PLAN_LABEL,
   mergeModelUsage,
   type BoardTicket,
   type FleetConfig,
   type ModelUsageSummary,
+  type PlanResult,
   type ProjectConfig,
   type TicketRecord,
 } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { run } from "./exec.ts";
 import {
+  createIssue,
   createPullRequest,
   dependencyStatus,
   getIssueComments,
@@ -31,7 +34,7 @@ import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
 import { StateStore } from "./state.ts";
 import { TrailingThrottle } from "./throttle.ts";
-import { WorkerSession, buildIssuePrompt } from "./worker.ts";
+import { WorkerSession, buildIssuePrompt, type SessionKind } from "./worker.ts";
 import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
@@ -213,6 +216,7 @@ export class FleetLoop {
       const worktree = await createWorktree(project, issue.number, this.config.worktreeRoot);
 
       const elevated = issue.labels.includes(ELEVATE_LABEL);
+      const isPlan = issue.labels.includes(PLAN_LABEL);
       this.state.upsert({
         project: project.name,
         issueNumber: issue.number,
@@ -224,12 +228,22 @@ export class FleetLoop {
         lastActivityAt: now,
         costUsd: 0,
         elevated,
+        isPlan,
       });
 
       const journal = new Journal(this.dataDirPath, project.name, issue.number);
-      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title, elevated });
+      journal.append({ type: "fleet", event: "claimed", issue: issue.number, title: issue.title, elevated, isPlan });
 
-      await this.runSession(project, issue, worktree, journal, undefined, buildIssuePrompt(project, issue, comments), elevated);
+      await this.runSession(
+        project,
+        issue,
+        worktree,
+        journal,
+        undefined,
+        buildIssuePrompt(project, issue, comments),
+        elevated,
+        isPlan ? "plan" : "code",
+      );
     } catch (err) {
       logError("loop", `${scope} failed`, err);
       try {
@@ -248,6 +262,7 @@ export class FleetLoop {
     resumeSessionId: string | undefined,
     firstMessage: string,
     elevated: boolean,
+    kind: SessionKind,
   ): Promise<void> {
     const key = this.key(project.name, issue.number);
     const existing = this.state.get(project.name, issue.number);
@@ -264,6 +279,7 @@ export class FleetLoop {
       worktreePath: worktree.path,
       journal,
       model,
+      kind,
       onActivity: (note) => {
         const record = this.state.get(project.name, issue.number);
         this.state.update(project.name, issue.number, {
@@ -312,6 +328,31 @@ export class FleetLoop {
         model: session.model,
         modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
       });
+
+      if (turn.kind === "plan") {
+        if (turn.result?.status === "completed") {
+          await this.finishPlanned(project, issue, turn.result);
+          return;
+        }
+        if (turn.result?.status === "blocked") {
+          await this.finishBlocked(
+            project,
+            issue,
+            turn.result.blockedReason ?? "Planner reported blocked without a reason.",
+            turn.result.summary,
+          );
+          const reply = await this.waitForReply(key, this.config.replyWaitMinutes * 60_000);
+          if (reply === undefined) {
+            log("loop", `${key}: no reply within ${this.config.replyWaitMinutes}m — session closed, resumable from the dashboard`);
+            return;
+          }
+          await this.markWorking(project, issue.number);
+          session.send(reply);
+          continue;
+        }
+        await this.finishFailed(project, issue, turn.errorSubtype ?? "unknown error");
+        return;
+      }
 
       if (turn.result?.status === "completed") {
         await this.finishCompleted(project, issue, worktree.path, worktree.branch, turn.result.summary, turn.result);
@@ -386,15 +427,18 @@ export class FleetLoop {
     log("loop", `${scope}: resuming session ${record.sessionId}`);
     try {
       let elevated = record.elevated ?? false;
+      let isPlan = record.isPlan ?? false;
       try {
-        elevated = (await getIssueLabels(project, record.issueNumber)).includes(ELEVATE_LABEL);
+        const labels = await getIssueLabels(project, record.issueNumber);
+        elevated = labels.includes(ELEVATE_LABEL);
+        isPlan = labels.includes(PLAN_LABEL);
       } catch {
-        // label check is best-effort; fall back to the recorded flag
+        // label check is best-effort; fall back to the recorded flags
       }
-      this.state.update(project.name, record.issueNumber, { elevated });
+      this.state.update(project.name, record.issueNumber, { elevated, isPlan });
       await this.markWorking(project, record.issueNumber);
       const journal = new Journal(this.dataDirPath, project.name, record.issueNumber);
-      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated });
+      journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, isPlan });
       await this.runSession(
         project,
         issue,
@@ -403,6 +447,7 @@ export class FleetLoop {
         record.sessionId,
         message,
         elevated,
+        isPlan ? "plan" : "code",
       );
     } catch (err) {
       logError("loop", `${scope} resume failed`, err);
@@ -580,6 +625,37 @@ export class FleetLoop {
     this.state.update(project.name, issue.number, { status: "review", prUrl, lastSummary: summary });
     this.emitBoard();
     log("loop", `${project.name}#${issue.number}: PR ${prUrl}`);
+  }
+
+  /**
+   * A completed plan never pushes or opens a PR — it files child issues instead,
+   * `fleet:ready` only when the project opts in via `planChildrenReady`, and puts
+   * the epic itself straight into `fleet:review` for a human to curate.
+   */
+  private async finishPlanned(project: ProjectConfig, issue: ReadyIssue, result: PlanResult): Promise<void> {
+    const autoReady = project.planChildrenReady;
+    const created: { number: number; url: string; title: string }[] = [];
+    for (const ticket of result.tickets) {
+      const labels = [...(ticket.priority ? [ticket.priority] : []), ...(autoReady ? [FLEET_LABELS.ready] : [])];
+      const child = await createIssue(project, { title: ticket.title, body: ticket.body, labels });
+      created.push({ ...child, title: ticket.title });
+    }
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [
+        `**Status: planned** (confidence: ${result.confidence})`,
+        result.summary,
+        created.length > 0
+          ? `Child tickets:\n${created.map((c) => `- #${c.number} ${c.title} — ${c.url}`).join("\n")}`
+          : "No child tickets were proposed.",
+        autoReady ? "" : "Label a child `fleet:ready` to start it.",
+      ].filter(Boolean).join("\n\n"),
+    );
+    await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.review);
+    this.state.update(project.name, issue.number, { status: "review", lastSummary: result.summary });
+    this.emitBoard();
+    log("loop", `${project.name}#${issue.number}: planned ${created.length} child ticket(s)`);
   }
 
   private async finishBlocked(project: ProjectConfig, issue: ReadyIssue, reason: string, summary?: string): Promise<void> {

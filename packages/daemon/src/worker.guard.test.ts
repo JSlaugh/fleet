@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   FORBIDDEN_BASH_REASON,
+  FORBIDDEN_COMMIT_REASON,
+  PLAN_OUTPUT_SCHEMA,
   WORKER_OUTPUT_SCHEMA,
   denyForbiddenBash,
+  denyForbiddenPlanBash,
   isForbiddenBashCommand,
+  isForbiddenPlanBashCommand,
 } from "./worker.ts";
 
 const hookOptions = { signal: new AbortController().signal };
@@ -95,6 +99,67 @@ describe("denyForbiddenBash", () => {
     expect(await denyForbiddenBash(preToolUse("Bash", { command: 42 }), "tu_1", hookOptions)).toEqual({
       continue: true,
     });
+  });
+});
+
+describe("isForbiddenPlanBashCommand", () => {
+  it("also blocks git commit, on top of every code-session restriction", () => {
+    expect(isForbiddenPlanBashCommand("git commit -m x")).toBe(true);
+    expect(isForbiddenPlanBashCommand("git commit --amend")).toBe(true);
+    expect(isForbiddenPlanBashCommand("git push")).toBe(true);
+    expect(isForbiddenPlanBashCommand("gh pr create -t x")).toBe(true);
+  });
+
+  it("still allows read-only git/gh commands", () => {
+    expect(isForbiddenPlanBashCommand("git status")).toBe(false);
+    expect(isForbiddenPlanBashCommand("git log")).toBe(false);
+    expect(isForbiddenPlanBashCommand("gh issue view 3")).toBe(false);
+  });
+
+  it("does not read commit across a command separator", () => {
+    expect(isForbiddenPlanBashCommand("git status; ./commit")).toBe(false);
+  });
+});
+
+describe("denyForbiddenPlanBash", () => {
+  it("denies git commit with a planning-specific reason", async () => {
+    const out = await denyForbiddenPlanBash(preToolUse("Bash", { command: "git commit -m x" }), "tu_1", hookOptions);
+    expect(out).toMatchObject({
+      hookSpecificOutput: {
+        permissionDecision: "deny",
+        permissionDecisionReason: FORBIDDEN_COMMIT_REASON,
+      },
+    });
+  });
+
+  it("denies git push with the shared reason", async () => {
+    const out = await denyForbiddenPlanBash(preToolUse("Bash", { command: "git push" }), "tu_1", hookOptions);
+    expect(out).toMatchObject({
+      hookSpecificOutput: {
+        permissionDecision: "deny",
+        permissionDecisionReason: FORBIDDEN_BASH_REASON,
+      },
+    });
+  });
+
+  it("leaves ordinary read-only Bash commands alone", async () => {
+    const out = await denyForbiddenPlanBash(preToolUse("Bash", { command: "git log" }), "tu_1", hookOptions);
+    expect(out).toEqual({ continue: true });
+  });
+});
+
+describe("PLAN_OUTPUT_SCHEMA", () => {
+  it("keeps the converted zod schema's properties", () => {
+    const properties = PLAN_OUTPUT_SCHEMA.properties as Record<string, unknown>;
+    expect(Object.keys(properties)).toEqual(
+      expect.arrayContaining(["status", "summary", "tickets", "blockedReason", "confidence"]),
+    );
+  });
+
+  it("carries no top-level combinator, which the API rejects in a tool input_schema", () => {
+    expect(PLAN_OUTPUT_SCHEMA.allOf).toBeUndefined();
+    expect(PLAN_OUTPUT_SCHEMA.anyOf).toBeUndefined();
+    expect(PLAN_OUTPUT_SCHEMA.oneOf).toBeUndefined();
   });
 });
 

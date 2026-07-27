@@ -11,12 +11,15 @@ export const PRIORITY_LABELS = ["fleet:p1", "fleet:p2", "fleet:p3"] as const;
 
 export const ELEVATE_LABEL = "fleet:elevate";
 
+export const PLAN_LABEL = "fleet:plan";
+
 export const ALL_FLEET_LABELS: { name: string; color: string; description: string }[] = [
   { name: FLEET_LABELS.ready, color: "0e8a16", description: "Eligible for pickup by a fleet worker" },
   { name: FLEET_LABELS.inProgress, color: "fbca04", description: "A fleet worker session is on it" },
   { name: FLEET_LABELS.needsInput, color: "d93f0b", description: "Worker is blocked on a human decision" },
   { name: FLEET_LABELS.review, color: "1d76db", description: "PR open, awaiting human review" },
   { name: ELEVATE_LABEL, color: "5319e7", description: "Run this ticket on the project's elevated model" },
+  { name: PLAN_LABEL, color: "c2e0c6", description: "Decompose this epic into child tickets instead of coding it" },
   { name: "fleet:p1", color: "b60205", description: "Highest priority" },
   { name: "fleet:p2", color: "d93f0b", description: "Medium priority" },
   { name: "fleet:p3", color: "fef2c0", description: "Low priority" },
@@ -32,6 +35,7 @@ export const ProjectConfigSchema = z.object({
   model: z.string().optional(),
   elevatedModel: z.string().optional(),
   allowedTools: z.array(z.string()).optional(),
+  planChildrenReady: z.boolean().default(false),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -59,6 +63,19 @@ export const WorkerResultSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that the change is correct and complete"),
 });
 export type WorkerResult = z.infer<typeof WorkerResultSchema>;
+
+export const PlanResultSchema = z.object({
+  status: z.enum(["completed", "blocked"]).describe("completed = tickets[] is ready to file as child issues; blocked = a human decision is needed before this epic can be decomposed"),
+  summary: z.string().describe("2-5 sentence plain-language summary of the decomposition (or what's blocking it), written for the plan issue's status comment"),
+  tickets: z.array(z.object({
+    title: z.string().describe("Concise title for the child ticket"),
+    body: z.string().describe("Full issue body for the child ticket: it must be self-contained (problem statement, acceptance criteria, and how to verify it), independently implementable, and PR-sized"),
+    priority: z.enum(["fleet:p1", "fleet:p2", "fleet:p3"]).optional().describe("Priority label to apply to the child issue, if any"),
+  })).describe("Independent, PR-sized child tickets decomposed from this epic; each must be self-contained (problem, acceptance criteria, verification) and independently implementable"),
+  blockedReason: z.string().optional().describe("The specific question or decision a human must answer (required when status is blocked)"),
+  confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that this decomposition is correct and complete"),
+});
+export type PlanResult = z.infer<typeof PlanResultSchema>;
 
 export type TicketStatus =
   | "claimed"
@@ -89,6 +106,7 @@ export interface TicketRecord {
   lastActivityNote?: string;
   elevated?: boolean;
   autoResumed?: boolean;
+  isPlan?: boolean;
 }
 
 export interface ModelUsageSummary {
@@ -177,6 +195,7 @@ export interface BoardTicket {
   url: string;
   status: BoardStatus;
   priority: string | null;
+  isPlan: boolean;
   /** Unsatisfied `Depends-on` issue numbers — only set while they're still open. */
   blockedBy?: number[];
   record?: TicketRecord;

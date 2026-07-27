@@ -25,6 +25,7 @@ describe("readyLabelArgs", () => {
     githubRepo: "acme/alpha",
     defaultBranch: "main",
     maxConcurrent: 1,
+    planChildrenReady: false,
   } satisfies ProjectConfig;
 
   it("removes every other fleet state label and adds fleet:ready", () => {
