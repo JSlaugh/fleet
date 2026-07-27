@@ -7,6 +7,7 @@ import {
   fetchBoard,
   formatCost,
   resolveApproval,
+  setDaemonPaused,
   setTicketPriority,
 } from "./lib/api.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
@@ -18,6 +19,9 @@ const tickets = ref<BoardTicket[]>([]);
 const approvals = ref<PendingApproval[]>([]);
 const showApprovals = ref(false);
 const pausedUntil = ref<string>();
+const paused = ref(false);
+const runningCount = ref(0);
+const pauseToggling = ref(false);
 const error = ref<string>();
 const approvalsError = ref<string>();
 const connected = ref(false);
@@ -40,6 +44,8 @@ async function load() {
     const board = await fetchBoard();
     tickets.value = board.tickets;
     pausedUntil.value = board.pausedUntil;
+    paused.value = board.paused;
+    runningCount.value = board.runningCount;
     error.value = undefined;
     if (selected.value) {
       selected.value = board.tickets.find(
@@ -114,6 +120,18 @@ async function onSetPriority(ticket: BoardTicket, priority: string | null) {
   }
 }
 
+async function togglePaused() {
+  pauseToggling.value = true;
+  try {
+    await setDaemonPaused(!paused.value);
+    await load();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    pauseToggling.value = false;
+  }
+}
+
 function isSelected(ticket: BoardTicket): boolean {
   return selected.value?.project === ticket.project && selected.value?.issueNumber === ticket.issueNumber;
 }
@@ -166,6 +184,15 @@ onUnmounted(() => {
       <button
         type="button"
         class="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+        :class="paused ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        :disabled="pauseToggling"
+        @click="togglePaused"
+      >
+        {{ paused ? "Resume" : "Pause" }}
+      </button>
+      <button
+        type="button"
+        class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
         :class="approvals.length > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
         @click="showApprovals = !showApprovals"
       >
@@ -183,6 +210,12 @@ onUnmounted(() => {
       </div>
     </header>
 
+    <div
+      v-if="paused"
+      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+    >
+      Paused — finishing {{ runningCount }} running ticket{{ runningCount === 1 ? "" : "s" }}, no new claims
+    </div>
     <div
       v-if="pausedUntil"
       class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"

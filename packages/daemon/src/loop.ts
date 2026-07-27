@@ -8,7 +8,7 @@ import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
 import { logError } from "./log.ts";
 import { reply, resetForFreshClaim, restartTicket } from "./operator.ts";
-import { handlePlanLimit, isPaused, updatePauseState } from "./pause.ts";
+import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { HistoryStore, StateStore } from "./state.ts";
 import { machineReviewGate } from "./supervise.ts";
@@ -82,6 +82,10 @@ export class FleetLoop {
 
   async restartTicket(projectName: string, issueNumber: number): Promise<void> {
     return restartTicket(this.ctx, projectName, issueNumber);
+  }
+
+  setPaused(paused: boolean): void {
+    setPaused(this.ctx, paused);
   }
 
   async drain(): Promise<void> {
