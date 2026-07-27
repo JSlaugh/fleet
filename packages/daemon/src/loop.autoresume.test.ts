@@ -1,6 +1,6 @@
 import type { TicketRecord, TicketStatus } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { pickAutoResumable } from "./loop.ts";
+import { pickAutoResumable } from "./recovery.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
   return {

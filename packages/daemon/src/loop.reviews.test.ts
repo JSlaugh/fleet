@@ -1,6 +1,6 @@
 import type { TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { pickReviewCandidates, shouldActOnFeedback } from "./loop.ts";
+import { pickReviewCandidates, shouldActOnFeedback } from "./reviews.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
   return {

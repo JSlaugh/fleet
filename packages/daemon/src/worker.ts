@@ -22,8 +22,8 @@ export type SessionKind = "code" | "plan";
  * "prTitle is required when status is completed" therefore 400s every worker
  * session on its first request, before the model sees anything. The conditional
  * half of the output contract lives in `WORKER_CONTRACT` prose and in the
- * per-property descriptions instead; the fallbacks in `loop.ts` are the safety
- * net when a worker ignores it.
+ * per-property descriptions instead; the fallbacks in `supervise.ts` are the
+ * safety net when a worker ignores it.
  */
 export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, {
   target: "draft-7",
