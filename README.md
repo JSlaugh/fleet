@@ -30,19 +30,24 @@ pnpm daemon sync-templates                       # stamps the fleet skill + .mcp
 pnpm daemon -- --dry-run --once   # poll and report what would be claimed; changes nothing
 pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit (no dashboard, so approvals auto-deny)
 pnpm daemon                       # the real loop + dashboard at http://localhost:4400
+pnpm typecheck                    # tsc for shared+daemon+mcp, then vue-tsc for the dashboard
 pnpm test                         # vitest: daemon loop/state/github logic, worker contract guards, mcp client
 ```
 
 Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via turbo, cached) before the daemon starts, so the served bundle is never stale. The daemon serves that dashboard and a REST/WS API:
 
-- `GET /api/board` — board tickets (including a synthesized Done column of recently-closed tickets).
+- `GET /api/board` — board tickets (including a synthesized Done column of recently-closed tickets), plus the daemon's pause state and running count.
+- `POST /api/daemon/pause` — `{ paused: boolean }`; toggles drain mode (below).
 - `GET /api/tickets/:project/:issue` — a ticket's record plus a journal tail.
 - `POST /api/tickets/:project/:issue/priority`, `POST /api/tickets/:project/:issue/restart`, `POST /api/tickets/:project/:issue/reply` — dashboard actions (reprioritize, force-restart, steer or resume a session).
 - `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); this is what the `@fleet/mcp` server and the fleet-backlog skill call so an agent can queue follow-up work without touching `gh` directly.
 - `GET /api/projects/:project/backlog` — that project's current tickets (number, title, status, priority), for dedup checks before filing.
+- `GET /api/approvals`, `POST /api/approvals/:id` — the approvals inbox: tool calls outside the worker allowlist and `AskUserQuestion` park here until the dashboard answers, or `approvalTimeoutMinutes` denies them.
 - `/ws` — pushes `board-updated` / `approvals-updated` events (no payload; clients refetch).
 
 For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to the daemon.
+
+The dashboard header has a **Pause/Resume** toggle (drain mode): while paused, the daemon claims nothing new and resumes nothing — no `fleet:ready` pickups, no review-feedback resumes, no stall recovery — but sessions already running are left to finish, and board polling plus merged-ticket cleanup keep going. The pause is persisted in `.fleet/state.json`, so it survives a daemon restart and is cleared only by an explicit resume. It's the same gate the plan usage-limit pause uses, so the two can't fight each other.
 
 Ticket detail has a **Restart** button for stuck, stalled, or failed tickets: it force-closes the session and puts the issue back in `fleet:ready`, so the next cycle re-runs it from scratch. The fresh claim recreates the branch and worktree from `origin/<defaultBranch>`, which **discards the previous session's commits** — the dashboard confirms before firing.
 
@@ -53,7 +58,7 @@ Operational state lives in `.fleet/` (ticket records in `state.json`, closed-tic
 A registered project gets an MCP server (`@fleet/mcp`, registered via `.mcp.json`'s `fleet` entry — `sync-templates` stamps this in, pointed at this repo and the project's name) and a matching skill (`templates/fleet-backlog/SKILL.md`, stamped into `.claude/skills/fleet-backlog/`). Together they let an interactive session or another fleet worker queue follow-up work — a bug it noticed, a deferred refactor — as a real fleet ticket instead of losing it when the session ends:
 
 - `fleet_query_backlog` — lists the project's current tickets, for a dedup check before filing.
-- `fleet_file_ticket` — files a new ticket (`title`, `body`, optional `priority`, optional `ready` to file for human curation instead of immediate pickup).
+- `fleet_file_ticket` — files a new ticket (`title`, `body`, optional `priority`, optional `ready` to file for human curation instead of immediate pickup, optional `dependsOn` issue numbers that hold it until they close).
 - `fleet_board_status` — per-column counts across all projects, plus currently-running tickets and their latest activity.
 
 All three are thin wrappers over the REST endpoints above; GitHub issues stay the single source of truth.
@@ -85,6 +90,7 @@ Per project: `repoPath` (local clone), `githubRepo` (`owner/repo`), `defaultBran
 - ~~Phase 2: needs-input steering, approvals inbox, worker questions answered from the dashboard.~~ Done.
 - ~~Phase 3: model visibility, live activity notes, stall recovery, merged-worktree cleanup, cost totals.~~ Done.
 - ~~Phase 4: test suite, ticket-intake REST API + `@fleet/mcp` backlog tool, `fleet:plan` epic decomposition, PR review-feedback loop, stall auto-resume, plan usage-limit pause, Done column.~~ Done.
+- ~~Phase 5: machine review gate, operator drain mode, turborepo build pipeline, loop split into per-concern modules, broadened test coverage.~~ Done.
 
 ## Skills, agents, and models
 
