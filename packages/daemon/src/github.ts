@@ -20,7 +20,7 @@ export interface ReadyIssue {
   labels: string[];
 }
 
-export interface FleetIssue extends ReadyIssue {
+interface FleetIssue extends ReadyIssue {
   url: string;
 }
 
@@ -298,14 +298,14 @@ interface GhReviewComment {
   created_at: string;
 }
 
-export interface PrReview {
+interface PrReview {
   author: string;
   state: string;
   body: string;
   submittedAt: string;
 }
 
-export interface PrComment {
+interface PrComment {
   path: string;
   line: number | null;
   body: string;

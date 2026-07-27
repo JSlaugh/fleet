@@ -40,7 +40,7 @@ export async function removeWorktree(project: ProjectConfig, worktreePath: strin
   await run("git", ["-C", project.repoPath, "worktree", "remove", "--force", worktreePath], { allowFailure: true });
 }
 
-export async function pushBranch(project: ProjectConfig, worktreePath: string, branch: string): Promise<void> {
+export async function pushBranch(worktreePath: string, branch: string): Promise<void> {
   await run("git", ["-C", worktreePath, "push", "-u", "origin", branch]);
 }
 

@@ -91,18 +91,16 @@ export function formatBoardStatusText(summary: BoardSummary): string {
   return `${countLines || "No tickets"}\n\nRunning:\n${runningLines}`;
 }
 
-class FleetDaemonError extends Error {}
-
 async function fleetFetch(fleetUrl: string, path: string, init?: RequestInit): Promise<unknown> {
   let res: Response;
   try {
     res = await fetch(`${fleetUrl}${path}`, init);
   } catch {
-    throw new FleetDaemonError(`Could not reach the fleet daemon at ${fleetUrl}. Is the fleet daemon running at ${fleetUrl}?`);
+    throw new Error(`Could not reach the fleet daemon at ${fleetUrl}. Is the fleet daemon running at ${fleetUrl}?`);
   }
   const text = await res.text();
   if (!res.ok) {
-    throw new FleetDaemonError(`Fleet daemon returned ${res.status} for ${path}: ${text}`);
+    throw new Error(`Fleet daemon returned ${res.status} for ${path}: ${text}`);
   }
   return text ? JSON.parse(text) : {};
 }

@@ -10,10 +10,12 @@ Fleet is a multi-project Claude Code backlog orchestrator: a daemon polls GitHub
 
 ```bash
 pnpm install
-pnpm typecheck                  # tsc for shared+daemon, then vue-tsc for dashboard
+pnpm typecheck                  # tsc for shared+daemon+mcp, then vue-tsc for dashboard
 pnpm test                       # vitest for shared+daemon+mcp
+pnpm build                      # turbo run build (currently just the dashboard)
 pnpm daemon -- --dry-run --once # poll and report; changes nothing
-pnpm daemon -- --once           # one full cycle, then exit
+pnpm daemon -- --once           # one full cycle, then exit (no dashboard server: worker approvals can only time out)
+pnpm mcp                        # run the stdio MCP server directly (normally launched by a repo's .mcp.json)
 pnpm daemon                     # real loop + dashboard on :4400
 pnpm daemon init-labels         # create fleet:* labels in each configured repo
 pnpm daemon sync-templates      # stamp the fleet-backlog skill + .mcp.json into each configured repo
@@ -50,7 +52,7 @@ Tool calls outside the allowlist and `AskUserQuestion` route through `canUseTool
 
 GitHub labels are the source of truth for ticket status; `.fleet/state.json` (`StateStore`) is operational cache only — per-ticket (worktree paths, session IDs, cost, model usage, and the `lastReviewHandledAt`/`autoElevated`/`isPlan` fields the behavior above depends on) plus one daemon-wide field, `pausedUntil`, for the plan usage-limit pause — and `.fleet/journals/<project>/<issue>.jsonl` (`Journal`) holds summarized session transcripts for the dashboard. On boot, `StateStore.clearLiveFlags()` reconciles orphaned `running` tickets to `stalled` since no sessions survive a restart. Cleanup (worktree + branch removal) only happens once the PR is merged/closed *and* the issue is closed, at which point the ticket's record moves from `state.json` into `.fleet/history.json` (`HistoryStore`, capped at 50) so the dashboard's Done column can still show it.
 
-Model selection is layered (most specific wins): skill/agent `model:` frontmatter in the target repo → `fleet:elevate` label (uses project `elevatedModel`) → per-project `model` config → CLI default.
+Model selection is layered (most specific wins): skill/agent `model:` frontmatter in the target repo → `fleet:elevate` label (uses project `elevatedModel`) or `fleet:light` label (uses project `lightModel`) → per-project `model` config → CLI default. Plan decompositions can suggest a tier per child ticket, which becomes one of these labels on the filed issue.
 
 ## Conventions
 

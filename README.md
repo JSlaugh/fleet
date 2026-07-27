@@ -38,7 +38,7 @@ Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via tu
 - `GET /api/board` — board tickets (including a synthesized Done column of recently-closed tickets).
 - `GET /api/tickets/:project/:issue` — a ticket's record plus a journal tail.
 - `POST /api/tickets/:project/:issue/priority`, `POST /api/tickets/:project/:issue/restart`, `POST /api/tickets/:project/:issue/reply` — dashboard actions (reprioritize, force-restart, steer or resume a session).
-- `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); this is what the `@fleet/mcp` server and the fleet-backlog skill call so an agent can queue follow-up work without touching `gh` directly.
+- `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); this is what the `@fleet/mcp` server and the fleet-backlog skill call so an agent can queue follow-up work without touching `gh` directly. (The MCP tool currently exposes `title`/`body`/`priority`/`ready` only — `dependsOn` is endpoint-only for now.)
 - `GET /api/projects/:project/backlog` — that project's current tickets (number, title, status, priority), for dedup checks before filing.
 - `/ws` — pushes `board-updated` / `approvals-updated` events (no payload; clients refetch).
 

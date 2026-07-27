@@ -748,7 +748,7 @@ export class FleetLoop {
       await this.finishBlocked(project, issue, "Worker reported completed but made no commits.", summary);
       return;
     }
-    await pushBranch(project, worktreePath, branch);
+    await pushBranch(worktreePath, branch);
     const prBody = [
       result.prBody ?? summary,
       `Closes #${issue.number}`,

@@ -146,7 +146,7 @@ export type TurnResult = CodeTurnResult | PlanTurnResult;
  * time either as an epoch-seconds suffix (`Claude AI usage limit reached|1735689600`)
  * or in a human-readable "resets ..." clause.
  */
-export const USAGE_LIMIT_PATTERN = /usage limit reached/i;
+const USAGE_LIMIT_PATTERN = /usage limit reached/i;
 
 /**
  * Pure so it can be unit-tested against both known text shapes without spinning up a

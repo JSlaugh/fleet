@@ -1,14 +1,11 @@
 import { exec, execFile } from "node:child_process";
 
 export interface RunOptions {
-  cwd?: string;
   allowFailure?: boolean;
 }
 
 export interface RunResult {
   stdout: string;
-  stderr: string;
-  exitCode: number;
 }
 
 export function run(command: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
@@ -16,18 +13,16 @@ export function run(command: string, args: string[], options: RunOptions = {}): 
     execFile(
       command,
       args,
-      { cwd: options.cwd, windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
+      { windowsHide: true, maxBuffer: 32 * 1024 * 1024 },
       (error, stdout, stderr) => {
-        const exitCode = error && typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number"
-          ? ((error as unknown as { code: number }).code)
-          : error
-            ? 1
-            : 0;
         if (error && !options.allowFailure) {
+          const exitCode = typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number"
+            ? ((error as unknown as { code: number }).code)
+            : 1;
           reject(new Error(`${command} ${args.join(" ")} failed (exit ${exitCode}): ${stderr || stdout || error.message}`));
           return;
         }
-        resolve({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode });
+        resolve({ stdout: stdout.toString() });
       },
     );
   });
@@ -45,7 +40,7 @@ export function runShell(command: string, cwd: string): Promise<RunResult> {
         reject(new Error(`${command} failed (exit ${error.code ?? 1}): ${stderr || stdout || error.message}`));
         return;
       }
-      resolve({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode: 0 });
+      resolve({ stdout: stdout.toString() });
     });
   });
 }

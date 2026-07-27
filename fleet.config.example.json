@@ -1,11 +1,15 @@
-﻿{
+{
   "pollIntervalSeconds": 60,
+  "dashboardPort": 4400,
   "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
   "stalledAfterMinutes": 10,
   "ticketTimeoutMinutes": 30,
+  "approvalTimeoutMinutes": 10,
+  "replyWaitMinutes": 60,
   "limitResumeSlackMinutes": 5,
   "limitDefaultBackoffMinutes": 300,
   "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
+  "dataDir": ".fleet",
   "projects": [
     {
       "name": "example",
@@ -17,10 +21,10 @@
       "model": "claude-sonnet-5",
       "elevatedModel": "claude-opus-5",
       "lightModel": "claude-haiku-4-5-20251001",
+      "allowedTools": [],
       "planChildrenReady": false,
       "autoElevateOnFailure": true,
       "autoAddressReviews": true
     }
   ]
 }
-

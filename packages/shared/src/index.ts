@@ -94,7 +94,6 @@ export const PlanResultSchema = z.object({
 export type PlanResult = z.infer<typeof PlanResultSchema>;
 
 export type TicketStatus =
-  | "claimed"
   | "running"
   | "stalled"
   | "needs-input"
