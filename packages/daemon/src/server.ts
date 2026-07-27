@@ -62,7 +62,17 @@ export function createApp(opts: {
     }
     const record = state.get(projectName, issueNumber) ?? loop.getHistoryRecord(projectName, issueNumber);
     const ticket = loop.getBoard().find((t) => t.project === projectName && t.issueNumber === issueNumber);
-    const detail: TicketDetail = { ticket, record, journal: readJournalTail(dataDir, projectName, issueNumber, 200) };
+    // Mirrors the /restart route's own known-ticket check, so canRestart never
+    // promises an action that route would 404.
+    const known = state.get(projectName, issueNumber) !== undefined || ticket !== undefined;
+    const { canRestart, canReply } = loop.ticketCapabilities(projectName, issueNumber, record, known);
+    const detail: TicketDetail = {
+      ticket,
+      record,
+      journal: readJournalTail(dataDir, projectName, issueNumber, 200),
+      canRestart,
+      canReply,
+    };
     return c.json(detail);
   });
 

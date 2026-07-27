@@ -277,4 +277,7 @@ export interface TicketDetail {
   ticket?: BoardTicket;
   record?: TicketRecord | ClosedTicketRecord;
   journal: JournalEntry[];
+  /** Whether `restartTicket`/`reply` would actually accept this ticket right now — the dashboard gates its buttons on these rather than duplicating the daemon's policy. */
+  canRestart: boolean;
+  canReply: boolean;
 }

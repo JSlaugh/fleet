@@ -113,5 +113,51 @@ describe("GET /api/tickets/:project/:issue", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as TicketDetail;
     expect(body.record).toBeUndefined();
+    expect(body.canRestart).toBe(false);
+    expect(body.canReply).toBe(false);
+  });
+
+  it("offers reply and restart for a review-status ticket with a cold sessionId", async () => {
+    // No live session and nothing in flight — this is the case the dashboard's
+    // old hardcoded status list got wrong: `review` wasn't in RESTARTABLE and
+    // wasn't in the reply gate, even though the server would accept both.
+    const app = makeApp({
+      seedState: {
+        project: "alpha",
+        issueNumber: 9,
+        issueTitle: "In review",
+        branch: "fleet/9",
+        worktreePath: "/tmp/wt/9",
+        status: "review",
+        sessionId: "sess-9",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        lastActivityAt: "2026-01-01T01:00:00.000Z",
+        costUsd: 1,
+      },
+    });
+    const res = await app.request("/api/tickets/alpha/9");
+    const body = (await res.json()) as TicketDetail;
+    expect(body.canRestart).toBe(true);
+    expect(body.canReply).toBe(true);
+  });
+
+  it("withholds reply for a ticket with no recorded session", async () => {
+    const app = makeApp({
+      seedState: {
+        project: "alpha",
+        issueNumber: 9,
+        issueTitle: "Fresh",
+        branch: "fleet/9",
+        worktreePath: "/tmp/wt/9",
+        status: "running",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        lastActivityAt: "2026-01-01T01:00:00.000Z",
+        costUsd: 0,
+      },
+    });
+    const res = await app.request("/api/tickets/alpha/9");
+    const body = (await res.json()) as TicketDetail;
+    expect(body.canReply).toBe(false);
+    expect(body.canRestart).toBe(true);
   });
 });

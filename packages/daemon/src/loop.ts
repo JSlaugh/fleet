@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { BoardTicket, ClosedTicketRecord, FleetConfig, ProjectConfig } from "@fleet/shared";
+import type { BoardTicket, ClosedTicketRecord, FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { cleanupFinished, getBoard } from "./board.ts";
 import { cycleProject } from "./claim.ts";
@@ -7,7 +7,7 @@ import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
 import { logError } from "./log.ts";
-import { reply, resetForFreshClaim, restartTicket } from "./operator.ts";
+import { reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
 import { handlePlanLimit, isPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { HistoryStore, StateStore } from "./state.ts";
@@ -82,6 +82,15 @@ export class FleetLoop {
 
   async restartTicket(projectName: string, issueNumber: number): Promise<void> {
     return restartTicket(this.ctx, projectName, issueNumber);
+  }
+
+  ticketCapabilities(
+    projectName: string,
+    issueNumber: number,
+    record: TicketRecord | ClosedTicketRecord | undefined,
+    known: boolean,
+  ): { canRestart: boolean; canReply: boolean } {
+    return ticketCapabilities(this.ctx, projectName, issueNumber, record, known);
   }
 
   async drain(): Promise<void> {

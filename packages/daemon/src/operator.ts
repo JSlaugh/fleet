@@ -1,4 +1,4 @@
-import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
+import { FLEET_LABELS, type ClosedTicketRecord, type ProjectConfig, type TicketRecord } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
 import { markReady, upsertStatusComment } from "./github.ts";
 import { Journal } from "./journal.ts";
@@ -22,6 +22,28 @@ function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
     };
     void promise.then(done, done);
   });
+}
+
+/**
+ * Whether `reply`/`restartTicket` would actually accept this ticket right now,
+ * mirroring their guard clauses (and the `/restart` route's known-ticket
+ * check) exactly — the single source of truth the dashboard gates its buttons
+ * on, so the two policies can't drift apart.
+ */
+export function ticketCapabilities(
+  ctx: LoopContext,
+  projectName: string,
+  issueNumber: number,
+  record: TicketRecord | ClosedTicketRecord | undefined,
+  known: boolean,
+): { canRestart: boolean; canReply: boolean } {
+  const scope = key(projectName, issueNumber);
+  const hasLiveSession = ctx.live.has(scope);
+  const inFlight = ctx.running.has(scope);
+  return {
+    canRestart: known && !ctx.restarting.has(scope) && (hasLiveSession || !inFlight),
+    canReply: ctx.replyWaiters.has(scope) || hasLiveSession || (Boolean(record?.sessionId) && !inFlight),
+  };
 }
 
 /**
