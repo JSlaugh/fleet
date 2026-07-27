@@ -73,6 +73,15 @@ export class StateStore {
     this.write();
   }
 
+  getPaused(): boolean {
+    return this.state.paused ?? false;
+  }
+
+  setPaused(paused: boolean): void {
+    this.state.paused = paused;
+    this.write();
+  }
+
   clearLiveFlags(): void {
     let changed = false;
     for (const ticket of this.state.tickets) {

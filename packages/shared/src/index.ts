@@ -219,6 +219,8 @@ export interface FleetState {
   tickets: TicketRecord[];
   /** ISO timestamp: set while the daemon is paused on a plan usage-limit hit, cleared once it passes. */
   pausedUntil?: string;
+  /** Operator-initiated drain mode: survives a restart, cleared only by an explicit resume. */
+  paused?: boolean;
 }
 
 export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review" | "done";
