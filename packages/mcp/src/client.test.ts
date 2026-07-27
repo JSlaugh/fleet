@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { buildFileTicketRequest, formatBacklogText, formatBoardStatusText, priorityLabel, summarizeBoard } from "./client.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildFileTicketRequest, fileTicket, formatBacklogText, formatBoardStatusText, priorityLabel, summarizeBoard } from "./client.ts";
 
 describe("priorityLabel", () => {
   it("maps the short priority to a fleet: label", () => {
@@ -36,6 +36,39 @@ describe("buildFileTicketRequest", () => {
 
   it("omits ready when not given, leaving the daemon's default", () => {
     expect(buildFileTicketRequest({ title: "t", body: "b" })).not.toHaveProperty("ready");
+  });
+
+  it("includes dependsOn when given", () => {
+    expect(buildFileTicketRequest({ title: "t", body: "b", dependsOn: [12, 34] })).toEqual({
+      title: "t",
+      body: "b",
+      dependsOn: [12, 34],
+    });
+  });
+
+  it("omits dependsOn when not given", () => {
+    expect(buildFileTicketRequest({ title: "t", body: "b" })).not.toHaveProperty("dependsOn");
+  });
+});
+
+describe("fileTicket", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("URL-encodes the project name", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ number: 1, url: "https://x" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fileTicket("http://localhost:4400", "org/repo", { title: "t", body: "b" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4400/api/projects/org%2Frepo/tickets",
+      expect.anything(),
+    );
   });
 });
 
