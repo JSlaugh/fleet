@@ -14,7 +14,7 @@ pnpm typecheck                  # tsc for shared+daemon+mcp, then vue-tsc for da
 pnpm test                       # vitest for shared+daemon+mcp
 pnpm build                      # turbo run build (currently just the dashboard)
 pnpm daemon -- --dry-run --once # poll and report; changes nothing
-pnpm daemon -- --once           # one full cycle, then exit (no dashboard server: worker approvals can only time out)
+pnpm daemon -- --once           # one full cycle, then exit (no dashboard server: worker approvals are auto-denied immediately)
 pnpm mcp                        # run the stdio MCP server directly (normally launched by a repo's .mcp.json)
 pnpm daemon                     # real loop + dashboard on :4400
 pnpm daemon init-labels         # create fleet:* labels in each configured repo
@@ -46,7 +46,7 @@ The supervision loop in `FleetLoop.supervise` is the core state machine: `comple
 
 Outside the claim loop, each cycle also: resumes stalled tickets (`pickAutoResumable` — no activity for `stalledAfterMinutes`, or orphaned by a restart — resumed once each from their last session) and resumes tickets in `fleet:review` that picked up changes-requested reviews or fresh inline comments (`pickReviewCandidates`/`addressReviews`, opt out per-project with `autoAddressReviews: false`; a `lastReviewHandledAt` watermark stops the same feedback firing twice). A session hitting the account's plan usage limit pauses claims/resumes across every project (`FleetState.pausedUntil`) until the parsed reset time (plus `limitResumeSlackMinutes`, or `limitDefaultBackoffMinutes` if no reset time parsed) — the triggering ticket is left `stalled` so the auto-resume above picks it back up once the pause lifts.
 
-Tool calls outside the allowlist and `AskUserQuestion` route through `canUseTool` → `ApprovalManager` (`approvals.ts`), which parks the promise until the dashboard answers via `POST /api/approvals/:id` or the timeout denies it. Denial messages are crafted to push the worker toward finishing as `blocked` rather than dying.
+Tool calls outside the allowlist and `AskUserQuestion` route through `canUseTool` → `ApprovalManager` (`approvals.ts`), which parks the promise until the dashboard answers via `POST /api/approvals/:id` or the timeout denies it. Denial messages are crafted to push the worker toward finishing as `blocked` rather than dying. In `--once` mode there's no dashboard to answer with, so `FleetLoop`'s `canUseTool` (`loop.ts`) skips `ApprovalManager` entirely and denies immediately instead of waiting out `approvalTimeoutMinutes`.
 
 ### State model — key invariant
 

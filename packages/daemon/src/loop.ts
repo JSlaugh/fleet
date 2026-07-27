@@ -257,6 +257,8 @@ export class FleetLoop {
     private readonly dataDirPath: string,
     private readonly approvals: ApprovalManager,
     private readonly dryRun: boolean,
+    /** `--once` runs have no dashboard server, so approvals can never be answered — auto-deny instead of waiting out `approvalTimeoutMinutes`. */
+    private readonly once: boolean = false,
   ) {
     this.history = new HistoryStore(dataDirPath);
   }
@@ -739,6 +741,19 @@ export class FleetLoop {
   private makeCanUseTool(project: ProjectConfig, issueNumber: number): CanUseTool {
     return async (toolName, input, { signal }) => {
       const kind = toolName === "AskUserQuestion" ? "question" : "permission";
+      if (this.once) {
+        log("approvals", `${project.name}#${issueNumber}: ${toolName} auto-denied (--once mode has no dashboard to answer approvals)`);
+        if (kind === "question") {
+          return {
+            behavior: "deny",
+            message: `Approvals aren't available in --once mode (no dashboard is running to answer them). Finish with status "blocked" and restate your questions in blockedReason.`,
+          };
+        }
+        return {
+          behavior: "deny",
+          message: `Approvals aren't available in --once mode (no dashboard is running to answer them). Find another way, or finish with status "blocked" explaining what you need.`,
+        };
+      }
       const outcome = await this.approvals.request({
         project: project.name,
         issueNumber,

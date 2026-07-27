@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   const state = new StateStore(dataDir);
   state.clearLiveFlags();
   const approvals = new ApprovalManager();
-  const loop = new FleetLoop(config, state, dataDir, approvals, dryRun);
+  const loop = new FleetLoop(config, state, dataDir, approvals, dryRun, once);
 
   log("daemon", `fleet daemon starting — ${config.projects.length} project(s), poll every ${config.pollIntervalSeconds}s${dryRun ? " [dry-run]" : ""}${once ? " [once]" : ""}`);
 
