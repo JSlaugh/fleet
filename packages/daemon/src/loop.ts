@@ -43,6 +43,7 @@ export class FleetLoop {
     dataDirPath: string,
     approvals: ApprovalManager,
     dryRun: boolean,
+    once: boolean = false,
   ) {
     this.history = new HistoryStore(dataDirPath);
     this.ctx = {
@@ -52,6 +53,7 @@ export class FleetLoop {
       dataDirPath,
       approvals,
       dryRun,
+      once,
       running: this.running,
       live: this.live,
       restarting: this.restarting,

@@ -24,10 +24,27 @@ export function selectModel(
   return project.model;
 }
 
-/** Routes every non-allowlisted tool call (and `AskUserQuestion`) to the dashboard. */
+/**
+ * Routes every non-allowlisted tool call (and `AskUserQuestion`) to the
+ * dashboard — except in `--once` mode, where no dashboard exists to answer, so
+ * requests deny immediately instead of waiting out `approvalTimeoutMinutes`.
+ */
 export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNumber: number): CanUseTool {
   return async (toolName, input, { signal }) => {
     const kind = toolName === "AskUserQuestion" ? "question" : "permission";
+    if (ctx.once) {
+      log("approvals", `${project.name}#${issueNumber}: ${toolName} auto-denied (--once mode has no dashboard to answer approvals)`);
+      if (kind === "question") {
+        return {
+          behavior: "deny",
+          message: `Approvals aren't available in --once mode (no dashboard is running to answer them). Finish with status "blocked" and restate your questions in blockedReason.`,
+        };
+      }
+      return {
+        behavior: "deny",
+        message: `Approvals aren't available in --once mode (no dashboard is running to answer them). Find another way, or finish with status "blocked" explaining what you need.`,
+      };
+    }
     const outcome = await ctx.approvals.request({
       project: project.name,
       issueNumber,
