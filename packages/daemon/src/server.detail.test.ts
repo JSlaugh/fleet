@@ -141,6 +141,16 @@ describe("GET /api/tickets/:project/:issue", () => {
     expect(body.canReply).toBe(true);
   });
 
+  it("withholds reply for a done ticket even though its archived record kept a sessionId", async () => {
+    // reply() always re-reads live state and never consults history, so a
+    // closed ticket's leftover sessionId (kept verbatim by cleanupFinished)
+    // must not leak into canReply — the ticket has no live state record at all.
+    const app = makeApp({ seedHistory: closedRecord({ sessionId: "sess-9" }) });
+    const res = await app.request("/api/tickets/alpha/9");
+    const body = (await res.json()) as TicketDetail;
+    expect(body.canReply).toBe(false);
+  });
+
   it("withholds reply for a ticket with no recorded session", async () => {
     const app = makeApp({
       seedState: {

@@ -65,7 +65,7 @@ export function createApp(opts: {
     // Mirrors the /restart route's own known-ticket check, so canRestart never
     // promises an action that route would 404.
     const known = state.get(projectName, issueNumber) !== undefined || ticket !== undefined;
-    const { canRestart, canReply } = loop.ticketCapabilities(projectName, issueNumber, record, known);
+    const { canRestart, canReply } = loop.ticketCapabilities(projectName, issueNumber, known);
     const detail: TicketDetail = {
       ticket,
       record,

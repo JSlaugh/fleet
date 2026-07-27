@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { BoardTicket, ClosedTicketRecord, FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { BoardTicket, ClosedTicketRecord, FleetConfig, ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { cleanupFinished, getBoard } from "./board.ts";
 import { cycleProject } from "./claim.ts";
@@ -84,13 +84,8 @@ export class FleetLoop {
     return restartTicket(this.ctx, projectName, issueNumber);
   }
 
-  ticketCapabilities(
-    projectName: string,
-    issueNumber: number,
-    record: TicketRecord | ClosedTicketRecord | undefined,
-    known: boolean,
-  ): { canRestart: boolean; canReply: boolean } {
-    return ticketCapabilities(this.ctx, projectName, issueNumber, record, known);
+  ticketCapabilities(projectName: string, issueNumber: number, known: boolean): { canRestart: boolean; canReply: boolean } {
+    return ticketCapabilities(this.ctx, projectName, issueNumber, known);
   }
 
   async drain(): Promise<void> {

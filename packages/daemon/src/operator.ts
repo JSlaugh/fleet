@@ -1,4 +1,4 @@
-import { FLEET_LABELS, type ClosedTicketRecord, type ProjectConfig, type TicketRecord } from "@fleet/shared";
+import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
 import { markReady, upsertStatusComment } from "./github.ts";
 import { Journal } from "./journal.ts";
@@ -29,20 +29,26 @@ function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
  * mirroring their guard clauses (and the `/restart` route's known-ticket
  * check) exactly — the single source of truth the dashboard gates its buttons
  * on, so the two policies can't drift apart.
+ *
+ * Deliberately looks up `ctx.state.get` itself rather than accepting a record
+ * from the caller: the ticket-detail route falls back to the archived history
+ * record for closed tickets, but `reply()` never consults history — it always
+ * re-reads live state — so a closed ticket's leftover `sessionId` must not
+ * leak into `canReply`.
  */
 export function ticketCapabilities(
   ctx: LoopContext,
   projectName: string,
   issueNumber: number,
-  record: TicketRecord | ClosedTicketRecord | undefined,
   known: boolean,
 ): { canRestart: boolean; canReply: boolean } {
   const scope = key(projectName, issueNumber);
   const hasLiveSession = ctx.live.has(scope);
   const inFlight = ctx.running.has(scope);
+  const liveRecord = ctx.state.get(projectName, issueNumber);
   return {
     canRestart: known && !ctx.restarting.has(scope) && (hasLiveSession || !inFlight),
-    canReply: ctx.replyWaiters.has(scope) || hasLiveSession || (Boolean(record?.sessionId) && !inFlight),
+    canReply: ctx.replyWaiters.has(scope) || hasLiveSession || (Boolean(liveRecord?.sessionId) && !inFlight),
   };
 }
 
