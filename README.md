@@ -19,7 +19,10 @@ pnpm install
 gh auth login        # the daemon shells out to gh for all GitHub access
 cp fleet.config.example.json fleet.config.json   # then edit
 pnpm daemon init-labels                          # creates fleet:* labels in each repo
+pnpm daemon sync-templates                       # stamps the fleet skill + .mcp.json into each repo
 ```
+
+`templates/` in this repo (the fleet-backlog skill and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file as-is and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates that touch the templates.
 
 ## Running
 
