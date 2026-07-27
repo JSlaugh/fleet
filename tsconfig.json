@@ -15,5 +15,5 @@
       "@fleet/shared": ["./packages/shared/src/index.ts"]
     }
   },
-  "include": ["packages/shared/src/**/*.ts", "packages/daemon/src/**/*.ts"]
+  "include": ["packages/shared/src/**/*.ts", "packages/daemon/src/**/*.ts", "packages/mcp/src/**/*.ts"]
 }
