@@ -8,7 +8,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  resolve: [id: string, decision: "allow" | "deny" | "answer", message?: string];
+  resolve: [id: string, decision: "allow" | "deny" | "answer", message?: string, done?: (ok: boolean) => void];
   close: [];
 }>();
 
@@ -47,7 +47,7 @@ function pretty(input: unknown): string {
         <QuestionCard
           v-if="approval.kind === 'question'"
           :approval="approval"
-          @answer="(message) => emit('resolve', approval.id, 'answer', message)"
+          @answer="(message, done) => emit('resolve', approval.id, 'answer', message, done)"
           @dismiss="emit('resolve', approval.id, 'deny')"
         />
         <article

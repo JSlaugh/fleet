@@ -8,7 +8,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  answer: [message: string];
+  answer: [message: string, done: (ok: boolean) => void];
   dismiss: [];
 }>();
 
@@ -40,7 +40,9 @@ function composed(): string {
 function submit() {
   if (submitted.value) return;
   submitted.value = true;
-  emit("answer", composed());
+  emit("answer", composed(), (ok) => {
+    if (!ok) submitted.value = false;
+  });
 }
 </script>
 
