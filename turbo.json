@@ -1,0 +1,15 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@fleet/daemon#start": {
+      "dependsOn": ["@fleet/dashboard#build"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

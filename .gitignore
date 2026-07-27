@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.turbo/
 .fleet/
 fleet.config.json
 *.log

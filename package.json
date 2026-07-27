@@ -6,13 +6,15 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit && pnpm --filter @fleet/dashboard typecheck",
-    "daemon": "pnpm --filter @fleet/daemon start",
+    "build": "turbo run build",
+    "daemon": "pnpm install && turbo run start --filter=@fleet/daemon --",
     "mcp": "pnpm --filter @fleet/mcp start",
     "dashboard:dev": "pnpm --filter @fleet/dashboard dev",
-    "dashboard:build": "pnpm --filter @fleet/dashboard build"
+    "dashboard:build": "turbo run build --filter=@fleet/dashboard"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "turbo": "^2.10.7",
     "typescript": "^5.8.0",
     "vitest": "^3.2.0"
   },

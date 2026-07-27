@@ -18,8 +18,10 @@ pnpm daemon                     # real loop + dashboard on :4400
 pnpm daemon init-labels         # create fleet:* labels in each configured repo
 pnpm daemon sync-templates      # stamp the fleet-backlog skill + .mcp.json into each configured repo
 pnpm dashboard:dev              # Vite on :4401, proxying /api and /ws to :4400
-pnpm dashboard:build            # required once for the daemon to serve the dashboard
+pnpm dashboard:build            # turbo-cached dashboard build (every `pnpm daemon` run does this first)
 ```
+
+Task running is turborepo (`turbo.json`): `build` is cached with `dist/**` as its output, and `@fleet/daemon#start` declares `@fleet/dashboard#build` as a dependency, so `pnpm daemon` always installs and rebuilds the dashboard before the daemon boots — the daemon serves `packages/dashboard/dist` off disk, so a stale build there silently ships old UI. Arguments still pass through (`pnpm daemon -- --once`, `pnpm daemon init-labels`); the daemon filters the `--` that turbo forwards verbatim.
 
 Verification is `pnpm typecheck` plus `pnpm test`, plus a `--dry-run --once` daemon run for anything that isn't unit-tested. The daemon shells out to `gh` for all GitHub access, so `gh auth login` must have been run. Runtime config is `fleet.config.json` (gitignored — when changing the config shape, update both `fleet.config.example.json` and the schema in `packages/shared/src/index.ts`).
 

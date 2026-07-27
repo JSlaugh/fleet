@@ -21,7 +21,9 @@ Options:
 `;
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
+  // `pnpm daemon -- <args>` forwards the `--` separator through turbo verbatim; drop it
+  // so subcommand dispatch below still sees the subcommand as args[0].
+  const args = process.argv.slice(2).filter((arg) => arg !== "--");
   if (args.includes("--help") || args.includes("-h")) {
     console.log(USAGE);
     return;

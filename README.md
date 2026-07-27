@@ -33,7 +33,7 @@ pnpm daemon                       # the real loop + dashboard at http://localhos
 pnpm test                         # vitest: daemon loop/state/github logic, worker contract guards, mcp client
 ```
 
-The daemon serves the dashboard (build it once with `pnpm dashboard:build`) and a REST/WS API:
+Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via turbo, cached) before the daemon starts, so the served bundle is never stale. The daemon serves that dashboard and a REST/WS API:
 
 - `GET /api/board` — board tickets (including a synthesized Done column of recently-closed tickets).
 - `GET /api/tickets/:project/:issue` — a ticket's record plus a journal tail.
