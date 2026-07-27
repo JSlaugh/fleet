@@ -4,7 +4,7 @@ import type { ApprovalManager } from "./approvals.ts";
 import { cleanupFinished, getBoard } from "./board.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
-import { finishFailed } from "./finish.ts";
+import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
 import { logError } from "./log.ts";
 import { reply, resetForFreshClaim, restartTicket } from "./operator.ts";
@@ -136,6 +136,21 @@ export class FleetLoop {
     base: SessionBase,
   ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
     return machineReviewGate(this.ctx, project, issue, worktree, base);
+  }
+
+  private finishCompleted(
+    project: ProjectConfig,
+    issue: ReadyIssue,
+    worktreePath: string,
+    branch: string,
+    summary: string,
+    result: { prTitle?: string; prBody?: string; filesChanged: string[]; confidence: string },
+  ): Promise<void> {
+    return finishCompleted(this.ctx, project, issue, worktreePath, branch, summary, result);
+  }
+
+  private finishBlocked(project: ProjectConfig, issue: ReadyIssue, reason: string, summary?: string): Promise<void> {
+    return finishBlocked(this.ctx, project, issue, reason, summary);
   }
 
   private finishFailed(project: ProjectConfig, issue: ReadyIssue, error: string): Promise<void> {
