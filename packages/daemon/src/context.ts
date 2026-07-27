@@ -1,7 +1,6 @@
 import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { swapLabel } from "./github.ts";
-import { logError } from "./log.ts";
 import type { HistoryStore, StateStore } from "./state.ts";
 import type { WorkerSession } from "./worker.ts";
 
@@ -54,13 +53,15 @@ export function track(ctx: LoopContext, projectName: string, issueNumber: number
   ctx.running.set(runKey, promise.finally(() => ctx.running.delete(runKey)));
 }
 
-/** Puts a ticket back into `fleet:in-progress` and marks it running — the entry point of every resume. */
+/**
+ * Puts a ticket back into `fleet:in-progress` and marks it running — the entry
+ * point of every resume. The label swap is left to throw (see the error policy
+ * on `swapLabel`); callers already run inside a try/catch that reports the
+ * failure and leaves the ticket in its prior state rather than marking it
+ * running under a label that never actually changed.
+ */
 export async function markWorking(ctx: LoopContext, project: ProjectConfig, issueNumber: number): Promise<void> {
-  try {
-    await swapLabel(project, issueNumber, FLEET_LABELS.needsInput, FLEET_LABELS.inProgress);
-  } catch (err) {
-    logError("loop", `${key(project.name, issueNumber)}: label swap to in-progress failed`, err);
-  }
+  await swapLabel(project, issueNumber, FLEET_LABELS.needsInput, FLEET_LABELS.inProgress);
   // Stamp activity too: a resumed ticket whose last activity is already past the
   // stall cutoff would otherwise be re-flagged as stalled before its first message.
   ctx.state.update(project.name, issueNumber, { status: "running", lastActivityAt: new Date().toISOString() });

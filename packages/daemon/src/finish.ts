@@ -60,11 +60,16 @@ async function moveToReview(
   issueNumber: number,
   opts: { comment: string; update: Partial<TicketRecord>; logLine: string },
 ): Promise<void> {
-  await upsertStatusComment(project, issueNumber, opts.comment);
+  const scope = key(project.name, issueNumber);
+  try {
+    await upsertStatusComment(project, issueNumber, opts.comment);
+  } catch (err) {
+    logError("loop", `${scope}: could not post the review status comment`, err);
+  }
   await swapLabel(project, issueNumber, FLEET_LABELS.inProgress, FLEET_LABELS.review);
   ctx.state.update(project.name, issueNumber, { status: "review", ...opts.update });
   ctx.emitBoard();
-  log("loop", `${key(project.name, issueNumber)}: ${opts.logLine}`);
+  log("loop", `${scope}: ${opts.logLine}`);
 }
 
 export async function finishCompleted(
@@ -148,15 +153,20 @@ export async function finishBlocked(
   reason: string,
   summary?: string,
 ): Promise<void> {
-  await upsertStatusComment(
-    project,
-    issue.number,
-    [`**Status: needs input**`, summary ?? "", `Blocked on: ${reason}`, "Reply from the fleet dashboard to continue."].filter(Boolean).join("\n\n"),
-  );
+  const blockedScope = key(project.name, issue.number);
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [`**Status: needs input**`, summary ?? "", `Blocked on: ${reason}`, "Reply from the fleet dashboard to continue."].filter(Boolean).join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${blockedScope}: could not post the needs-input status comment`, err);
+  }
   await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
   ctx.state.update(project.name, issue.number, { status: "needs-input", lastSummary: reason });
   ctx.emitBoard();
-  log("loop", `${key(project.name, issue.number)}: needs input — ${reason}`);
+  log("loop", `${blockedScope}: needs input — ${reason}`);
 }
 
 /**
@@ -181,15 +191,19 @@ export async function finishFailed(
 
   const record = ctx.state.get(project.name, issue.number);
   if (shouldAutoElevate(project, record)) {
-    await upsertStatusComment(
-      project,
-      issue.number,
-      [
-        `**Status: failed**`,
-        `The worker run failed: ${error}`,
-        `Retrying automatically on the elevated model (\`${project.elevatedModel}\`).`,
-      ].join("\n\n"),
-    );
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: failed**`,
+          `The worker run failed: ${error}`,
+          `Retrying automatically on the elevated model (\`${project.elevatedModel}\`).`,
+        ].join("\n\n"),
+      );
+    } catch (err) {
+      logError("loop", `${scope}: could not post the failed status comment`, err);
+    }
     await escalateToElevated(project, issue.number);
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error, autoElevated: true });
     ctx.emitBoard();
@@ -197,11 +211,15 @@ export async function finishFailed(
     return;
   }
 
-  await upsertStatusComment(
-    project,
-    issue.number,
-    [`**Status: failed**`, `The worker run failed: ${error}`, "Re-label with `fleet:ready` to retry, or reply from the dashboard to resume."].join("\n\n"),
-  );
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [`**Status: failed**`, `The worker run failed: ${error}`, "Re-label with `fleet:ready` to retry, or reply from the dashboard to resume."].join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the failed status comment`, err);
+  }
   await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
   ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
   ctx.emitBoard();

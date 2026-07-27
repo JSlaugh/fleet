@@ -183,6 +183,12 @@ export async function getIssueComments(project: ProjectConfig, issueNumber: numb
     .map((c) => `@${c.user.login}: ${c.body}`);
 }
 
+/**
+ * Error policy: a label swap gates the state machine — the next poll cycle
+ * decides what to do with a ticket by reading its label — so a failed swap
+ * genuinely changes what should happen next. Callers let it throw rather than
+ * swallow it into a ticket whose label and recorded status disagree.
+ */
 export async function swapLabel(project: ProjectConfig, issueNumber: number, from: string, to: string): Promise<void> {
   await run("gh", [
     "issue", "edit", String(issueNumber),
@@ -231,6 +237,14 @@ export async function markReady(project: ProjectConfig, issueNumber: number): Pr
   await run("gh", readyLabelArgs(project, issueNumber));
 }
 
+/**
+ * Error policy: the status comment only mirrors ticket state for humans on
+ * GitHub — labels (via `swapLabel`) remain the source of truth the daemon
+ * itself acts on. Callers treat a failure here as best-effort: log it and
+ * continue, rather than letting a transient `gh` failure while posting a
+ * comment escalate into a ticket reported as failed even though the actual
+ * work succeeded.
+ */
 export async function upsertStatusComment(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
   const full = `${STATUS_MARKER}\n${body}`;
   const existing = (await listComments(project, issueNumber)).find((c) => c.body.startsWith(STATUS_MARKER));
