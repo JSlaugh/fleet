@@ -7,10 +7,12 @@ import { FleetLoop } from "./loop.ts";
 import { log, logError } from "./log.ts";
 import { startServer } from "./server.ts";
 import { StateStore } from "./state.ts";
+import { syncTemplates } from "./sync-templates.ts";
 
 const USAGE = `Usage:
   fleet-daemon [--config <path>] [--once] [--dry-run]   run the polling loop
   fleet-daemon init-labels [--config <path>]            create fleet:* labels in every configured repo
+  fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + .mcp.json into every configured repo
 
 Options:
   --config <path>   path to fleet.config.json (default: ./fleet.config.json)
@@ -35,6 +37,11 @@ async function main(): Promise<void> {
       await ensureLabels(project);
     }
     log("labels", "done");
+    return;
+  }
+
+  if (args[0] === "sync-templates") {
+    await syncTemplates(config.projects);
     return;
   }
 
