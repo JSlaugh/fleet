@@ -202,14 +202,21 @@ export interface FleetState {
   pausedUntil?: string;
 }
 
-export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review";
+export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review" | "done";
 
 export const BOARD_COLUMNS: { status: BoardStatus; title: string }[] = [
   { status: "ready", title: "Ready" },
   { status: "in-progress", title: "In progress" },
   { status: "needs-input", title: "Needs input" },
   { status: "review", title: "In review" },
+  { status: "done", title: "Done" },
 ];
+
+/** A ticket's final record, archived at cleanup time once its PR and issue both close. */
+export interface ClosedTicketRecord extends TicketRecord {
+  closedAt: string;
+  prState: "MERGED" | "CLOSED";
+}
 
 export interface BoardTicket {
   project: string;
@@ -221,7 +228,8 @@ export interface BoardTicket {
   isPlan: boolean;
   /** Unsatisfied `Depends-on` issue numbers — only set while they're still open. */
   blockedBy?: number[];
-  record?: TicketRecord;
+  /** A `ClosedTicketRecord` when `status` is `"done"`, a live `TicketRecord` otherwise. */
+  record?: TicketRecord | ClosedTicketRecord;
 }
 
 export function boardStatusFromLabels(labels: string[]): BoardStatus | null {

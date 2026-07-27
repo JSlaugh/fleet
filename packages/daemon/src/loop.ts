@@ -7,6 +7,7 @@ import {
   PLAN_LABEL,
   mergeModelUsage,
   type BoardTicket,
+  type ClosedTicketRecord,
   type FleetConfig,
   type ModelUsageSummary,
   type PlanResult,
@@ -37,7 +38,7 @@ import {
 } from "./github.ts";
 import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
-import { StateStore } from "./state.ts";
+import { HistoryStore, StateStore } from "./state.ts";
 import { TrailingThrottle } from "./throttle.ts";
 import { WorkerSession, buildIssuePrompt, type SessionKind } from "./worker.ts";
 import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
@@ -186,6 +187,35 @@ export function selectEligibleReady(
   });
 }
 
+/**
+ * Synthesizes Done-column board tickets from archived history: the most
+ * recently closed tickets overall (newest first), capped at `limit`. The
+ * project filter on the dashboard narrows this further client-side, so no
+ * per-project limit is applied here.
+ */
+export function synthesizeDoneTickets(
+  history: ClosedTicketRecord[],
+  projects: { name: string; githubRepo: string }[],
+  limit = 5,
+): BoardTicket[] {
+  return [...history]
+    .sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt))
+    .slice(0, limit)
+    .map((record) => {
+      const project = projects.find((p) => p.name === record.project);
+      return {
+        project: record.project,
+        issueNumber: record.issueNumber,
+        title: record.issueTitle,
+        url: project ? `https://github.com/${project.githubRepo}/issues/${record.issueNumber}` : "",
+        status: "done" as const,
+        priority: null,
+        isPlan: record.isPlan ?? false,
+        record,
+      };
+    });
+}
+
 export class FleetLoop {
   private readonly running = new Map<string, Promise<void>>();
   private readonly live = new Map<string, WorkerSession>();
@@ -195,6 +225,7 @@ export class FleetLoop {
   private readonly replyWaiters = new Map<string, (message: string | undefined) => void>();
   private readonly boardCache = new Map<string, BoardTicket[]>();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
+  private readonly history: HistoryStore;
   readonly events = new EventEmitter();
 
   constructor(
@@ -203,7 +234,9 @@ export class FleetLoop {
     private readonly dataDirPath: string,
     private readonly approvals: ApprovalManager,
     private readonly dryRun: boolean,
-  ) {}
+  ) {
+    this.history = new HistoryStore(dataDirPath);
+  }
 
   private key(projectName: string, issueNumber: number): string {
     return `${projectName}#${issueNumber}`;
@@ -911,18 +944,20 @@ export class FleetLoop {
       if (openNumbers.has(record.issueNumber)) continue;
       if (this.running.has(this.key(record.project, record.issueNumber))) continue;
 
-      let prState: string;
+      let rawPrState: string;
       try {
-        prState = await getPrState(project, record.prUrl);
+        rawPrState = await getPrState(project, record.prUrl);
       } catch (err) {
         logError("loop", `${record.project}#${record.issueNumber}: could not check PR state`, err);
         continue;
       }
-      if (prState !== "MERGED" && prState !== "CLOSED") continue;
+      if (rawPrState !== "MERGED" && rawPrState !== "CLOSED") continue;
+      const prState: "MERGED" | "CLOSED" = rawPrState;
 
       log("loop", `${record.project}#${record.issueNumber}: PR ${prState.toLowerCase()} and issue closed — cleaning up worktree + branch ${record.branch}`);
       await removeWorktree(project, record.worktreePath);
       await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
+      this.history.add({ ...record, closedAt: new Date().toISOString(), prState });
       this.state.remove(record.project, record.issueNumber);
       this.emitBoard();
     }
@@ -967,10 +1002,11 @@ export class FleetLoop {
   }
 
   getBoard(): BoardTicket[] {
-    return [...this.boardCache.values()].flat().map((t) => ({
+    const active = [...this.boardCache.values()].flat().map((t) => ({
       ...t,
       record: this.state.get(t.project, t.issueNumber),
     }));
+    return [...active, ...synthesizeDoneTickets(this.history.all(), this.config.projects)];
   }
 
   getProject(name: string): ProjectConfig | undefined {
