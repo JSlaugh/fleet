@@ -18,6 +18,7 @@ const tickets = ref<BoardTicket[]>([]);
 const approvals = ref<PendingApproval[]>([]);
 const showApprovals = ref(false);
 const updatedAt = ref<string>();
+const pausedUntil = ref<string>();
 const error = ref<string>();
 const connected = ref(false);
 const selected = ref<BoardTicket>();
@@ -38,6 +39,7 @@ async function load() {
     const board = await fetchBoard();
     tickets.value = board.tickets;
     updatedAt.value = board.updatedAt;
+    pausedUntil.value = board.pausedUntil;
     error.value = undefined;
     if (selected.value) {
       selected.value = board.tickets.find(
@@ -172,6 +174,13 @@ onUnmounted(() => {
         </span>
       </div>
     </header>
+
+    <div
+      v-if="pausedUntil"
+      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+    >
+      Plan limit reached — paused until {{ new Date(pausedUntil).toLocaleString() }}
+    </div>
 
     <div class="flex min-h-0 flex-1">
       <main class="flex min-w-0 flex-1 gap-3 overflow-x-auto p-4" aria-label="Ticket board">

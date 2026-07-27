@@ -127,15 +127,73 @@ export interface CodeTurnResult {
   kind: "code";
   result?: WorkerResult;
   errorSubtype?: string;
+  /** Set alongside `errorSubtype: "plan_limit"` when a reset time could be parsed out of the limit message. */
+  limitResetAt?: string;
 }
 
 export interface PlanTurnResult {
   kind: "plan";
   result?: PlanResult;
   errorSubtype?: string;
+  limitResetAt?: string;
 }
 
 export type TurnResult = CodeTurnResult | PlanTurnResult;
+
+/**
+ * The reliable, reactive signal for a plan usage-limit hit: no API exposes remaining
+ * capacity, but a message whose text matches this has historically carried the reset
+ * time either as an epoch-seconds suffix (`Claude AI usage limit reached|1735689600`)
+ * or in a human-readable "resets ..." clause.
+ */
+export const USAGE_LIMIT_PATTERN = /usage limit reached/i;
+
+/**
+ * Pure so it can be unit-tested against both known text shapes without spinning up a
+ * session. Returns `undefined` for text that isn't a limit message at all, and for a
+ * limit message whose reset time can't be parsed out of it — callers fall back to a
+ * configured default backoff in either case.
+ */
+export function parseLimitReset(text: string): Date | undefined {
+  if (!USAGE_LIMIT_PATTERN.test(text)) return undefined;
+
+  const epochDigits = text.match(/\|\s*(\d{10,13})\b/)?.[1];
+  if (epochDigits) {
+    const raw = Number(epochDigits);
+    if (Number.isFinite(raw)) {
+      const epochMs = epochDigits.length > 10 ? raw : raw * 1000;
+      return new Date(epochMs);
+    }
+  }
+
+  const resetText = text.match(/resets?\s+(?:at\s+|on\s+)?(.+)$/i)?.[1];
+  if (resetText) {
+    const parsed = Date.parse(resetText.trim());
+    if (!Number.isNaN(parsed)) return new Date(parsed);
+  }
+
+  return undefined;
+}
+
+/** Finds limit-hit text on the message shapes it's known to appear on: assistant text blocks, and error-result `errors[]`. */
+function findLimitText(message: SDKMessage): string | undefined {
+  if (message.type === "assistant") {
+    const content = message.message.content;
+    if (Array.isArray(content)) {
+      for (const block of content) {
+        if (typeof block === "object" && block !== null && (block as { type?: string }).type === "text") {
+          const text = (block as { text: string }).text;
+          if (USAGE_LIMIT_PATTERN.test(text)) return text;
+        }
+      }
+    }
+  }
+  if (message.type === "result" && message.subtype !== "success") {
+    const errors = (message as { errors?: string[] }).errors;
+    return errors?.find((e) => USAGE_LIMIT_PATTERN.test(e));
+  }
+  return undefined;
+}
 
 export class WorkerSession {
   readonly abortController = new AbortController();
@@ -216,6 +274,14 @@ export class WorkerSession {
         if (message.type === "result") {
           this.costUsd = message.total_cost_usd;
           this.modelUsage = summarizeModelUsage(message.modelUsage);
+        }
+        const limitText = findLimitText(message);
+        if (limitText) {
+          const limitResetAt = parseLimitReset(limitText);
+          log("worker", `${this.opts.scope}: plan usage limit reached${limitResetAt ? ` — resets ${limitResetAt.toISOString()}` : " — no reset time parsed"}`);
+          return { kind: this.kind, errorSubtype: "plan_limit", limitResetAt: limitResetAt?.toISOString() } as TurnResult;
+        }
+        if (message.type === "result") {
           if (message.subtype === "success") {
             const structuredOutput = (message as { structured_output?: unknown }).structured_output;
             if (this.kind === "plan") {
