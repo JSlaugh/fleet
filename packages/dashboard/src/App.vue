@@ -5,7 +5,7 @@ import {
   connectBoardSocket,
   fetchApprovals,
   fetchBoard,
-  formatTime,
+  formatCost,
   resolveApproval,
   setTicketPriority,
 } from "./lib/api.ts";
@@ -17,9 +17,9 @@ import TicketDetail from "./components/TicketDetail.vue";
 const tickets = ref<BoardTicket[]>([]);
 const approvals = ref<PendingApproval[]>([]);
 const showApprovals = ref(false);
-const updatedAt = ref<string>();
 const pausedUntil = ref<string>();
 const error = ref<string>();
+const approvalsError = ref<string>();
 const connected = ref(false);
 const selected = ref<BoardTicket>();
 const projectFilter = ref<string>();
@@ -39,7 +39,6 @@ async function load() {
   try {
     const board = await fetchBoard();
     tickets.value = board.tickets;
-    updatedAt.value = board.updatedAt;
     pausedUntil.value = board.pausedUntil;
     error.value = undefined;
     if (selected.value) {
@@ -56,7 +55,7 @@ const projects = computed(() => [...new Set(tickets.value.map((t) => t.project))
 
 const totalCost = computed(() => {
   const sum = visibleTickets.value.reduce((acc, t) => acc + (t.record?.costUsd ?? 0), 0);
-  return sum > 0 ? `$${sum.toFixed(2)}` : "";
+  return formatCost(sum);
 });
 
 const visibleTickets = computed(() =>
@@ -75,8 +74,9 @@ async function loadApprovals() {
   try {
     approvals.value = (await fetchApprovals()).approvals;
     if (approvals.value.length > 0) showApprovals.value = true;
-  } catch {
-    // board error banner covers connectivity; approvals refetch on next event
+    approvalsError.value = undefined;
+  } catch (err) {
+    approvalsError.value = err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -174,8 +174,8 @@ onUnmounted(() => {
       </button>
       <div class="flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-500">
         <span v-if="error" class="text-red-600 dark:text-red-400">{{ error }}</span>
+        <span v-if="approvalsError" class="text-amber-600 dark:text-amber-400" :title="approvalsError">approvals unavailable</span>
         <span v-if="totalCost" :title="'Total cost of tickets on the board'">Σ {{ totalCost }}</span>
-        <span v-if="updatedAt">updated {{ formatTime(updatedAt) }}</span>
         <span class="flex items-center gap-1.5">
           <span class="size-2 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-neutral-300 dark:bg-neutral-700'" aria-hidden="true"></span>
           {{ connected ? "live" : "offline" }}
