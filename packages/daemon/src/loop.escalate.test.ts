@@ -57,6 +57,7 @@ const project: ProjectConfig = {
   planChildrenReady: false,
   autoElevateOnFailure: true,
   autoAddressReviews: true,
+  machineReview: false,
   elevatedModel: "claude-opus-5",
 };
 

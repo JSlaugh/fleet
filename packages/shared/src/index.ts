@@ -42,6 +42,7 @@ export const ProjectConfigSchema = z.object({
   planChildrenReady: z.boolean().default(false),
   autoElevateOnFailure: z.boolean().default(true),
   autoAddressReviews: z.boolean().default(true),
+  machineReview: z.boolean().default(true),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -73,6 +74,19 @@ export const WorkerResultSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that the change is correct and complete"),
 });
 export type WorkerResult = z.infer<typeof WorkerResultSchema>;
+
+export const MachineReviewResultSchema = z.object({
+  verdict: z.enum(["pass", "findings"]).describe("pass = the diff is ready for human review; findings = the worker should do one fix round first"),
+  summary: z.string().describe("1-3 sentence overall assessment of the diff, written for the ticket's status comment"),
+  findings: z.array(z.object({
+    file: z.string().describe("Repo-relative path of the file the finding is in"),
+    line: z.number().int().optional().describe("Line number the finding anchors to, if known"),
+    severity: z.enum(["blocker", "major", "minor"]).optional().describe("blocker = must not ship; major = real defect; minor = worth fixing while we're here"),
+    summary: z.string().describe("One-sentence statement of the defect"),
+    detail: z.string().describe("Why it's wrong and what a fix needs to do"),
+  })).default([]).describe("Concrete, actionable defects only — empty when verdict is pass"),
+});
+export type MachineReviewResult = z.infer<typeof MachineReviewResultSchema>;
 
 export const PlanResultSchema = z.object({
   status: z.enum(["completed", "blocked"]).describe("completed = tickets[] is ready to file as child issues; blocked = a human decision is needed before this epic can be decomposed"),
@@ -127,6 +141,12 @@ export interface TicketRecord {
   autoElevated?: boolean;
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
+  /**
+   * Machine pre-review outcome — doubles as the once-per-ticket cap: any value
+   * (including "pending", which survives a crash mid-review) means a review was
+   * already attempted, so later completions skip straight to human review.
+   */
+  machineReviewOutcome?: "pending" | "passed" | "findings" | "skipped";
 }
 
 export interface ModelUsageSummary {

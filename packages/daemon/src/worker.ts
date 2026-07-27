@@ -176,7 +176,7 @@ export function parseLimitReset(text: string): Date | undefined {
 }
 
 /** Finds limit-hit text on the message shapes it's known to appear on: assistant text blocks, and error-result `errors[]`. */
-function findLimitText(message: SDKMessage): string | undefined {
+export function findLimitText(message: SDKMessage): string | undefined {
   if (message.type === "assistant") {
     const content = message.message.content;
     if (Array.isArray(content)) {
@@ -333,7 +333,7 @@ function activityNote(entry: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-function summarizeModelUsage(
+export function summarizeModelUsage(
   usage: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }> | undefined,
 ): Record<string, ModelUsageSummary> | undefined {
   if (!usage) return undefined;
@@ -378,7 +378,7 @@ function normalizePlanResult(result: PlanResult): PlanResult {
   };
 }
 
-function summarize(message: SDKMessage): Record<string, unknown> {
+export function summarize(message: SDKMessage): Record<string, unknown> {
   const base: Record<string, unknown> = { type: message.type };
   if ("subtype" in message) base.subtype = message.subtype;
   if (message.type === "assistant") {

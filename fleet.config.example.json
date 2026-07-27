@@ -24,7 +24,8 @@
       "allowedTools": [],
       "planChildrenReady": false,
       "autoElevateOnFailure": true,
-      "autoAddressReviews": true
+      "autoAddressReviews": true,
+      "machineReview": true
     }
   ]
 }

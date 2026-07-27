@@ -44,6 +44,16 @@ export async function pushBranch(worktreePath: string, branch: string): Promise<
   await run("git", ["-C", worktreePath, "push", "-u", "origin", branch]);
 }
 
+/** The branch's full diff and commit list against the PR base, for the machine reviewer's prompt. */
+export async function collectBranchDiff(
+  project: ProjectConfig,
+  worktreePath: string,
+): Promise<{ diff: string; commits: string }> {
+  const { stdout: diff } = await run("git", ["-C", worktreePath, "diff", `origin/${project.defaultBranch}...HEAD`]);
+  const { stdout: commits } = await run("git", ["-C", worktreePath, "log", "--oneline", `origin/${project.defaultBranch}..HEAD`]);
+  return { diff, commits: commits.trim() };
+}
+
 export async function hasCommits(project: ProjectConfig, worktreePath: string): Promise<boolean> {
   const { stdout } = await run("git", [
     "-C", worktreePath,

@@ -37,6 +37,7 @@ describe("readyLabelArgs", () => {
     planChildrenReady: false,
     autoElevateOnFailure: true,
     autoAddressReviews: true,
+    machineReview: false,
   } satisfies ProjectConfig;
 
   it("removes every other fleet state label and adds fleet:ready", () => {
@@ -65,6 +66,7 @@ describe("escalateLabelArgs", () => {
     planChildrenReady: false,
     autoElevateOnFailure: true,
     autoAddressReviews: true,
+    machineReview: false,
   } satisfies ProjectConfig;
 
   it("swaps in-progress for elevate + ready", () => {

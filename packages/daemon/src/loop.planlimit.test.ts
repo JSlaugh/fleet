@@ -33,6 +33,7 @@ const project: ProjectConfig = {
   planChildrenReady: false,
   autoElevateOnFailure: true,
   autoAddressReviews: true,
+  machineReview: false,
 };
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {

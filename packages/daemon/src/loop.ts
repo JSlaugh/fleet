@@ -38,10 +38,18 @@ import {
 } from "./github.ts";
 import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
+import {
+  buildMachineReviewFixPrompt,
+  buildMachineReviewPrompt,
+  isActionable,
+  runMachineReview,
+  selectReviewModel,
+  shouldMachineReview,
+} from "./review.ts";
 import { HistoryStore, StateStore } from "./state.ts";
 import { TrailingThrottle } from "./throttle.ts";
 import { WorkerSession, buildIssuePrompt, type SessionKind } from "./worker.ts";
-import { createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
+import { collectBranchDiff, createWorktree, hasCommits, pushBranch, removeWorktree, type Worktree } from "./worktree.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
@@ -101,6 +109,21 @@ export function pickAutoResumable(
         !running.has(`${record.project}#${record.issueNumber}`),
     )
     .slice(0, capacity);
+}
+
+/** The status-comment line for a ticket's machine-review outcome; undefined when no review was attempted. */
+export function machineReviewLine(outcome: TicketRecord["machineReviewOutcome"]): string | undefined {
+  switch (outcome) {
+    case "passed":
+      return "Machine review: passed";
+    case "findings":
+      return "Machine review: found issues — addressed in a fix round";
+    case "skipped":
+    case "pending":
+      return "Machine review: skipped (reviewer unavailable)";
+    default:
+      return undefined;
+  }
 }
 
 /**
@@ -500,6 +523,11 @@ export class FleetLoop {
       }
 
       if (turn.result?.status === "completed") {
+        const gate = await this.machineReviewGate(project, issue, worktree, base);
+        if (gate.action === "fixing") {
+          session.send(gate.prompt);
+          continue;
+        }
         await this.finishCompleted(project, issue, worktree.path, worktree.branch, turn.result.summary, turn.result);
         return;
       }
@@ -677,6 +705,7 @@ export class FleetLoop {
       sessionId: undefined,
       sessionLive: false,
       autoResumed: false,
+      machineReviewOutcome: undefined,
       lastSummary: RESTART_SUMMARY,
       lastActivityAt: new Date().toISOString(),
       lastActivityNote: undefined,
@@ -736,6 +765,101 @@ export class FleetLoop {
     };
   }
 
+  /**
+   * Machine pre-review of a completed code turn, before anything is pushed or a
+   * PR exists. Returns "fixing" with a findings prompt for the still-live worker
+   * session (one round max — `machineReviewOutcome` is the cap), or "proceed" to
+   * fall through to `finishCompleted`. Fails open: a broken reviewer must never
+   * block the pipeline, so every error path proceeds as if the review passed.
+   */
+  private async machineReviewGate(
+    project: ProjectConfig,
+    issue: ReadyIssue,
+    worktree: Worktree,
+    base: SessionBase,
+  ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
+    const key = this.key(project.name, issue.number);
+    const record = this.state.get(project.name, issue.number);
+    if (this.dryRun || !shouldMachineReview(project, record)) return { action: "proceed" };
+    // An empty branch is finishCompleted's blocked-guard territory, not review's.
+    if (!(await hasCommits(project, worktree.path))) return { action: "proceed" };
+
+    const model = selectReviewModel(project);
+    // Persisted before the reviewer starts so a crash mid-review fails open
+    // (the resumed completion sees the field set and skips straight to review).
+    this.state.update(project.name, issue.number, {
+      machineReviewOutcome: "pending",
+      lastActivityAt: new Date().toISOString(),
+      lastActivityNote: "machine review running",
+    });
+    this.emitBoard();
+    const journal = new Journal(this.dataDirPath, project.name, issue.number);
+    journal.append({ type: "fleet", event: "machine-review-started", model });
+    log("loop", `${key}: machine review running${model ? ` on ${model}` : ""}`);
+
+    let outcome;
+    try {
+      const { diff, commits } = await collectBranchDiff(project, worktree.path);
+      outcome = await runMachineReview({
+        scope: key,
+        worktreePath: worktree.path,
+        model,
+        prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch),
+        claudeExecutable: this.config.claudeExecutable,
+        journal,
+      });
+    } catch (err) {
+      outcome = { costUsd: 0, errorSubtype: err instanceof Error ? err.message : String(err) };
+    }
+
+    // Reviewer spend joins the shared base so every later `base + session` write
+    // carries it; the immediate update makes it visible on the dashboard now.
+    base.costUsd += outcome.costUsd;
+    base.modelUsage = mergeModelUsage(base.modelUsage, outcome.modelUsage);
+    this.state.update(project.name, issue.number, {
+      costUsd: (this.state.get(project.name, issue.number)?.costUsd ?? 0) + outcome.costUsd,
+      modelUsage: base.modelUsage,
+    });
+
+    if (outcome.errorSubtype || !outcome.result) {
+      journal.append({ type: "fleet", event: "machine-review-error", errorSubtype: outcome.errorSubtype });
+      log("loop", `${key}: machine review failed (${outcome.errorSubtype}) — proceeding to human review`);
+      if (outcome.errorSubtype === "plan_limit") this.extendPause(key, outcome.limitResetAt);
+      this.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
+      return { action: "proceed" };
+    }
+
+    if (!isActionable(outcome.result)) {
+      journal.append({ type: "fleet", event: "machine-review-passed", summary: outcome.result.summary });
+      log("loop", `${key}: machine review passed`);
+      this.state.update(project.name, issue.number, { machineReviewOutcome: "passed" });
+      return { action: "proceed" };
+    }
+
+    const findings = outcome.result.findings;
+    journal.append({ type: "fleet", event: "machine-review-findings", count: findings.length, findings });
+    log("loop", `${key}: machine review found ${findings.length} issue(s) — sending the worker back for one fix round`);
+    this.state.update(project.name, issue.number, {
+      machineReviewOutcome: "findings",
+      lastActivityNote: `machine review: ${findings.length} finding(s), fixing`,
+    });
+    this.emitBoard();
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: in progress**`,
+          `Machine review found ${findings.length} issue(s); the worker is addressing them before human review.`,
+          findings.map((f) => `- \`${f.line !== undefined ? `${f.file}:${f.line}` : f.file}\` — ${f.summary}`).join("\n"),
+        ].join("\n\n"),
+      );
+    } catch (err) {
+      logError("loop", `${key}: could not post the machine-review status comment`, err);
+    }
+    return { action: "fixing", prompt: buildMachineReviewFixPrompt(outcome.result) };
+  }
+
   private async finishCompleted(
     project: ProjectConfig,
     issue: ReadyIssue,
@@ -765,6 +889,7 @@ export class FleetLoop {
       [
         `**Status: ready for review** (confidence: ${result.confidence})`,
         summary,
+        machineReviewLine(record?.machineReviewOutcome),
         result.filesChanged.length > 0 ? `Files changed:\n${result.filesChanged.map((f) => `- \`${f}\``).join("\n")}` : "",
         prUrl ? `PR: ${prUrl}` : "",
       ].filter(Boolean).join("\n\n"),
@@ -820,16 +945,7 @@ export class FleetLoop {
    */
   private async handlePlanLimit(project: ProjectConfig, issue: ReadyIssue, limitResetAt: string | undefined): Promise<void> {
     const key = this.key(project.name, issue.number);
-    const resetAt = limitResetAt ? new Date(limitResetAt) : new Date(Date.now() + this.config.limitDefaultBackoffMinutes * 60_000);
-    const pausedUntil = new Date(resetAt.getTime() + this.config.limitResumeSlackMinutes * 60_000);
-
-    const existing = this.state.getPausedUntil();
-    if (!existing || pausedUntil.getTime() > Date.parse(existing)) {
-      this.state.setPausedUntil(pausedUntil.toISOString());
-      log("loop", `${key}: plan usage limit hit — pausing daemon until ${pausedUntil.toISOString()}`);
-    } else {
-      log("loop", `${key}: plan usage limit hit again — existing pause until ${existing} already covers it`);
-    }
+    const pausedUntil = this.extendPause(key, limitResetAt);
 
     this.state.update(project.name, issue.number, {
       status: "stalled",
@@ -847,6 +963,21 @@ export class FleetLoop {
     } catch (err) {
       logError("loop", `${key}: could not post the plan-limit pause status comment`, err);
     }
+  }
+
+  /** Extends the daemon-wide plan-limit pause (never shortens an existing one). Returns the effective pause end. */
+  private extendPause(key: string, limitResetAt: string | undefined): Date {
+    const resetAt = limitResetAt ? new Date(limitResetAt) : new Date(Date.now() + this.config.limitDefaultBackoffMinutes * 60_000);
+    const pausedUntil = new Date(resetAt.getTime() + this.config.limitResumeSlackMinutes * 60_000);
+
+    const existing = this.state.getPausedUntil();
+    if (!existing || pausedUntil.getTime() > Date.parse(existing)) {
+      this.state.setPausedUntil(pausedUntil.toISOString());
+      log("loop", `${key}: plan usage limit hit — pausing daemon until ${pausedUntil.toISOString()}`);
+    } else {
+      log("loop", `${key}: plan usage limit hit again — existing pause until ${existing} already covers it`);
+    }
+    return pausedUntil;
   }
 
   private async finishBlocked(project: ProjectConfig, issue: ReadyIssue, reason: string, summary?: string): Promise<void> {
