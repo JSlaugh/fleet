@@ -15,7 +15,8 @@
       "model": "claude-sonnet-5",
       "elevatedModel": "claude-opus-5",
       "lightModel": "claude-haiku-4-5-20251001",
-      "planChildrenReady": false
+      "planChildrenReady": false,
+      "autoElevateOnFailure": true
     }
   ]
 }

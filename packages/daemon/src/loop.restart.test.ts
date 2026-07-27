@@ -28,6 +28,7 @@ const project: ProjectConfig = {
   defaultBranch: "main",
   maxConcurrent: 1,
   planChildrenReady: false,
+  autoElevateOnFailure: true,
 };
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
