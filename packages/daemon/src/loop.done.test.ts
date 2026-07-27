@@ -1,6 +1,6 @@
 import type { ClosedTicketRecord, TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { synthesizeDoneTickets } from "./loop.ts";
+import { synthesizeDoneTickets } from "./board.ts";
 
 function closed(issueNumber: number, closedAt: string, patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
   const record: TicketRecord = {

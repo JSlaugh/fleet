@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectModel } from "./loop.ts";
+import { selectModel } from "./runner.ts";
 
 describe("selectModel", () => {
   const project = { model: "claude-sonnet-5", elevatedModel: "claude-opus-5", lightModel: "claude-haiku-4-5-20251001" };

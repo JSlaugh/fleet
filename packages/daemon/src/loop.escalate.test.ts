@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "./approvals.ts";
-import { FleetLoop, shouldAutoElevate } from "./loop.ts";
+import { shouldAutoElevate } from "./finish.ts";
+import { FleetLoop } from "./loop.ts";
 import { StateStore } from "./state.ts";
 
 vi.mock("./github.ts", () => ({
