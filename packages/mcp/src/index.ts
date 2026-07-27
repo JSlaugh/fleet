@@ -31,11 +31,12 @@ server.registerTool(
       body: z.string().min(1).describe("Problem statement, acceptance criteria, and verification steps, in markdown"),
       priority: z.enum(["p1", "p2", "p3"]).optional().describe("p1 = highest priority, p3 = lowest"),
       ready: z.boolean().optional().describe("True (default) to make the ticket immediately pickable; false to file it for human curation first"),
+      dependsOn: z.array(z.number().int().positive()).optional().describe("issue numbers this ticket depends on; it stays blocked until they close"),
     },
   },
-  async ({ title, body, priority, ready }) => {
+  async ({ title, body, priority, ready, dependsOn }) => {
     try {
-      const result = await fileTicket(FLEET_URL, FLEET_PROJECT, { title, body, priority, ready });
+      const result = await fileTicket(FLEET_URL, FLEET_PROJECT, { title, body, priority, ready, dependsOn });
       return { content: [{ type: "text", text: `Filed ${FLEET_PROJECT}#${result.number}: ${result.url}` }] };
     } catch (err) {
       return errorResult(err);

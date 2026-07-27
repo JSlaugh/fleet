@@ -9,6 +9,7 @@ export interface FileTicketInput {
   body: string;
   priority?: Priority;
   ready?: boolean;
+  dependsOn?: number[];
 }
 
 /** Builds the JSON body for `POST /api/projects/:project/tickets` from the MCP tool's input. */
@@ -17,6 +18,7 @@ export function buildFileTicketRequest(input: FileTicketInput): Record<string, u
   const priority = priorityLabel(input.priority);
   if (priority) payload.priority = priority;
   if (input.ready !== undefined) payload.ready = input.ready;
+  if (input.dependsOn !== undefined) payload.dependsOn = input.dependsOn;
   return payload;
 }
 
@@ -106,7 +108,7 @@ async function fleetFetch(fleetUrl: string, path: string, init?: RequestInit): P
 }
 
 export async function fileTicket(fleetUrl: string, project: string, input: FileTicketInput): Promise<FileTicketResult> {
-  const data = (await fleetFetch(fleetUrl, `/api/projects/${project}/tickets`, {
+  const data = (await fleetFetch(fleetUrl, `/api/projects/${encodeURIComponent(project)}/tickets`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(buildFileTicketRequest(input)),
@@ -115,7 +117,7 @@ export async function fileTicket(fleetUrl: string, project: string, input: FileT
 }
 
 export async function queryBacklog(fleetUrl: string, project: string): Promise<BacklogTicket[]> {
-  const data = (await fleetFetch(fleetUrl, `/api/projects/${project}/backlog`)) as { tickets: BacklogTicket[] };
+  const data = (await fleetFetch(fleetUrl, `/api/projects/${encodeURIComponent(project)}/backlog`)) as { tickets: BacklogTicket[] };
   return data.tickets;
 }
 

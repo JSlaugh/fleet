@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { selectEligibleReady } from "./loop.ts";
+import { selectEligibleReady } from "./claim.ts";
 import type { ReadyIssue } from "./github.ts";
 
 function issue(number: number, patch: Partial<ReadyIssue> = {}): ReadyIssue {
