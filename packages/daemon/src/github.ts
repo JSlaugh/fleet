@@ -283,6 +283,125 @@ export async function getPrState(project: ProjectConfig, prUrl: string): Promise
   return state;
 }
 
+interface GhReview {
+  user: { login: string } | null;
+  state: string;
+  body: string | null;
+  submitted_at: string;
+}
+
+interface GhReviewComment {
+  path: string;
+  line: number | null;
+  body: string | null;
+  user: { login: string } | null;
+  created_at: string;
+}
+
+export interface PrReview {
+  author: string;
+  state: string;
+  body: string;
+  submittedAt: string;
+}
+
+export interface PrComment {
+  path: string;
+  line: number | null;
+  body: string;
+  author: string;
+  createdAt: string;
+}
+
+export interface PrFeedback {
+  reviews: PrReview[];
+  comments: PrComment[];
+  hasChangesRequested: boolean;
+  latestAt: string | undefined;
+}
+
+function isNewerThan(ts: string, since: string | undefined): boolean {
+  return since === undefined || Date.parse(ts) > Date.parse(since);
+}
+
+function hasMeaningfulBody(body: string | null): body is string {
+  return !!body && body.trim().length > 0 && !body.startsWith(STATUS_MARKER);
+}
+
+/**
+ * `hasChangesRequested` looks at every new review regardless of body — a bare
+ * "Changes requested" with no comment is still a real signal to act on. The
+ * `reviews`/`comments` arrays drop empty bodies and the fleet status marker so
+ * a feedback prompt built from them never quotes noise. `latestAt` covers every
+ * new item (not just the filtered ones) so the watermark can't get stuck behind
+ * something that was filtered out of the arrays.
+ */
+export function buildPrFeedback(
+  rawReviews: GhReview[],
+  rawComments: GhReviewComment[],
+  since: string | undefined,
+): PrFeedback {
+  const newReviews = rawReviews.filter((r) => isNewerThan(r.submitted_at, since));
+  const newComments = rawComments.filter((c) => isNewerThan(c.created_at, since));
+
+  const hasChangesRequested = newReviews.some((r) => r.state === "CHANGES_REQUESTED");
+
+  const reviews = newReviews
+    .filter((r) => hasMeaningfulBody(r.body))
+    .map((r) => ({ author: r.user?.login ?? "unknown", state: r.state, body: r.body as string, submittedAt: r.submitted_at }));
+
+  const comments = newComments
+    .filter((c) => hasMeaningfulBody(c.body))
+    .map((c) => ({ path: c.path, line: c.line, body: c.body as string, author: c.user?.login ?? "unknown", createdAt: c.created_at }));
+
+  const timestamps = [...newReviews.map((r) => r.submitted_at), ...newComments.map((c) => c.created_at)];
+  const latestAt = timestamps.length > 0
+    ? timestamps.reduce((latest, ts) => (Date.parse(ts) > Date.parse(latest) ? ts : latest))
+    : undefined;
+
+  return { reviews, comments, hasChangesRequested, latestAt };
+}
+
+/** Reviews and inline comments newer than `since` (undefined = everything) on a fleet PR. */
+export async function getPrFeedback(
+  project: ProjectConfig,
+  prUrl: string,
+  since: string | undefined,
+): Promise<PrFeedback> {
+  const prNumber = issueNumberFromUrl(prUrl);
+  const [rawReviews, rawComments] = await Promise.all([
+    runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
+    runJson<GhReviewComment[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
+  ]);
+  return buildPrFeedback(rawReviews, rawComments, since);
+}
+
+/** Review bodies first, then inline comments grouped by `path:line`. */
+export function buildReviewFeedbackPrompt(feedback: { reviews: PrReview[]; comments: PrComment[] }): string {
+  const parts: string[] = ["New feedback arrived on this ticket's PR."];
+
+  if (feedback.reviews.length > 0) {
+    parts.push(
+      `## Review comments\n\n${feedback.reviews.map((r) => `**@${r.author}** (${r.state}):\n${r.body}`).join("\n\n")}`,
+    );
+  }
+
+  if (feedback.comments.length > 0) {
+    const grouped = new Map<string, PrComment[]>();
+    for (const comment of feedback.comments) {
+      const key = `${comment.path}:${comment.line ?? "?"}`;
+      grouped.set(key, [...(grouped.get(key) ?? []), comment]);
+    }
+    const sections = [...grouped.entries()].map(
+      ([key, comments]) => `**${key}**\n${comments.map((c) => `@${c.author}: ${c.body}`).join("\n")}`,
+    );
+    parts.push(`## Inline comments\n\n${sections.join("\n\n")}`);
+  }
+
+  parts.push("Address each point, commit your changes, and finish with an updated structured result. The PR updates automatically when you complete.");
+  return parts.join("\n\n");
+}
+
 export async function ensureLabels(project: ProjectConfig): Promise<void> {
   for (const label of ALL_FLEET_LABELS) {
     await run("gh", [

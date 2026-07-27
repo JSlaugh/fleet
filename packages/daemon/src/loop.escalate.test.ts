@@ -56,6 +56,7 @@ const project: ProjectConfig = {
   maxConcurrent: 1,
   planChildrenReady: false,
   autoElevateOnFailure: true,
+  autoAddressReviews: true,
   elevatedModel: "claude-opus-5",
 };
 
