@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, TicketDetail, TicketStatus } from "@fleet/shared";
+import type { BoardTicket, TicketDetail } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import { fetchTicket, formatCost, formatTime, restartTicket, sendReply } from "../lib/api.ts";
-
-/** Statuses where a from-scratch re-run is a sensible recovery. */
-const RESTARTABLE: TicketStatus[] = ["running", "stalled", "needs-input", "failed"];
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -28,17 +25,8 @@ const restarting = ref(false);
 const restartStatus = ref<string>();
 let timer: ReturnType<typeof setInterval> | undefined;
 
-const canReply = computed(() => {
-  const record = detail.value?.record;
-  if (!record) return false;
-  if (record.sessionLive) return true;
-  return Boolean(record.sessionId) && ["needs-input", "stalled", "failed"].includes(record.status);
-});
-
-const canRestart = computed(() => {
-  const status = detail.value?.record?.status;
-  return status !== undefined && RESTARTABLE.includes(status);
-});
+const canReply = computed(() => detail.value?.canReply ?? false);
+const canRestart = computed(() => detail.value?.canRestart ?? false);
 
 async function confirmRestart() {
   if (restarting.value) return;
