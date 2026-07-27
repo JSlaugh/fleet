@@ -275,6 +275,6 @@ export interface JournalEntry {
 
 export interface TicketDetail {
   ticket?: BoardTicket;
-  record?: TicketRecord;
+  record?: TicketRecord | ClosedTicketRecord;
   journal: JournalEntry[];
 }

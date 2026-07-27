@@ -39,15 +39,15 @@ export function bodyWithDependsOn(body: string, dependsOn: number[] | undefined)
   return body.trim().length > 0 ? `${body}\n\n${line}` : line;
 }
 
-export function startServer(opts: {
-  port: number;
+/** Builds the Hono app without binding a port, so routes are testable via `app.request(...)`. */
+export function createApp(opts: {
   loop: FleetLoop;
   state: StateStore;
   approvals: ApprovalManager;
   dataDir: string;
   dashboardDist: string;
-}): void {
-  const { port, loop, state, approvals, dataDir, dashboardDist } = opts;
+}): Hono {
+  const { loop, state, approvals, dataDir, dashboardDist } = opts;
   const app = new Hono();
 
   app.get("/api/board", (c) =>
@@ -55,11 +55,14 @@ export function startServer(opts: {
   );
 
   app.get("/api/tickets/:project/:issue", (c) => {
-    const project = c.req.param("project");
+    const projectName = c.req.param("project");
     const issueNumber = Number(c.req.param("issue"));
-    const record = state.get(project, issueNumber);
-    const ticket = loop.getBoard().find((t) => t.project === project && t.issueNumber === issueNumber);
-    const detail: TicketDetail = { ticket, record, journal: readJournalTail(dataDir, project, issueNumber, 200) };
+    if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const record = state.get(projectName, issueNumber) ?? loop.getHistoryRecord(projectName, issueNumber);
+    const ticket = loop.getBoard().find((t) => t.project === projectName && t.issueNumber === issueNumber);
+    const detail: TicketDetail = { ticket, record, journal: readJournalTail(dataDir, projectName, issueNumber, 200) };
     return c.json(detail);
   });
 
@@ -173,6 +176,20 @@ export function startServer(opts: {
       c.text("Fleet daemon is running. Dashboard build not found — run `pnpm --filter @fleet/dashboard build`.", 404),
     );
   }
+
+  return app;
+}
+
+export function startServer(opts: {
+  port: number;
+  loop: FleetLoop;
+  state: StateStore;
+  approvals: ApprovalManager;
+  dataDir: string;
+  dashboardDist: string;
+}): void {
+  const { port, loop, approvals } = opts;
+  const app = createApp(opts);
 
   const httpServer = serve({ fetch: app.fetch, port }) as Server;
   const wss = new WebSocketServer({ noServer: true });

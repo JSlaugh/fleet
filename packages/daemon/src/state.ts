@@ -122,6 +122,10 @@ export class HistoryStore {
     this.write();
   }
 
+  get(project: string, issueNumber: number): ClosedTicketRecord | undefined {
+    return this.records.find((r) => r.project === project && r.issueNumber === issueNumber);
+  }
+
   all(): ClosedTicketRecord[] {
     return [...this.records];
   }
