@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  FleetConfigSchema,
   PlanResultSchema,
+  ProjectConfigSchema,
+  WorkerResultSchema,
   boardStatusFromLabels,
   mergeModelUsage,
   parseWorkerQuestions,
   priorityOf,
   shortModelName,
 } from "./index.ts";
+
+const minimalProject = { name: "alpha", repoPath: "/repo/alpha", githubRepo: "acme/alpha" };
+const minimalFleetConfig = { worktreeRoot: "/tmp/wt", projects: [minimalProject] };
 
 describe("boardStatusFromLabels", () => {
   it("maps each fleet label to its board status", () => {
@@ -178,5 +184,133 @@ describe("PlanResultSchema", () => {
     expect(
       PlanResultSchema.safeParse({ status: "completed", summary: "s", confidence: "high" }).success,
     ).toBe(false);
+  });
+});
+
+describe("ProjectConfigSchema", () => {
+  it("parses the minimal required fields and applies defaults for the rest", () => {
+    const parsed = ProjectConfigSchema.parse(minimalProject);
+    expect(parsed.defaultBranch).toBe("main");
+    expect(parsed.maxConcurrent).toBe(1);
+    expect(parsed.planChildrenReady).toBe(false);
+    expect(parsed.autoElevateOnFailure).toBe(true);
+    expect(parsed.autoAddressReviews).toBe(true);
+    expect(parsed.machineReview).toBe(true);
+    expect(parsed.setupCommand).toBeUndefined();
+  });
+
+  it("rejects an empty name or repoPath", () => {
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, name: "" }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, repoPath: "" }).success).toBe(false);
+  });
+
+  it("requires githubRepo to look like owner/repo", () => {
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, githubRepo: "not-a-repo" }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, githubRepo: "a/b/c" }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, githubRepo: "acme/fleet" }).success).toBe(true);
+  });
+
+  it("rejects maxConcurrent below 1 or non-integer", () => {
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, maxConcurrent: 0 }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, maxConcurrent: 1.5 }).success).toBe(false);
+    expect(ProjectConfigSchema.safeParse({ ...minimalProject, maxConcurrent: 2 }).success).toBe(true);
+  });
+});
+
+describe("FleetConfigSchema", () => {
+  it("parses the minimal required fields and applies defaults for the rest", () => {
+    const parsed = FleetConfigSchema.parse(minimalFleetConfig);
+    expect(parsed.pollIntervalSeconds).toBe(60);
+    expect(parsed.dashboardPort).toBe(4400);
+    expect(parsed.stalledAfterMinutes).toBe(10);
+    expect(parsed.ticketTimeoutMinutes).toBe(30);
+    expect(parsed.approvalTimeoutMinutes).toBe(10);
+    expect(parsed.replyWaitMinutes).toBe(60);
+    expect(parsed.limitResumeSlackMinutes).toBe(5);
+    expect(parsed.limitDefaultBackoffMinutes).toBe(300);
+    expect(parsed.dataDir).toBe(".fleet");
+  });
+
+  it("requires worktreeRoot to be non-empty", () => {
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, worktreeRoot: "" }).success).toBe(false);
+  });
+
+  it("requires at least one project", () => {
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, projects: [] }).success).toBe(false);
+  });
+
+  it("enforces each field's min constraint", () => {
+    const cases: [string, number][] = [
+      ["pollIntervalSeconds", 9],
+      ["dashboardPort", 0],
+      ["stalledAfterMinutes", 0],
+      ["ticketTimeoutMinutes", 0],
+      ["approvalTimeoutMinutes", 0],
+      ["replyWaitMinutes", 0],
+      ["limitResumeSlackMinutes", -1],
+      ["limitDefaultBackoffMinutes", 0],
+    ];
+    for (const [field, belowMin] of cases) {
+      const result = FleetConfigSchema.safeParse({ ...minimalFleetConfig, [field]: belowMin });
+      expect(result.success, `${field} should reject ${belowMin}`).toBe(false);
+    }
+  });
+
+  it("allows limitResumeSlackMinutes of 0 (its min is 0, unlike the other duration fields)", () => {
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, limitResumeSlackMinutes: 0 }).success).toBe(true);
+  });
+
+  it("rejects non-integer values for integer fields", () => {
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, pollIntervalSeconds: 10.5 }).success).toBe(false);
+  });
+});
+
+describe("WorkerResultSchema", () => {
+  const base = {
+    summary: "Did the thing.",
+    filesChanged: ["src/index.ts"],
+    confidence: "high" as const,
+  };
+
+  it("parses a completed result with prTitle/prBody", () => {
+    const parsed = WorkerResultSchema.safeParse({
+      ...base,
+      status: "completed",
+      prTitle: "feat: add thing",
+      prBody: "Adds the thing.",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("parses a blocked result with blockedReason", () => {
+    const parsed = WorkerResultSchema.safeParse({
+      ...base,
+      status: "blocked",
+      blockedReason: "Which database should this target?",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("does not itself enforce prTitle/prBody/blockedReason presence — they're optional at the schema level", () => {
+    // The status/field pairing is a documented contract enforced by the worker prompt,
+    // not the zod schema: a bare completed/blocked with none of the optional fields still parses.
+    expect(WorkerResultSchema.safeParse({ ...base, status: "completed" }).success).toBe(true);
+    expect(WorkerResultSchema.safeParse({ ...base, status: "blocked" }).success).toBe(true);
+  });
+
+  it("rejects an unknown status or confidence", () => {
+    expect(WorkerResultSchema.safeParse({ ...base, status: "done" }).success).toBe(false);
+    expect(WorkerResultSchema.safeParse({ ...base, status: "completed", confidence: "certain" }).success).toBe(false);
+  });
+
+  it("requires summary, filesChanged, and confidence", () => {
+    expect(WorkerResultSchema.safeParse({ status: "completed" }).success).toBe(false);
+    expect(WorkerResultSchema.safeParse({ ...base, filesChanged: undefined }).success).toBe(false);
+  });
+
+  it("requires filesChanged to be an array of strings", () => {
+    expect(WorkerResultSchema.safeParse({ ...base, status: "completed", filesChanged: "src/index.ts" }).success).toBe(
+      false,
+    );
   });
 });
