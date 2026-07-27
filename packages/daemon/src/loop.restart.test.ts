@@ -27,6 +27,7 @@ const project: ProjectConfig = {
   githubRepo: "acme/alpha",
   defaultBranch: "main",
   maxConcurrent: 1,
+  planChildrenReady: false,
 };
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {

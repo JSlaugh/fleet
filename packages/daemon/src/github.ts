@@ -1,6 +1,7 @@
 import {
   ALL_FLEET_LABELS,
   FLEET_LABELS,
+  PLAN_LABEL,
   PRIORITY_LABELS,
   boardStatusFromLabels,
   priorityOf,
@@ -75,6 +76,7 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blocked
     url: issue.url,
     status,
     priority: priorityOf(issue.labels),
+    isPlan: issue.labels.includes(PLAN_LABEL),
     ...(blockedBy.length > 0 ? { blockedBy } : {}),
   };
 }

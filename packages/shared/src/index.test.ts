@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  PlanResultSchema,
   boardStatusFromLabels,
   mergeModelUsage,
   parseWorkerQuestions,
@@ -107,5 +108,48 @@ describe("parseWorkerQuestions", () => {
     });
     expect(parsed).toHaveLength(2);
     expect(parsed.map((q) => q.question)).toEqual(["Which DB?", "Deploy now?"]);
+  });
+});
+
+describe("PlanResultSchema", () => {
+  it("parses a completed plan with tickets", () => {
+    const parsed = PlanResultSchema.safeParse({
+      status: "completed",
+      summary: "Split the epic into three tickets.",
+      tickets: [
+        { title: "Add X", body: "Problem, acceptance criteria, verification." },
+        { title: "Add Y", body: "Problem, acceptance criteria, verification.", priority: "fleet:p2" },
+      ],
+      confidence: "high",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("parses a blocked plan with no tickets", () => {
+    const parsed = PlanResultSchema.safeParse({
+      status: "blocked",
+      summary: "Epic is too vague to decompose.",
+      tickets: [],
+      blockedReason: "Which subsystem should this target?",
+      confidence: "low",
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects an unknown priority label", () => {
+    const parsed = PlanResultSchema.safeParse({
+      status: "completed",
+      summary: "s",
+      tickets: [{ title: "t", body: "b", priority: "fleet:urgent" }],
+      confidence: "high",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("requires status, summary, tickets, and confidence", () => {
+    expect(PlanResultSchema.safeParse({}).success).toBe(false);
+    expect(
+      PlanResultSchema.safeParse({ status: "completed", summary: "s", confidence: "high" }).success,
+    ).toBe(false);
   });
 });

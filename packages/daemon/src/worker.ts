@@ -1,10 +1,19 @@
 import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
 import type { CanUseTool, HookCallback, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { WorkerResultSchema, type ModelUsageSummary, type ProjectConfig, type WorkerResult } from "@fleet/shared";
+import {
+  PlanResultSchema,
+  WorkerResultSchema,
+  type ModelUsageSummary,
+  type PlanResult,
+  type ProjectConfig,
+  type WorkerResult,
+} from "@fleet/shared";
 import type { Journal } from "./journal.ts";
 import { log } from "./log.ts";
 import { MessageQueue } from "./queue.ts";
+
+export type SessionKind = "code" | "plan";
 
 /**
  * The SDK hands `outputFormat`'s schema to the API as the `StructuredOutput`
@@ -17,6 +26,10 @@ import { MessageQueue } from "./queue.ts";
  * net when a worker ignores it.
  */
 export const WORKER_OUTPUT_SCHEMA = z.toJSONSchema(WorkerResultSchema, {
+  target: "draft-7",
+}) as Record<string, unknown>;
+
+export const PLAN_OUTPUT_SCHEMA = z.toJSONSchema(PlanResultSchema, {
   target: "draft-7",
 }) as Record<string, unknown>;
 
@@ -33,8 +46,22 @@ Contract:
 - Your final structured output: status "completed" requires prTitle and prBody; status "blocked" requires blockedReason.
 `.trim();
 
+const PLANNER_CONTRACT = `
+You are a fleet planning agent: you decompose an epic-level GitHub issue into independent, PR-sized child tickets instead of writing code.
+
+Contract:
+- Work only within this worktree, read-only: explore the repo (CLAUDE.md, skills, existing code) for context, but do NOT write or edit any files, and do NOT commit.
+- Each child ticket must be self-contained: its body states the problem, acceptance criteria, and how to verify it, and it must be independently implementable as its own PR-sized change.
+- Prefer several small, independent tickets over one large one; avoid tickets that depend on landing in a specific order unless the epic genuinely requires it.
+- If the epic is too ambiguous to decompose confidently, do NOT guess: finish with status "blocked" and put the specific question in blockedReason.
+- Your final structured output lists every proposed child ticket in tickets[].
+`.trim();
+
 export const FORBIDDEN_BASH_REASON =
   "The fleet orchestrator handles pushing, PRs, and issue state. Finish your work and report via your structured result instead.";
+
+export const FORBIDDEN_COMMIT_REASON =
+  "This is a planning session: explore the repo read-only and propose child tickets instead of committing changes.";
 
 /**
  * `Bash` is allowlisted, and allowlisted tools bypass `canUseTool` entirely, so
@@ -75,15 +102,46 @@ export const denyForbiddenBash: HookCallback = async (input) => {
   };
 };
 
-export interface TurnResult {
+/** A planner must not commit either — same single-command scoping as `FORBIDDEN_BASH_PATTERNS`. */
+const FORBIDDEN_COMMIT_PATTERN = /\bgit\b[^;|&\n]*?\s+commit\b/i;
+
+export function isForbiddenPlanBashCommand(command: string): boolean {
+  return isForbiddenBashCommand(command) || FORBIDDEN_COMMIT_PATTERN.test(command);
+}
+
+export const denyForbiddenPlanBash: HookCallback = async (input) => {
+  if (input.hook_event_name !== "PreToolUse" || input.tool_name !== "Bash") return { continue: true };
+  const command = (input.tool_input as { command?: unknown } | null | undefined)?.command;
+  if (typeof command !== "string" || !isForbiddenPlanBashCommand(command)) return { continue: true };
+  return {
+    continue: true,
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: FORBIDDEN_COMMIT_PATTERN.test(command) ? FORBIDDEN_COMMIT_REASON : FORBIDDEN_BASH_REASON,
+    },
+  };
+};
+
+export interface CodeTurnResult {
+  kind: "code";
   result?: WorkerResult;
   errorSubtype?: string;
 }
+
+export interface PlanTurnResult {
+  kind: "plan";
+  result?: PlanResult;
+  errorSubtype?: string;
+}
+
+export type TurnResult = CodeTurnResult | PlanTurnResult;
 
 export class WorkerSession {
   readonly abortController = new AbortController();
   private readonly input = new MessageQueue<SDKUserMessage>();
   private readonly iterator: AsyncIterator<SDKMessage>;
+  private readonly kind: SessionKind;
   sessionId?: string;
   costUsd = 0;
   model?: string;
@@ -100,8 +158,10 @@ export class WorkerSession {
       claudeExecutable?: string;
       resumeSessionId?: string;
       model?: string;
+      kind?: SessionKind;
     },
   ) {
+    this.kind = opts.kind ?? "code";
     const q = query({
       prompt: this.input,
       options: {
@@ -113,10 +173,17 @@ export class WorkerSession {
         permissionMode: "acceptEdits",
         allowedTools: opts.project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
         canUseTool: opts.canUseTool,
-        hooks: { PreToolUse: [{ matcher: "Bash", hooks: [denyForbiddenBash] }] },
+        hooks: { PreToolUse: [{ matcher: "Bash", hooks: [this.kind === "plan" ? denyForbiddenPlanBash : denyForbiddenBash] }] },
         settingSources: ["project"],
-        systemPrompt: { type: "preset", preset: "claude_code", append: WORKER_CONTRACT },
-        outputFormat: { type: "json_schema", schema: WORKER_OUTPUT_SCHEMA },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: this.kind === "plan" ? PLANNER_CONTRACT : WORKER_CONTRACT,
+        },
+        outputFormat: {
+          type: "json_schema",
+          schema: this.kind === "plan" ? PLAN_OUTPUT_SCHEMA : WORKER_OUTPUT_SCHEMA,
+        },
       },
     });
     this.iterator = q[Symbol.asyncIterator]();
@@ -137,7 +204,7 @@ export class WorkerSession {
     try {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
-        if (done || !message) return { errorSubtype: "stream_ended_without_result" };
+        if (done || !message) return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
         const entry = summarize(message);
         this.opts.onActivity(activityNote(entry));
         this.opts.journal.append(entry);
@@ -150,18 +217,22 @@ export class WorkerSession {
           this.costUsd = message.total_cost_usd;
           this.modelUsage = summarizeModelUsage(message.modelUsage);
           if (message.subtype === "success") {
-            const parsed = WorkerResultSchema.safeParse(
-              (message as { structured_output?: unknown }).structured_output,
-            );
-            if (parsed.success) return { result: normalizeResult(parsed.data) };
-            return { errorSubtype: "invalid_structured_output" };
+            const structuredOutput = (message as { structured_output?: unknown }).structured_output;
+            if (this.kind === "plan") {
+              const parsed = PlanResultSchema.safeParse(structuredOutput);
+              if (parsed.success) return { kind: "plan", result: normalizePlanResult(parsed.data) };
+              return { kind: "plan", errorSubtype: "invalid_structured_output" };
+            }
+            const parsed = WorkerResultSchema.safeParse(structuredOutput);
+            if (parsed.success) return { kind: "code", result: normalizeResult(parsed.data) };
+            return { kind: "code", errorSubtype: "invalid_structured_output" };
           }
-          return { errorSubtype: message.subtype };
+          return { kind: this.kind, errorSubtype: message.subtype } as TurnResult;
         }
       }
     } catch (err) {
       if (err instanceof AbortError || this.abortController.signal.aborted) {
-        return { errorSubtype: `timed out after ${Math.round(timeoutMs / 60_000)} minutes` };
+        return { kind: this.kind, errorSubtype: `timed out after ${Math.round(timeoutMs / 60_000)} minutes` } as TurnResult;
       }
       throw err;
     } finally {
@@ -229,6 +300,15 @@ function normalizeResult(result: WorkerResult): WorkerResult {
     summary: unescapeNewlines(result.summary),
     blockedReason: result.blockedReason ? unescapeNewlines(result.blockedReason) : result.blockedReason,
     prBody: result.prBody ? unescapeNewlines(result.prBody) : result.prBody,
+  };
+}
+
+function normalizePlanResult(result: PlanResult): PlanResult {
+  return {
+    ...result,
+    summary: unescapeNewlines(result.summary),
+    blockedReason: result.blockedReason ? unescapeNewlines(result.blockedReason) : result.blockedReason,
+    tickets: result.tickets.map((t) => ({ ...t, body: unescapeNewlines(t.body) })),
   };
 }
 
