@@ -11,37 +11,42 @@ Fleet is a multi-project Claude Code backlog orchestrator: a daemon polls GitHub
 ```bash
 pnpm install
 pnpm typecheck                  # tsc for shared+daemon, then vue-tsc for dashboard
+pnpm test                       # vitest for shared+daemon+mcp
 pnpm daemon -- --dry-run --once # poll and report; changes nothing
 pnpm daemon -- --once           # one full cycle, then exit
 pnpm daemon                     # real loop + dashboard on :4400
 pnpm daemon init-labels         # create fleet:* labels in each configured repo
+pnpm daemon sync-templates      # stamp the fleet-backlog skill + .mcp.json into each configured repo
 pnpm dashboard:dev              # Vite on :4401, proxying /api and /ws to :4400
 pnpm dashboard:build            # required once for the daemon to serve the dashboard
 ```
 
-There are no tests. Verification is `pnpm typecheck` plus a `--dry-run --once` daemon run. The daemon shells out to `gh` for all GitHub access, so `gh auth login` must have been run. Runtime config is `fleet.config.json` (gitignored — when changing the config shape, update both `fleet.config.example.json` and the schema in `packages/shared/src/index.ts`).
+Verification is `pnpm typecheck` plus `pnpm test`, plus a `--dry-run --once` daemon run for anything that isn't unit-tested. The daemon shells out to `gh` for all GitHub access, so `gh auth login` must have been run. Runtime config is `fleet.config.json` (gitignored — when changing the config shape, update both `fleet.config.example.json` and the schema in `packages/shared/src/index.ts`).
 
 ## Architecture
 
-pnpm workspace, three packages, no build step for backend code:
+pnpm workspace, four packages, no build step for backend code:
 
-- **`packages/shared`** — single-file package (`src/index.ts`) holding everything both sides need: zod config schemas, the `WorkerResultSchema` structured-output contract, label constants, `TicketRecord`/`BoardTicket`/approval types. Consumed directly as TypeScript source (root tsconfig `paths` + `allowImportingTsExtensions`; imports use explicit `.ts` extensions).
+- **`packages/shared`** — single-file package (`src/index.ts`) holding everything both sides need: zod config schemas, the `WorkerResultSchema`/`PlanResultSchema` structured-output contracts, label constants, `TicketRecord`/`BoardTicket`/`ClosedTicketRecord`/approval types. Consumed directly as TypeScript source (root tsconfig `paths` + `allowImportingTsExtensions`; imports use explicit `.ts` extensions).
 - **`packages/daemon`** — Node daemon run via `tsx` (never compiled). Hono REST + WebSocket server, Claude Agent SDK sessions.
+- **`packages/mcp`** — tiny stdio MCP server (`@modelcontextprotocol/sdk`) exposing `fleet_file_ticket` / `fleet_query_backlog` / `fleet_board_status` as thin wrappers over the daemon's REST API. A registered project's `.mcp.json` launches it with `FLEET_PROJECT` set to that project's name (`templates/mcp.json.example` is the template; `sync-templates` stamps the merged entry in, alongside the `fleet-backlog` skill from `templates/fleet-backlog/SKILL.md`).
 - **`packages/dashboard`** — Vue 3 + Tailwind 4 + Vite SPA. Polls `/api/board` and listens on `/ws` for `board-updated` / `approvals-updated` pings (the WS carries no payloads; clients refetch).
 
 ### Daemon flow (the part that spans files)
 
 `index.ts` wires everything and owns the poll loop. Each cycle, `FleetLoop` (`loop.ts`) lists `fleet:*` issues per project via `github.ts`, claims ready ones up to `maxConcurrent`, and for each: swaps labels, creates a worktree + `fleet/<issue>` branch (`worktree.ts`), records a `TicketRecord` (`state.ts`), and runs a `WorkerSession` (`worker.ts`).
 
-`WorkerSession` wraps one Agent SDK `query()` with a streaming input queue so the supervisor can inject follow-up messages into a live session. Workers run with `permissionMode: "acceptEdits"`, `settingSources: ["project"]` (so the *target repo's* `.claude/` skills, agents, and CLAUDE.md load inside worker sessions), and a JSON-schema `outputFormat` — every turn must end in a `WorkerResult` (`completed` | `blocked`).
+`WorkerSession` wraps one Agent SDK `query()` with a streaming input queue so the supervisor can inject follow-up messages into a live session. Workers run with `permissionMode: "acceptEdits"`, `settingSources: ["project"]` (so the *target repo's* `.claude/` skills, agents, and CLAUDE.md load inside worker sessions), and a JSON-schema `outputFormat` — every code turn must end in a `WorkerResult` (`completed` | `blocked`). A `fleet:plan` issue runs the same machinery as `kind: "plan"` instead: its `outputFormat` is `PlanResult` (a list of child ticket titles/bodies/priority/tier) and a `PreToolUse` hook denies `git commit` on top of the push/PR/label restriction below, since a planner must stay read-only. Independent of `kind`, that same hook (`denyForbiddenBash`/`denyForbiddenPlanBash` in `worker.ts`) mechanically denies `git push`, `gh pr` (except read-only `view`/`diff`), `gh issue edit|close|comment`, and `gh label` over plain Bash — allowlisted tools bypass `canUseTool`, so the "orchestrator owns pushing/PRs/labels" half of the worker contract has no other enforcement point.
 
-The supervision loop in `FleetLoop.supervise` is the core state machine: `completed` → verify commits exist, push, open PR (`fleet:review`); `blocked` → post the question to the issue's status comment (`fleet:needs-input`), then hold the session open for `replyWaitMinutes` awaiting a dashboard reply — a reply steers the live session; after timeout the session closes but stays resumable via `resume: sessionId`. `FleetLoop.reply` handles all three cases (waiting session, live session, cold resume).
+The supervision loop in `FleetLoop.supervise` is the core state machine: `completed` → verify commits exist, push, open PR (`fleet:review`); a completed **plan** instead files each proposed ticket as a child issue (tagged with its suggested tier label, and `fleet:ready` immediately if `planChildrenReady`) and puts the epic straight into `fleet:review` without a PR. `blocked` (either kind) → post the question to the issue's status comment (`fleet:needs-input`), then hold the session open for `replyWaitMinutes` awaiting a dashboard reply — a reply steers the live session; after timeout the session closes but stays resumable via `resume: sessionId`. `FleetLoop.reply` handles all three cases (waiting session, live session, cold resume). A run that errors outright (not `blocked`) auto-retries once on `elevatedModel` when `shouldAutoElevate` allows it (project opts in via `autoElevateOnFailure`, default on, and this ticket hasn't already been elevated), before falling back to `fleet:needs-input`.
+
+Outside the claim loop, each cycle also: resumes stalled tickets (`pickAutoResumable` — no activity for `stalledAfterMinutes`, or orphaned by a restart — resumed once each from their last session) and resumes tickets in `fleet:review` that picked up changes-requested reviews or fresh inline comments (`pickReviewCandidates`/`addressReviews`, opt out per-project with `autoAddressReviews: false`; a `lastReviewHandledAt` watermark stops the same feedback firing twice). A session hitting the account's plan usage limit pauses claims/resumes across every project (`FleetState.pausedUntil`) until the parsed reset time (plus `limitResumeSlackMinutes`, or `limitDefaultBackoffMinutes` if no reset time parsed) — the triggering ticket is left `stalled` so the auto-resume above picks it back up once the pause lifts.
 
 Tool calls outside the allowlist and `AskUserQuestion` route through `canUseTool` → `ApprovalManager` (`approvals.ts`), which parks the promise until the dashboard answers via `POST /api/approvals/:id` or the timeout denies it. Denial messages are crafted to push the worker toward finishing as `blocked` rather than dying.
 
 ### State model — key invariant
 
-GitHub labels are the source of truth for ticket status; `.fleet/state.json` (`StateStore`) is operational cache only (worktree paths, session IDs, cost, model usage), and `.fleet/journals/<project>/<issue>.jsonl` (`Journal`) holds summarized session transcripts for the dashboard. On boot, `StateStore.clearLiveFlags()` reconciles orphaned `running` tickets to `stalled` since no sessions survive a restart. Cleanup (worktree + branch removal) only happens once the PR is merged/closed *and* the issue is closed.
+GitHub labels are the source of truth for ticket status; `.fleet/state.json` (`StateStore`) is operational cache only — per-ticket (worktree paths, session IDs, cost, model usage, and the `lastReviewHandledAt`/`autoElevated`/`isPlan` fields the behavior above depends on) plus one daemon-wide field, `pausedUntil`, for the plan usage-limit pause — and `.fleet/journals/<project>/<issue>.jsonl` (`Journal`) holds summarized session transcripts for the dashboard. On boot, `StateStore.clearLiveFlags()` reconciles orphaned `running` tickets to `stalled` since no sessions survive a restart. Cleanup (worktree + branch removal) only happens once the PR is merged/closed *and* the issue is closed, at which point the ticket's record moves from `state.json` into `.fleet/history.json` (`HistoryStore`, capped at 50) so the dashboard's Done column can still show it.
 
 Model selection is layered (most specific wins): skill/agent `model:` frontmatter in the target repo → `fleet:elevate` label (uses project `elevatedModel`) → per-project `model` config → CLI default.
 
