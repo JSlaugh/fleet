@@ -19,6 +19,7 @@ import {
   createIssue,
   createPullRequest,
   dependencyStatus,
+  escalateToElevated,
   getIssueComments,
   getIssueLabels,
   getPrState,
@@ -111,6 +112,24 @@ export function selectModel(
   if (opts.elevated) return project.elevatedModel ?? project.model;
   if (opts.light) return project.lightModel ?? project.model;
   return project.model;
+}
+
+/**
+ * Whether a failed run should be auto-escalated to the elevated model instead of
+ * parking the ticket in `fleet:needs-input`: the project must have an elevated
+ * model configured, opt in (default), and this must be the ticket's first
+ * failure at any tier — a manually- or already auto-elevated run that fails
+ * again gets the normal needs-input treatment so escalation only ever fires once.
+ */
+export function shouldAutoElevate(
+  project: { elevatedModel?: string; autoElevateOnFailure?: boolean },
+  record: { elevated?: boolean; autoElevated?: boolean } | undefined,
+): boolean {
+  if (!project.elevatedModel) return false;
+  if (project.autoElevateOnFailure === false) return false;
+  if (record?.elevated) return false;
+  if (record?.autoElevated) return false;
+  return true;
 }
 
 /**
@@ -234,6 +253,10 @@ export class FleetLoop {
       const elevated = issue.labels.includes(ELEVATE_LABEL);
       const light = issue.labels.includes(LIGHT_LABEL);
       const isPlan = issue.labels.includes(PLAN_LABEL);
+      // A fresh claim otherwise wipes the once-only escalation guard along with
+      // everything else the prior attempt recorded — carry it forward so a
+      // second failure (now elevated) can't trigger a second auto-escalation.
+      const autoElevated = this.state.get(project.name, issue.number)?.autoElevated ?? false;
       this.state.upsert({
         project: project.name,
         issueNumber: issue.number,
@@ -247,6 +270,7 @@ export class FleetLoop {
         elevated,
         light,
         isPlan,
+        autoElevated,
       });
 
       const journal = new Journal(this.dataDirPath, project.name, issue.number);
@@ -717,6 +741,25 @@ export class FleetLoop {
       log("loop", `${key}: run ended during an operator restart (${error}) — not reporting it as a failure`);
       return;
     }
+
+    const record = this.state.get(project.name, issue.number);
+    if (shouldAutoElevate(project, record)) {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: failed**`,
+          `The worker run failed: ${error}`,
+          `Retrying automatically on the elevated model (\`${project.elevatedModel}\`).`,
+        ].join("\n\n"),
+      );
+      await escalateToElevated(project, issue.number);
+      this.state.update(project.name, issue.number, { status: "failed", lastSummary: error, autoElevated: true });
+      this.emitBoard();
+      log("loop", `${key}: failed — auto-escalating to ${project.elevatedModel} (once)`);
+      return;
+    }
+
     await upsertStatusComment(
       project,
       issue.number,

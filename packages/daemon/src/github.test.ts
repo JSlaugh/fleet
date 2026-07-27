@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { dependencyStatus, issueNumberFromUrl, parseDependsOn, priorityRank, readyLabelArgs } from "./github.ts";
+import { dependencyStatus, escalateLabelArgs, issueNumberFromUrl, parseDependsOn, priorityRank, readyLabelArgs } from "./github.ts";
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -26,6 +26,7 @@ describe("readyLabelArgs", () => {
     defaultBranch: "main",
     maxConcurrent: 1,
     planChildrenReady: false,
+    autoElevateOnFailure: true,
   } satisfies ProjectConfig;
 
   it("removes every other fleet state label and adds fleet:ready", () => {
@@ -41,6 +42,28 @@ describe("readyLabelArgs", () => {
 
   it("never removes fleet:ready itself", () => {
     expect(readyLabelArgs(project, 7).filter((a) => a === "fleet:ready")).toEqual(["fleet:ready"]);
+  });
+});
+
+describe("escalateLabelArgs", () => {
+  const project = {
+    name: "alpha",
+    repoPath: "/repo/alpha",
+    githubRepo: "acme/alpha",
+    defaultBranch: "main",
+    maxConcurrent: 1,
+    planChildrenReady: false,
+    autoElevateOnFailure: true,
+  } satisfies ProjectConfig;
+
+  it("swaps in-progress for elevate + ready", () => {
+    expect(escalateLabelArgs(project, 7)).toEqual([
+      "issue", "edit", "7",
+      "--repo", "acme/alpha",
+      "--remove-label", "fleet:in-progress",
+      "--add-label", "fleet:elevate",
+      "--add-label", "fleet:ready",
+    ]);
   });
 });
 

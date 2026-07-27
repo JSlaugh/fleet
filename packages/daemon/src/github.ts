@@ -1,5 +1,6 @@
 import {
   ALL_FLEET_LABELS,
+  ELEVATE_LABEL,
   FLEET_LABELS,
   PLAN_LABEL,
   PRIORITY_LABELS,
@@ -189,6 +190,25 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
     "--remove-label", from,
     "--add-label", to,
   ]);
+}
+
+/**
+ * Move an issue from in-progress back to ready, tagged `fleet:elevate`, so the
+ * next poll cycle re-claims it on the project's elevated model. Used for the
+ * once-only auto-escalation retry after a non-elevated run fails.
+ */
+export function escalateLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
+  return [
+    "issue", "edit", String(issueNumber),
+    "--repo", project.githubRepo,
+    "--remove-label", FLEET_LABELS.inProgress,
+    "--add-label", ELEVATE_LABEL,
+    "--add-label", FLEET_LABELS.ready,
+  ];
+}
+
+export async function escalateToElevated(project: ProjectConfig, issueNumber: number): Promise<void> {
+  await run("gh", escalateLabelArgs(project, issueNumber));
 }
 
 /**
