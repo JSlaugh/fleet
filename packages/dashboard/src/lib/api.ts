@@ -7,7 +7,10 @@ export interface BoardResponse {
 }
 
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.url} failed: ${res.status}`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `${res.url} failed: ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -30,21 +33,19 @@ export async function setTicketPriority(project: string, issueNumber: number, pr
 }
 
 export async function sendReply(project: string, issueNumber: number, message: string): Promise<{ mode: string }> {
-  const res = await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/reply`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
-  const body = (await res.json()) as { mode?: string; error?: string };
-  if (!res.ok) throw new Error(body.error ?? `reply failed: ${res.status}`);
+  const body = await json<{ mode?: string }>(
+    await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/reply`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    }),
+  );
   return { mode: body.mode ?? "sent" };
 }
 
 /** Destructive: terminates the ticket's session and discards its branch work. */
 export async function restartTicket(project: string, issueNumber: number): Promise<void> {
-  const res = await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" });
-  const body = (await res.json().catch(() => ({}))) as { error?: string };
-  if (!res.ok) throw new Error(body.error ?? `restart failed: ${res.status}`);
+  await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" }));
 }
 
 export function fetchApprovals(): Promise<{ approvals: PendingApproval[] }> {
@@ -61,12 +62,19 @@ export async function resolveApproval(id: string, decision: "allow" | "deny" | "
   );
 }
 
+const WS_RECONNECT_MIN_MS = 3000;
+const WS_RECONNECT_MAX_MS = 30000;
+
 export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (connected: boolean) => void): () => void {
   let ws: WebSocket | undefined;
   let closed = false;
+  let reconnectDelay = WS_RECONNECT_MIN_MS;
   const open = () => {
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-    ws.onopen = () => onStatus(true);
+    ws.onopen = () => {
+      reconnectDelay = WS_RECONNECT_MIN_MS;
+      onStatus(true);
+    };
     ws.onmessage = (event) => {
       try {
         const parsed = JSON.parse(String(event.data)) as { type?: string };
@@ -75,9 +83,13 @@ export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (c
         onEvent("unknown");
       }
     };
+    ws.onerror = () => ws?.close();
     ws.onclose = () => {
       onStatus(false);
-      if (!closed) setTimeout(open, 3000);
+      if (!closed) {
+        setTimeout(open, reconnectDelay);
+        reconnectDelay = Math.min(reconnectDelay * 2, WS_RECONNECT_MAX_MS);
+      }
     };
   };
   open();
