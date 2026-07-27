@@ -3,6 +3,8 @@
   "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
   "stalledAfterMinutes": 10,
   "ticketTimeoutMinutes": 30,
+  "limitResumeSlackMinutes": 5,
+  "limitDefaultBackoffMinutes": 300,
   "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
   "projects": [
     {

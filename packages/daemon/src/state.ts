@@ -56,6 +56,15 @@ export class StateStore {
     this.write();
   }
 
+  getPausedUntil(): string | undefined {
+    return this.state.pausedUntil;
+  }
+
+  setPausedUntil(pausedUntil: string | undefined): void {
+    this.state.pausedUntil = pausedUntil;
+    this.write();
+  }
+
   clearLiveFlags(): void {
     let changed = false;
     for (const ticket of this.state.tickets) {

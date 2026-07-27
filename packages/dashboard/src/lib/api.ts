@@ -3,6 +3,7 @@ import type { BoardTicket, PendingApproval, TicketDetail } from "@fleet/shared";
 export interface BoardResponse {
   tickets: BoardTicket[];
   updatedAt: string;
+  pausedUntil?: string;
 }
 
 async function json<T>(res: Response): Promise<T> {

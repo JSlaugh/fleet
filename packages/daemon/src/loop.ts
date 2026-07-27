@@ -211,17 +211,35 @@ export class FleetLoop {
 
   async cycle(): Promise<void> {
     this.flagStalled();
-    this.recoverStalled();
+    this.updatePauseState();
+    const paused = this.isPaused();
+    if (!paused) this.recoverStalled();
     for (const project of this.config.projects) {
       try {
-        await this.cycleProject(project);
+        await this.cycleProject(project, paused);
       } catch (err) {
         logError("loop", `polling ${project.name} failed`, err);
       }
     }
   }
 
-  private async cycleProject(project: ProjectConfig): Promise<void> {
+  /** True while a plan usage-limit pause is in effect; board polling and cleanup still run, claims and resumes do not. */
+  private isPaused(): boolean {
+    const pausedUntil = this.state.getPausedUntil();
+    return !!pausedUntil && Date.now() < Date.parse(pausedUntil);
+  }
+
+  /** Clears an expired pause; called once at the top of every cycle before anything checks `isPaused`. */
+  private updatePauseState(): void {
+    const pausedUntil = this.state.getPausedUntil();
+    if (pausedUntil && Date.now() >= Date.parse(pausedUntil)) {
+      this.state.setPausedUntil(undefined);
+      log("loop", `plan usage-limit pause lifted (was paused until ${pausedUntil})`);
+      this.emitBoard();
+    }
+  }
+
+  private async cycleProject(project: ProjectConfig, paused: boolean): Promise<void> {
     const issues = await listFleetIssues(project);
     const { open: openIssueNumbers, all: allIssueNumbers } = await listIssueStates(project);
 
@@ -247,6 +265,8 @@ export class FleetLoop {
     } else {
       await this.cleanupFinished(project, issues);
     }
+
+    if (paused) return;
 
     if (this.dryRun) {
       log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);
@@ -415,6 +435,11 @@ export class FleetLoop {
         model: session.model,
         modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
       });
+
+      if (turn.errorSubtype === "plan_limit") {
+        await this.handlePlanLimit(project, issue, turn.limitResetAt);
+        return;
+      }
 
       if (turn.kind === "plan") {
         if (turn.result?.status === "completed") {
@@ -751,6 +776,44 @@ export class FleetLoop {
     this.state.update(project.name, issue.number, { status: "review", lastSummary: result.summary });
     this.emitBoard();
     log("loop", `${project.name}#${issue.number}: planned ${created.length} child ticket(s)`);
+  }
+
+  /**
+   * A plan usage-limit hit isn't the ticket's fault and isn't retryable right now: every
+   * session across every project would fail the same way until the plan's window resets.
+   * Rather than failing the ticket, pause the whole daemon and leave this ticket `stalled`
+   * with its session id intact so `recoverStalled` resumes it automatically once the pause
+   * lifts — clearing `autoResumed` so the once-only stall guard doesn't swallow that resume.
+   */
+  private async handlePlanLimit(project: ProjectConfig, issue: ReadyIssue, limitResetAt: string | undefined): Promise<void> {
+    const key = this.key(project.name, issue.number);
+    const resetAt = limitResetAt ? new Date(limitResetAt) : new Date(Date.now() + this.config.limitDefaultBackoffMinutes * 60_000);
+    const pausedUntil = new Date(resetAt.getTime() + this.config.limitResumeSlackMinutes * 60_000);
+
+    const existing = this.state.getPausedUntil();
+    if (!existing || pausedUntil.getTime() > Date.parse(existing)) {
+      this.state.setPausedUntil(pausedUntil.toISOString());
+      log("loop", `${key}: plan usage limit hit — pausing daemon until ${pausedUntil.toISOString()}`);
+    } else {
+      log("loop", `${key}: plan usage limit hit again — existing pause until ${existing} already covers it`);
+    }
+
+    this.state.update(project.name, issue.number, {
+      status: "stalled",
+      lastActivityNote: `paused: plan limit until ${pausedUntil.toLocaleString()}`,
+      autoResumed: false,
+    });
+    this.emitBoard();
+
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [`**Status: paused**`, `Plan usage limit reached — resuming automatically ~${pausedUntil.toLocaleString()}.`].join("\n\n"),
+      );
+    } catch (err) {
+      logError("loop", `${key}: could not post the plan-limit pause status comment`, err);
+    }
   }
 
   private async finishBlocked(project: ProjectConfig, issue: ReadyIssue, reason: string, summary?: string): Promise<void> {

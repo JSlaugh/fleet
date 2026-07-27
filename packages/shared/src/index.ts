@@ -53,6 +53,10 @@ export const FleetConfigSchema = z.object({
   ticketTimeoutMinutes: z.number().int().min(1).default(30),
   approvalTimeoutMinutes: z.number().int().min(1).default(10),
   replyWaitMinutes: z.number().int().min(1).default(60),
+  /** Added to a parsed plan-limit reset time before resuming, to absorb clock skew and reset-boundary jitter. */
+  limitResumeSlackMinutes: z.number().int().min(0).default(5),
+  /** Pause length used when a plan-limit hit is detected but no reset time could be parsed out of it. */
+  limitDefaultBackoffMinutes: z.number().int().min(1).default(300),
   claudeExecutable: z.string().optional(),
   dataDir: z.string().default(".fleet"),
   projects: z.array(ProjectConfigSchema).min(1),
@@ -194,6 +198,8 @@ export function parseWorkerQuestions(input: unknown): WorkerQuestion[] {
 
 export interface FleetState {
   tickets: TicketRecord[];
+  /** ISO timestamp: set while the daemon is paused on a plan usage-limit hit, cleared once it passes. */
+  pausedUntil?: string;
 }
 
 export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review";

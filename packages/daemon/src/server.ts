@@ -50,7 +50,9 @@ export function startServer(opts: {
   const { port, loop, state, approvals, dataDir, dashboardDist } = opts;
   const app = new Hono();
 
-  app.get("/api/board", (c) => c.json({ tickets: loop.getBoard(), updatedAt: new Date().toISOString() }));
+  app.get("/api/board", (c) =>
+    c.json({ tickets: loop.getBoard(), updatedAt: new Date().toISOString(), pausedUntil: state.getPausedUntil() }),
+  );
 
   app.get("/api/tickets/:project/:issue", (c) => {
     const project = c.req.param("project");

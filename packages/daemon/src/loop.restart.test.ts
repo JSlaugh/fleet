@@ -63,6 +63,8 @@ function makeLoop(seed?: TicketRecord) {
     ticketTimeoutMinutes: 30,
     approvalTimeoutMinutes: 10,
     replyWaitMinutes: 60,
+    limitResumeSlackMinutes: 5,
+    limitDefaultBackoffMinutes: 300,
     dataDir,
     projects: [project],
   };
