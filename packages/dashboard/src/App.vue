@@ -89,12 +89,19 @@ const approvalCounts = computed(() => {
   return counts;
 });
 
-async function onResolveApproval(id: string, decision: "allow" | "deny" | "answer", message?: string) {
+async function onResolveApproval(
+  id: string,
+  decision: "allow" | "deny" | "answer",
+  message?: string,
+  done?: (ok: boolean) => void,
+) {
   try {
     await resolveApproval(id, decision, message);
     await loadApprovals();
+    done?.(true);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
+    done?.(false);
   }
 }
 
