@@ -85,6 +85,7 @@ export async function reply(
   if (!project) throw new Error(`unknown project ${projectName}`);
   if (!record?.sessionId) throw new Error(`no session recorded for ${scope}; label the issue fleet:ready to start fresh`);
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
+  if (ctx.isShuttingDown()) throw new Error(`daemon is shutting down; reply again once it's back up`);
 
   track(ctx, projectName, issueNumber, resumeTicket(ctx, project, record, message));
   return "resumed";

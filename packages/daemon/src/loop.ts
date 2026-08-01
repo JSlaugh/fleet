@@ -67,6 +67,7 @@ export class FleetLoop {
       boardCache: this.boardCache,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
+      isShuttingDown: () => this.shuttingDown,
     };
   }
 

@@ -72,6 +72,12 @@ export async function addressReviews(
 
   for (const record of candidates) {
     if (countRunning(ctx.running.keys(), project.name) >= project.maxConcurrent) return;
+    // Best-effort: several GitHub calls happen below before this candidate
+    // could reach `track()`, so this can't be perfectly race-free the way the
+    // no-further-awaits checks in `claim.ts`/`recovery.ts` are — but it stops
+    // the common case early, and `stopLiveSessions`'s sweep catches whatever
+    // slips through this window regardless.
+    if (ctx.isShuttingDown()) return;
 
     const scope = key(project.name, record.issueNumber);
 
