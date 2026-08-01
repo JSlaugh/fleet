@@ -17,6 +17,7 @@
       "githubRepo": "owner/example",
       "defaultBranch": "main",
       "maxConcurrent": 1,
+      "maxInReview": 3,
       "setupCommand": "pnpm install",
       "model": "claude-sonnet-5",
       "elevatedModel": "claude-opus-5",

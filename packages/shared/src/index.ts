@@ -34,6 +34,7 @@ export const ProjectConfigSchema = z.object({
   githubRepo: z.string().regex(/^[^/]+\/[^/]+$/, "expected owner/repo"),
   defaultBranch: z.string().default("main"),
   maxConcurrent: z.number().int().min(1).default(1),
+  maxInReview: z.number().int().min(1).default(3),
   setupCommand: z.string().optional(),
   model: z.string().optional(),
   elevatedModel: z.string().optional(),

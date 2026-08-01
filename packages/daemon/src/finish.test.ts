@@ -37,6 +37,7 @@ const project: ProjectConfig = {
   githubRepo: "acme/alpha",
   defaultBranch: "main",
   maxConcurrent: 1,
+  maxInReview: 3,
   planChildrenReady: false,
   autoElevateOnFailure: true,
   autoAddressReviews: true,

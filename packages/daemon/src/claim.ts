@@ -44,7 +44,10 @@ export function selectEligibleReady(
 /**
  * One project's slice of a poll cycle: refresh its board projection, clean up
  * finished tickets, let in-flight work claim capacity first (PR review
- * feedback), then claim `fleet:ready` issues with whatever capacity is left.
+ * feedback), then claim `fleet:ready` issues with whatever capacity is left
+ * — capped by both `maxConcurrent` (running sessions) and `maxInReview`
+ * (issues already labeled `fleet:review`, so the review queue can't grow
+ * faster than a human can clear it).
  */
 export async function cycleProject(ctx: LoopContext, project: ProjectConfig, paused: boolean): Promise<void> {
   const issues = await listFleetIssues(project);
@@ -81,7 +84,16 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     await addressReviews(ctx, project, openIssueNumbers);
   }
 
-  const capacity = project.maxConcurrent - countRunning(ctx.running.keys(), project.name);
+  const inReview = issues.filter((issue) => issue.labels.includes(FLEET_LABELS.review)).length;
+  if (inReview >= project.maxInReview) {
+    log("loop", `${project.name}: ${inReview} in review >= maxInReview ${project.maxInReview} — holding claims`);
+    return;
+  }
+
+  const capacity = Math.min(
+    project.maxConcurrent - countRunning(ctx.running.keys(), project.name),
+    project.maxInReview - inReview,
+  );
   if (capacity <= 0) return;
 
   const ready = selectEligibleReady(issues, {
