@@ -1,10 +1,12 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
+import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "./approvals.ts";
+import { healStaleReadyLabels } from "./claim.ts";
 import { FleetLoop } from "./loop.ts";
+import type { LoopContext } from "./context.ts";
 import { StateStore } from "./state.ts";
 import type { ReadyIssue } from "./github.ts";
 
@@ -13,6 +15,7 @@ vi.mock("./github.ts", async (importActual) => ({
   listFleetIssues: vi.fn(async () => []),
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   toBoardTicket: vi.fn(() => null),
+  swapLabel: vi.fn(async () => {}),
 }));
 
 const github = await import("./github.ts");
@@ -132,5 +135,80 @@ describe("cycleProject with maxInReview backpressure", () => {
     await loop.cycle();
 
     expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
+  });
+});
+
+function ticketRecord(patch: Partial<TicketRecord> = {}): TicketRecord {
+  return {
+    project: "alpha",
+    issueNumber: 62,
+    issueTitle: "issue 62",
+    branch: "fleet/62",
+    worktreePath: "/tmp/wt/62",
+    status: "running",
+    startedAt: "2026-01-01T00:00:00.000Z",
+    lastActivityAt: "2026-01-01T00:00:00.000Z",
+    costUsd: 0,
+    ...patch,
+  };
+}
+
+describe("healStaleReadyLabels", () => {
+  beforeEach(() => {
+    vi.mocked(github.swapLabel).mockClear();
+  });
+
+  it("removes a stale fleet:ready label when the record already shows review with a PR", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
+    const state = new StateStore(dataDir);
+    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
+    const ctx = { state } as unknown as LoopContext;
+
+    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
+
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 62, "fleet:ready", "fleet:review");
+  });
+
+  it("does nothing when the issue isn't labeled fleet:ready", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
+    const state = new StateStore(dataDir);
+    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
+    const ctx = { state } as unknown as LoopContext;
+
+    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:review"])]);
+
+    expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the record has no prUrl yet", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
+    const state = new StateStore(dataDir);
+    state.upsert(ticketRecord({ status: "review" }));
+    const ctx = { state } as unknown as LoopContext;
+
+    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
+
+    expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the labels themselves already carry the conflict (left for the label-consistency log instead)", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
+    const state = new StateStore(dataDir);
+    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
+    const ctx = { state } as unknown as LoopContext;
+
+    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready", "fleet:review"])]);
+
+    expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when there's no record for the issue", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
+    const state = new StateStore(dataDir);
+    const ctx = { state } as unknown as LoopContext;
+
+    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
+
+    expect(github.swapLabel).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,12 @@
-import { ELEVATE_LABEL, FLEET_LABELS, LIGHT_LABEL, PLAN_LABEL, type BoardTicket, type ProjectConfig } from "@fleet/shared";
+import {
+  ELEVATE_LABEL,
+  FLEET_LABELS,
+  LIGHT_LABEL,
+  PLAN_LABEL,
+  type BoardTicket,
+  type ProjectConfig,
+  type TicketRecord,
+} from "@fleet/shared";
 import { cleanupFinished } from "./board.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
@@ -19,11 +27,19 @@ import { runSession } from "./runner.ts";
 import { buildIssuePrompt } from "./worker.ts";
 import { createWorktree } from "./worktree.ts";
 
+/** Fleet status labels that mean an issue has already moved past `fleet:ready`. */
+const POST_READY_STATUS_LABELS = [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review];
+
+/** `TicketRecord` statuses that mean the daemon already knows this ticket is past ready, even if labels look clean. */
+const POST_READY_RECORD_STATUSES = new Set<TicketRecord["status"]>(["review", "needs-input"]);
+
 /**
  * The `fleet:ready` issues that are actually claimable this cycle: not already
- * in flight, and with every `Depends-on` reference satisfied (closed, or
- * pointing at an issue number this repo has never had). Preserves the input
- * order, which callers sort by priority-then-number before this filter runs.
+ * in flight, not carrying a stale `fleet:ready` alongside a status label that
+ * says otherwise, not already past ready per the daemon's own state record,
+ * and with every `Depends-on` reference satisfied (closed, or pointing at an
+ * issue number this repo has never had). Preserves the input order, which
+ * callers sort by priority-then-number before this filter runs.
  */
 export function selectEligibleReady(
   issues: ReadyIssue[],
@@ -31,14 +47,61 @@ export function selectEligibleReady(
     openIssueNumbers: ReadonlySet<number>;
     allIssueNumbers: ReadonlySet<number>;
     isRunning: (issueNumber: number) => boolean;
+    getRecord: (issueNumber: number) => TicketRecord | undefined;
+    projectName: string;
   },
 ): ReadyIssue[] {
   return issues.filter((issue) => {
     if (!issue.labels.includes(FLEET_LABELS.ready)) return false;
     if (opts.isRunning(issue.number)) return false;
+
+    const conflicting = POST_READY_STATUS_LABELS.filter((label) => issue.labels.includes(label));
+    if (conflicting.length > 0) {
+      log(
+        "loop",
+        `${key(opts.projectName, issue.number)}: fleet:ready alongside ${conflicting.join(", ")} — inconsistent labels, skipping claim`,
+      );
+      return false;
+    }
+
+    const record = opts.getRecord(issue.number);
+    if (record && (POST_READY_RECORD_STATUSES.has(record.status) || record.prUrl)) {
+      log(
+        "loop",
+        `${key(opts.projectName, issue.number)}: record already past ready (status=${record.status}${
+          record.prUrl ? `, prUrl=${record.prUrl}` : ""
+        }) — skipping claim`,
+      );
+      return false;
+    }
+
     const { blockedBy } = dependencyStatus(parseDependsOn(issue.body), opts.openIssueNumbers, opts.allIssueNumbers);
     return blockedBy.length === 0;
   });
+}
+
+/**
+ * Nice-to-have self-heal: when the daemon's own record shows a ticket already
+ * pushed to review (has a PR) but the issue still carries `fleet:ready` — the
+ * exact "clean labels, stale record" case `selectEligibleReady`'s record guard
+ * defends against — drop the stale label so the conflict doesn't get
+ * re-logged every cycle. Never touches issues where the labels themselves are
+ * the inconsistency (that's surfaced via the log line above instead, since
+ * swapping labels on a human/tooling-caused conflict could paper over
+ * whatever caused it).
+ */
+export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectConfig, issues: ReadyIssue[]): Promise<void> {
+  for (const issue of issues) {
+    if (!issue.labels.includes(FLEET_LABELS.ready)) continue;
+    if (POST_READY_STATUS_LABELS.some((label) => issue.labels.includes(label))) continue;
+    const record = ctx.state.get(project.name, issue.number);
+    if (record?.status !== "review" || !record.prUrl) continue;
+    log(
+      "loop",
+      `${key(project.name, issue.number)}: removing stale fleet:ready label (already in review, PR ${record.prUrl})`,
+    );
+    await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.review);
+  }
 }
 
 /**
@@ -76,6 +139,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     await cleanupFinished(ctx, project, issues);
   }
 
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would heal stale fleet:ready labels for ${project.name}`);
+  } else {
+    await healStaleReadyLabels(ctx, project, issues);
+  }
+
   if (paused) return;
 
   if (ctx.dryRun) {
@@ -100,6 +169,8 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     openIssueNumbers,
     allIssueNumbers,
     isRunning: (issueNumber) => ctx.running.has(key(project.name, issueNumber)),
+    getRecord: (issueNumber) => ctx.state.get(project.name, issueNumber),
+    projectName: project.name,
   });
 
   for (const issue of ready.slice(0, Math.max(0, capacity))) {
