@@ -25,6 +25,7 @@ const project: ProjectConfig = {
   name: "alpha",
   repoPath: "/repo/alpha",
   githubRepo: "acme/alpha",
+  maxInReview: 3,
   defaultBranch: "main",
   maxConcurrent: 1,
   maxInReview: 3,

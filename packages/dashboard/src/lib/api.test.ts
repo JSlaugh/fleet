@@ -5,7 +5,9 @@ import {
   fetchApprovals,
   fetchBoard,
   fetchTicket,
+  fetchTicketReport,
   formatCost,
+  formatDuration,
   formatTime,
   resolveApproval,
   restartTicket,
@@ -75,6 +77,13 @@ describe("API functions", () => {
     vi.stubGlobal("fetch", fetchMock);
     await fetchTicket("owner/repo", 44);
     expect(fetchMock).toHaveBeenCalledWith("/api/tickets/owner%2Frepo/44");
+  });
+
+  it("fetchTicketReport sends GET /api/tickets/:project/:issue/report, URL-encoding the project", async () => {
+    const fetchMock = mockFetch(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchTicketReport("owner/repo", 44);
+    expect(fetchMock).toHaveBeenCalledWith("/api/tickets/owner%2Frepo/44/report");
   });
 
   it("setTicketPriority POSTs the priority as JSON", async () => {
@@ -193,6 +202,22 @@ describe("formatTime", () => {
 
   it("returns a non-empty locale time string for a valid ISO timestamp", () => {
     expect(formatTime("2026-01-01T12:34:56Z")).not.toBe("");
+  });
+});
+
+describe("formatDuration", () => {
+  it("returns '0s' for undefined, null, and zero", () => {
+    expect(formatDuration(undefined)).toBe("0s");
+    expect(formatDuration(null)).toBe("0s");
+    expect(formatDuration(0)).toBe("0s");
+  });
+
+  it("formats sub-minute durations as seconds", () => {
+    expect(formatDuration(15000)).toBe("15s");
+  });
+
+  it("formats durations over a minute as minutes and seconds", () => {
+    expect(formatDuration(65000)).toBe("1m 5s");
   });
 });
 

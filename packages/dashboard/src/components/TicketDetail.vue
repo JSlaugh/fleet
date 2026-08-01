@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, TicketDetail } from "@fleet/shared";
+import type { BoardTicket, TicketDetail, TicketReport } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
-import { acceptPlan, fetchTicket, formatCost, formatTime, restartTicket, sendReply } from "../lib/api.ts";
+import {
+  acceptPlan,
+  fetchTicket,
+  fetchTicketReport,
+  formatCost,
+  formatDuration,
+  formatTime,
+  restartTicket,
+  sendReply,
+} from "../lib/api.ts";
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -17,6 +26,7 @@ const emit = defineEmits<{
 }>();
 
 const detail = ref<TicketDetail>();
+const report = ref<TicketReport>();
 const error = ref<string>();
 const reply = ref("");
 const sending = ref(false);
@@ -31,6 +41,11 @@ const acceptStatus = ref<string>();
 const canReply = computed(() => detail.value?.canReply ?? false);
 const canRestart = computed(() => detail.value?.canRestart ?? false);
 const canAcceptPlan = computed(() => props.ticket.isPlan && detail.value?.record?.status === "review");
+
+const reportToolNames = computed(() => Object.keys(report.value?.toolCounts ?? {}).sort());
+const reportIsEmpty = computed(
+  () => !report.value || (reportToolNames.value.length === 0 && report.value.segments.length === 0),
+);
 
 async function confirmAcceptPlan() {
   if (accepting.value) return;
@@ -107,6 +122,11 @@ async function load() {
     error.value = undefined;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
+  }
+  try {
+    report.value = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
+  } catch {
+    report.value = undefined;
   }
 }
 
@@ -218,6 +238,102 @@ onUnmounted(() => clearInterval(timer));
     </form>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-4">
+      <section class="mb-4">
+        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+          Operation report
+        </h3>
+        <p v-if="reportIsEmpty" class="text-xs text-neutral-400 dark:text-neutral-500">
+          No session activity recorded yet.
+        </p>
+        <div v-else class="space-y-3">
+          <dl class="grid grid-cols-3 gap-2 text-xs">
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Tool calls</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">{{ report?.totals.toolCalls }}</dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Errors</dt>
+              <dd
+                class="font-semibold"
+                :class="
+                  (report?.totals.errors ?? 0) > 0
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-neutral-700 dark:text-neutral-300'
+                "
+              >
+                {{ report?.totals.errors }}
+              </dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Turns</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">{{ report?.totals.turns }}</dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Wall time</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+                {{ formatDuration(report?.totals.durationMs) }}
+              </dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Cost</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+                {{ formatCost(report?.totals.costUsd) || "&lt;$0.01" }}
+              </dd>
+            </div>
+          </dl>
+
+          <table v-if="reportToolNames.length" class="w-full text-left text-[11px]">
+            <thead>
+              <tr class="text-neutral-400 dark:text-neutral-500">
+                <th class="pb-1 font-medium">Tool</th>
+                <th class="pb-1 text-right font-medium">Calls</th>
+                <th class="pb-1 text-right font-medium">Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="name in reportToolNames"
+                :key="name"
+                class="border-t border-neutral-100 dark:border-neutral-800"
+              >
+                <td class="py-1 text-neutral-700 dark:text-neutral-300">{{ name }}</td>
+                <td class="py-1 text-right text-neutral-600 dark:text-neutral-400">
+                  {{ report?.toolCounts[name] }}
+                </td>
+                <td
+                  class="py-1 text-right"
+                  :class="
+                    (report?.toolErrorCounts[name] ?? 0) > 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-neutral-600 dark:text-neutral-400'
+                  "
+                >
+                  {{ report?.toolErrorCounts[name] ?? 0 }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div v-if="report && report.segments.length > 0" class="space-y-1">
+            <h4 class="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+              Segments
+            </h4>
+            <ol class="space-y-1">
+              <li
+                v-for="(segment, index) in report.segments"
+                :key="index"
+                class="flex items-center justify-between gap-2 rounded bg-neutral-50 px-2 py-1 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+              >
+                <span class="font-medium text-neutral-700 dark:text-neutral-300">Segment {{ index + 1 }}</span>
+                <span>{{ segment.numTurns ?? "–" }} turns</span>
+                <span>{{ formatDuration(segment.durationMs) }}</span>
+                <span>{{ formatCost(segment.costUsd) || "&lt;$0.01" }}</span>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
         Session transcript
       </h3>
