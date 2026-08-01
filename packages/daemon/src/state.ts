@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import type { ClosedTicketRecord, FleetState, TicketRecord } from "@fleet/shared";
 
 /** How many archived tickets `HistoryStore` keeps on disk. */
-const HISTORY_LIMIT = 50;
+const HISTORY_LIMIT = 1000;
 
 /** Newest-first, capped to `max` — applied on every write so the file never grows unbounded. */
 export function trimHistory(records: ClosedTicketRecord[], max: number = HISTORY_LIMIT): ClosedTicketRecord[] {
