@@ -82,6 +82,20 @@ A few things happen automatically without reclaiming a ticket from `fleet:ready`
 - **Auto-elevate on failure.** A run that fails outright (not `blocked`) auto-retries once on the project's `elevatedModel`, if one is configured and `autoElevateOnFailure` isn't set to `false`. A second failure — now already elevated — falls through to `fleet:needs-input` normally.
 - **Plan usage-limit pause.** If a session's own error text indicates the account's plan usage limit was hit, the whole daemon pauses (no new claims or resumes, across every project) until the parsed reset time plus `limitResumeSlackMinutes`, or `limitDefaultBackoffMinutes` if no reset time could be parsed out of the message. The ticket that hit the limit is left `stalled` so it resumes automatically once the pause lifts.
 
+## Bash output compression (rtk pilot)
+
+`.claude/settings.json` in this repo carries a `PreToolUse` hook for [rtk](https://github.com/rtk-ai/rtk) (Apache 2.0, single Rust binary): it rewrites Bash commands like `git status`, `git diff`, `pnpm test`, and `gh pr list` to their `rtk`-prefixed form, and rtk filters/dedups/truncates the output before it reaches the model's context (claimed up to 90% reduction in bash output). Because fleet workers run with `settingSources: ["project"]`, this hook loads automatically inside every worker session that operates on this repo — no daemon changes needed.
+
+This is scoped to fleet's own repo only, as a pilot; it is not rolled out to other fleet-managed projects via `sync-templates`.
+
+The hook is a no-op on any machine without `rtk` on `PATH`: `if command -v rtk >/dev/null 2>&1; then rtk hook claude; fi` exits `0` silently when the binary is missing, so `git status` and friends run completely unchanged. Nothing here requires installing rtk.
+
+**Install** (optional, to actually get compressed output): grab `rtk-x86_64-pc-windows-msvc.zip` from the [releases page](https://github.com/rtk-ai/rtk/releases) (macOS/Linux have their own archives, or `brew install rtk` / the install script — see rtk's README), extract `rtk.exe`, and put it on your `PATH`. Then run `rtk init -g` once to also get rtk's compact CLI wrappers (`rtk git status`, etc.) for interactive use outside of Claude Code; the project hook above works independently of that. The hook only fires under a `bash`-compatible shell (Git Bash on Windows, the default on macOS/Linux) — on Windows without Git Bash, Claude Code falls back to PowerShell and the hook's shell syntax is simply not understood, so it fails as a harmless non-blocking no-op, same as when the binary is missing.
+
+**Opt out locally**: either don't install `rtk`, or add a project-local override in `.claude/settings.local.json` (gitignored) disabling/overriding the `PreToolUse` `Bash` hook.
+
+The worker Bash guard (`FORBIDDEN_BASH_PATTERNS` in `packages/daemon/src/worker.ts`) matches on word boundaries, so `rtk git push` / `rtk gh pr create` / `rtk gh issue close` are still denied exactly like their unprefixed forms — covered by tests in `worker.guard.test.ts`.
+
 ## Config
 
 See `fleet.config.example.json`. Top level: `worktreeRoot`, `pollIntervalSeconds`, `dashboardPort` (default 4400), `dataDir` (default `.fleet`), `claudeExecutable` (optional, overrides which Claude CLI binary workers run), `stalledAfterMinutes`, `ticketTimeoutMinutes` (per-turn timeout), `approvalTimeoutMinutes` (how long an approval or `AskUserQuestion` waits before auto-denying), `replyWaitMinutes` (how long a blocked ticket holds its session open for a dashboard reply before closing it resumable), and `limitResumeSlackMinutes`/`limitDefaultBackoffMinutes` (plan usage-limit pause tuning, above).
