@@ -10,6 +10,7 @@ import { logError } from "./log.ts";
 import { reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
 import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
+import { stopLiveSessions } from "./shutdown.ts";
 import { HistoryStore, StateStore } from "./state.ts";
 import { machineReviewGate } from "./supervise.ts";
 import { TrailingThrottle } from "./throttle.ts";
@@ -29,6 +30,10 @@ export class FleetLoop {
   private readonly live = new Map<string, WorkerSession>();
   /** Keys whose session an operator is force-closing; see `finishFailed`. */
   private readonly restarting = new Set<string>();
+  /** Keys whose session a daemon stop-now is aborting; see `finishFailed`. */
+  private readonly stopping = new Set<string>();
+  /** Set by `beginShutdown`; guards `/api/daemon/shutdown` and SIGINT/SIGTERM against double-fire. */
+  private shuttingDown = false;
   /** Resolvers for sessions parked after reporting `blocked`; `undefined` releases the park without a reply. */
   private readonly replyWaiters = new Map<string, (message: string | undefined) => void>();
   private readonly boardCache = new Map<string, BoardTicket[]>();
@@ -57,10 +62,12 @@ export class FleetLoop {
       running: this.running,
       live: this.live,
       restarting: this.restarting,
+      stopping: this.stopping,
       replyWaiters: this.replyWaiters,
       boardCache: this.boardCache,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
+      isShuttingDown: () => this.shuttingDown,
     };
   }
 
@@ -100,6 +107,33 @@ export class FleetLoop {
 
   get activeCount(): number {
     return this.running.size;
+  }
+
+  get isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  /**
+   * Synchronous double-fire guard: only the first caller gets `true` back and
+   * should go on to actually run `shutdownDrain`/`shutdownNow`. Split out from
+   * those so a caller (the HTTP route, a signal handler) can respond
+   * immediately — 409 or accepted — without waiting on the shutdown itself.
+   */
+  beginShutdown(): boolean {
+    if (this.shuttingDown) return false;
+    this.shuttingDown = true;
+    return true;
+  }
+
+  /** Drain mode: stop claiming/resuming and resolve once every running ticket reaches a normal terminal state. */
+  async shutdownDrain(): Promise<void> {
+    this.setPaused(true);
+    await this.drain();
+  }
+
+  /** Stop-now: abort every live session, leaving each interrupted ticket resumable on the next boot. */
+  async shutdownNow(): Promise<void> {
+    await stopLiveSessions(this.ctx);
   }
 
   getBoard(): BoardTicket[] {

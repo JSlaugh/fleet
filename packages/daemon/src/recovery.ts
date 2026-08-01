@@ -59,6 +59,10 @@ export function recoverStalled(ctx: LoopContext): void {
         log("loop", `[dry-run] would auto-resume stalled ${scope} from session ${record.sessionId}`);
         continue;
       }
+      // A fresh check right before `track()` (nothing awaited in between,
+      // unlike `cycle()`'s `paused` snapshot) so a shutdown requested
+      // mid-cycle can't have this slip past `stopLiveSessions`'s sweep.
+      if (ctx.isShuttingDown()) return;
       log("loop", `${scope}: stalled — auto-resuming session ${record.sessionId} (once)`);
       const updated = ctx.state.update(record.project, record.issueNumber, { autoResumed: true }) ?? record;
       track(ctx, record.project, record.issueNumber, resumeTicket(ctx, project, updated, STALL_NUDGE));

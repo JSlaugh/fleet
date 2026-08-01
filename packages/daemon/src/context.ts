@@ -31,6 +31,16 @@ export interface LoopContext {
   readonly live: Map<string, WorkerSession>;
   /** Keys whose session an operator is force-closing; see `finishFailed`. */
   readonly restarting: Set<string>;
+  /** Keys whose session a daemon stop-now is aborting; see `finishFailed`. */
+  readonly stopping: Set<string>;
+  /**
+   * Live (not snapshotted) check for an in-progress daemon shutdown, of
+   * either mode. `cycle()`'s `paused` is computed once at the top of a cycle
+   * and threaded through several `await`s, so it can go stale mid-cycle;
+   * anything about to `track()` new work should check this instead, right
+   * before doing so, so a shutdown requested mid-cycle is seen immediately.
+   */
+  isShuttingDown(): boolean;
   /** Resolvers for sessions parked after reporting `blocked`; `undefined` releases the park without a reply. */
   readonly replyWaiters: Map<string, (message: string | undefined) => void>;
   /** Last polled board tickets, per project. */

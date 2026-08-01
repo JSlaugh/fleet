@@ -107,6 +107,11 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
       log("loop", `[dry-run] would claim ${project.name}#${issue.number}: ${issue.title}`);
       continue;
     }
+    // `paused` above is a snapshot taken before this cycle's several awaited
+    // GitHub calls; a shutdown requested mid-cycle needs a fresh check, taken
+    // with nothing awaited between it and `track()`, so it can't start a
+    // session `stopLiveSessions` has already swept past.
+    if (ctx.isShuttingDown()) return;
     track(ctx, project.name, issue.number, processTicket(ctx, project, issue));
   }
 }
