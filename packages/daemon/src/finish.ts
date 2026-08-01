@@ -20,6 +20,21 @@ import { hasCommits, pushBranch } from "./worktree.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
+/**
+ * Marks an error as coming from the push/PR/label pipeline that runs *after*
+ * the worker already produced a `completed` result — commits exist, the model
+ * did its job. `shouldAutoElevate`'s caller must never retry these on a
+ * stronger model: re-running the whole ticket cannot fix a git or GitHub API
+ * problem, it can only redo already-merged work or hit the identical
+ * rejection again.
+ */
+export class PostCompletionError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "PostCompletionError";
+  }
+}
+
 /** The status-comment line for a ticket's machine-review outcome; undefined when no review was attempted. */
 export function machineReviewLine(outcome: TicketRecord["machineReviewOutcome"]): string | undefined {
   switch (outcome) {
@@ -85,28 +100,37 @@ export async function finishCompleted(
     await finishBlocked(ctx, project, issue, "Worker reported completed but made no commits.", summary);
     return;
   }
-  await pushBranch(worktreePath, branch);
-  const prBody = [
-    result.prBody ?? summary,
-    `Closes #${issue.number}`,
-    PR_FOOTER,
-  ].join("\n\n");
-  const record = ctx.state.get(project.name, issue.number);
-  let prUrl = record?.prUrl;
-  if (!prUrl) {
-    prUrl = await createPullRequest(project, branch, result.prTitle ?? issue.title, prBody);
+  try {
+    await pushBranch(worktreePath, branch);
+    const prBody = [
+      result.prBody ?? summary,
+      `Closes #${issue.number}`,
+      PR_FOOTER,
+    ].join("\n\n");
+    const record = ctx.state.get(project.name, issue.number);
+    let prUrl = record?.prUrl;
+    if (!prUrl) {
+      prUrl = await createPullRequest(project, branch, result.prTitle ?? issue.title, prBody);
+    }
+    await moveToReview(ctx, project, issue.number, {
+      comment: [
+        `**Status: ready for review** (confidence: ${result.confidence})`,
+        summary,
+        machineReviewLine(record?.machineReviewOutcome),
+        result.filesChanged.length > 0 ? `Files changed:\n${result.filesChanged.map((f) => `- \`${f}\``).join("\n")}` : "",
+        prUrl ? `PR: ${prUrl}` : "",
+      ].filter(Boolean).join("\n\n"),
+      update: { prUrl, lastSummary: summary },
+      logLine: `PR ${prUrl}`,
+    });
+  } catch (err) {
+    throw new PostCompletionError(
+      `the worker completed successfully (commits exist on \`${branch}\`) but the push/PR pipeline failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      { cause: err },
+    );
   }
-  await moveToReview(ctx, project, issue.number, {
-    comment: [
-      `**Status: ready for review** (confidence: ${result.confidence})`,
-      summary,
-      machineReviewLine(record?.machineReviewOutcome),
-      result.filesChanged.length > 0 ? `Files changed:\n${result.filesChanged.map((f) => `- \`${f}\``).join("\n")}` : "",
-      prUrl ? `PR: ${prUrl}` : "",
-    ].filter(Boolean).join("\n\n"),
-    update: { prUrl, lastSummary: summary },
-    logLine: `PR ${prUrl}`,
-  });
 }
 
 /**
@@ -189,6 +213,7 @@ export async function finishFailed(
   project: ProjectConfig,
   issue: ReadyIssue,
   error: string,
+  opts: { postCompletion?: boolean } = {},
 ): Promise<void> {
   const scope = key(project.name, issue.number);
   if (ctx.restarting.has(scope)) {
@@ -199,6 +224,32 @@ export async function finishFailed(
     ctx.state.update(project.name, issue.number, { status: "stalled", autoResumed: false });
     ctx.emitBoard();
     log("loop", `${scope}: run ended during a daemon stop-now (${error}) — left stalled with its session for auto-resume on next boot`);
+    return;
+  }
+
+  // The worker itself already succeeded — commits exist — so re-running the
+  // ticket on a stronger model can't fix a git/GitHub API problem. Never
+  // elevate here, and never touch `autoElevated` so a real model failure
+  // later still gets its one shot.
+  if (opts.postCompletion) {
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: needs input**`,
+          `The worker completed successfully, but a step after completion failed:`,
+          error,
+          "Resolve manually (the branch and its commits are intact) and reply from the dashboard, or re-label `fleet:ready` to retry.",
+        ].join("\n\n"),
+      );
+    } catch (err) {
+      logError("loop", `${scope}: could not post the needs-input status comment`, err);
+    }
+    await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+    ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
+    ctx.emitBoard();
+    log("loop", `${scope}: post-completion step failed (not auto-elevating) — needs input: ${error}`);
     return;
   }
 
@@ -253,7 +304,9 @@ export async function reportRunFailure(
   const scope = key(project.name, issue.number);
   logError("loop", `${scope} ${what}`, err);
   try {
-    await finishFailed(ctx, project, issue, err instanceof Error ? err.message : String(err));
+    await finishFailed(ctx, project, issue, err instanceof Error ? err.message : String(err), {
+      postCompletion: err instanceof PostCompletionError,
+    });
   } catch (reportErr) {
     logError("loop", `${scope}: could not report failure to GitHub`, reportErr);
   }
