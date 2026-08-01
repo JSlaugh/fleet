@@ -136,6 +136,25 @@ describe("GET /api/tickets/:project/:issue/report", () => {
     expect(body.totals).toEqual({ toolCalls: 3, errors: 2, turns: 6, durationMs: 20000, costUsd: 0.5 });
   });
 
+  it("excludes machine-review sub-session entries from tool counts and segments", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 5, [
+      JSON.stringify({ ts: "t0", type: "fleet", event: "claimed" }),
+      JSON.stringify({ ts: "t1", type: "assistant", tools: ["Bash"] }),
+      JSON.stringify({ ts: "t2", type: "result", subtype: "success", costUsd: 0.1 }),
+      JSON.stringify({ ts: "t3", type: "fleet", event: "machine-review-started", session: "machine-review" }),
+      JSON.stringify({ ts: "t4", type: "assistant", tools: ["Read", "Grep"], session: "machine-review" }),
+      JSON.stringify({ ts: "t5", type: "result", subtype: "success", costUsd: 0.05, session: "machine-review" }),
+    ]);
+
+    const { status, body } = await fetchReport(app, 5);
+
+    expect(status).toBe(200);
+    expect(body.toolCounts).toEqual({ Bash: 1 });
+    expect(body.segments).toEqual([{ numTurns: null, durationMs: null, costUsd: 0.1 }]);
+    expect(body.totals).toEqual({ toolCalls: 1, errors: 0, turns: 0, durationMs: 0, costUsd: 0.1 });
+  });
+
   it("tolerates a malformed line by falling back to a zeroed report rather than throwing", async () => {
     const { app, dataDir } = makeApp();
     writeJournal(dataDir, 4, [

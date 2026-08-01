@@ -280,6 +280,8 @@ export interface JournalEntry {
   tools?: string[];
   costUsd?: number;
   event?: string;
+  /** Set to "machine-review" on entries from the one-shot reviewer sub-session, which shares this journal file but is not the ticket's own worker turn. */
+  session?: string;
   toolCalls?: { id: string; name: string }[];
   toolResults?: { id: string; isError?: boolean }[];
   numTurns?: number;

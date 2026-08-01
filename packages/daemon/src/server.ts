@@ -293,6 +293,9 @@ function readJournalTail(dataDir: string, project: string, issueNumber: number, 
  * through the next `result` entry. Every enrichment field (`toolCalls`,
  * `toolResults`, `numTurns`, `durationMs`) is optional on `JournalEntry`, so
  * older journals just fall back to zeroed/null values rather than throwing.
+ * Entries from the one-shot machine-review sub-session (`session:
+ * "machine-review"`, see review.ts) share this same journal file but aren't
+ * the ticket's own worker turn, so they're excluded entirely.
  */
 function buildTicketReport(journal: JournalEntry[]): TicketReport {
   const toolCounts: Record<string, number> = {};
@@ -303,6 +306,8 @@ function buildTicketReport(journal: JournalEntry[]): TicketReport {
   let segmentOpen = false;
 
   for (const entry of journal) {
+    if (entry.session === "machine-review") continue;
+
     if (entry.type === "fleet" && (entry.event === "claimed" || entry.event === "resumed")) {
       segmentOpen = true;
       continue;
