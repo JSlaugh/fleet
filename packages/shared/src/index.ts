@@ -250,6 +250,32 @@ export interface ClosedTicketRecord extends TicketRecord {
   prState: "MERGED" | "CLOSED" | "NONE";
 }
 
+/** A `ClosedTicketRecord` enriched with the GitHub issue URL, for the history view's table rows. */
+export interface HistoryRecord extends ClosedTicketRecord {
+  url: string;
+}
+
+/** Cross-ticket rollups over a (possibly filtered) slice of history — see `computeHistoryAggregates`. */
+export interface HistoryAggregates {
+  count: number;
+  totalCostUsd: number;
+  meanCostUsd: number;
+  meanDurationMs: number;
+  prStateCounts: Record<"MERGED" | "CLOSED" | "NONE", number>;
+  elevatedRate: number;
+  lightRate: number;
+  autoResumedRate: number;
+  planRate: number;
+  modelTotals: Record<string, ModelUsageSummary>;
+}
+
+/** `GET /api/history` response: a newest-first page of archived tickets plus aggregates over the full filtered set. */
+export interface HistoryResponse {
+  records: HistoryRecord[];
+  total: number;
+  aggregates: HistoryAggregates;
+}
+
 export interface BoardTicket {
   project: string;
   issueNumber: number;

@@ -68,6 +68,23 @@ export function createApp(opts: {
     }),
   );
 
+  app.get("/api/history", (c) => {
+    const project = c.req.query("project") || undefined;
+    const since = c.req.query("since") || undefined;
+    const until = c.req.query("until") || undefined;
+    const limitParam = c.req.query("limit");
+    const offsetParam = c.req.query("offset");
+    const limit = limitParam !== undefined ? Number(limitParam) : undefined;
+    const offset = offsetParam !== undefined ? Number(offsetParam) : undefined;
+    if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+      return c.json({ error: "limit must be a positive integer" }, 400);
+    }
+    if (offset !== undefined && (!Number.isInteger(offset) || offset < 0)) {
+      return c.json({ error: "offset must be a non-negative integer" }, 400);
+    }
+    return c.json(loop.getHistoryPage({ project, since, until, limit, offset }));
+  });
+
   app.post("/api/daemon/pause", async (c) => {
     const { paused } = await c.req.json<{ paused: boolean }>().catch(() => ({ paused: undefined }));
     if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);

@@ -52,6 +52,7 @@ const project: ProjectConfig = {
   maxInReview: 3,
   defaultBranch: "main",
   maxConcurrent: 2,
+  maxInReview: 3,
   planChildrenReady: false,
   autoElevateOnFailure: true,
   autoAddressReviews: true,

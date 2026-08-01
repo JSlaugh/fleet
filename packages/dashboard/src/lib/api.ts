@@ -1,4 +1,4 @@
-import type { BoardTicket, PendingApproval, TicketDetail, TicketReport } from "@fleet/shared";
+import type { BoardTicket, HistoryResponse, PendingApproval, TicketDetail, TicketReport } from "@fleet/shared";
 
 export interface BoardResponse {
   tickets: BoardTicket[];
@@ -24,6 +24,24 @@ export function fetchTicket(project: string, issueNumber: number): Promise<Ticke
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}`).then((res) => json<TicketDetail>(res));
 }
 
+export interface HistoryQueryParams {
+  project?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function fetchHistory(params: HistoryQueryParams = {}): Promise<HistoryResponse> {
+  const search = new URLSearchParams();
+  if (params.project) search.set("project", params.project);
+  if (params.since) search.set("since", params.since);
+  if (params.until) search.set("until", params.until);
+  if (params.limit !== undefined) search.set("limit", String(params.limit));
+  if (params.offset !== undefined) search.set("offset", String(params.offset));
+  const qs = search.toString();
+  return fetch(`/api/history${qs ? `?${qs}` : ""}`).then((res) => json<HistoryResponse>(res));
+}
 export function fetchTicketReport(project: string, issueNumber: number): Promise<TicketReport> {
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/report`).then((res) =>
     json<TicketReport>(res),
