@@ -1,4 +1,4 @@
-import type { BoardTicket, PendingApproval, TicketDetail } from "@fleet/shared";
+import type { BoardTicket, PendingApproval, TicketDetail, TicketReport } from "@fleet/shared";
 
 export interface BoardResponse {
   tickets: BoardTicket[];
@@ -22,6 +22,12 @@ export function fetchBoard(): Promise<BoardResponse> {
 
 export function fetchTicket(project: string, issueNumber: number): Promise<TicketDetail> {
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}`).then((res) => json<TicketDetail>(res));
+}
+
+export function fetchTicketReport(project: string, issueNumber: number): Promise<TicketReport> {
+  return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/report`).then((res) =>
+    json<TicketReport>(res),
+  );
 }
 
 export async function setTicketPriority(project: string, issueNumber: number, priority: string | null): Promise<void> {
@@ -125,4 +131,12 @@ export function formatCost(costUsd: number | undefined): string {
 export function formatTime(iso: string | undefined): string {
   if (!iso) return "";
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+export function formatDuration(ms: number | undefined | null): string {
+  if (!ms) return "0s";
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
