@@ -37,9 +37,19 @@ describe("trimHistory", () => {
     expect(trimmed.map((r) => r.issueNumber)).toEqual([9, 8, 7]);
   });
 
-  it("defaults to keeping the most recent 50", () => {
-    const records = Array.from({ length: 60 }, (_, i) => closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
-    expect(trimHistory(records)).toHaveLength(50);
+  it("defaults to keeping the most recent 1000, trimming oldest-first", () => {
+    const records = Array.from({ length: 1010 }, (_, i) => closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
+    const trimmed = trimHistory(records);
+    expect(trimmed).toHaveLength(1000);
+    expect(trimmed.map((r) => r.issueNumber)).not.toContain(0);
+    expect(trimmed.map((r) => r.issueNumber)).not.toContain(9);
+    expect(trimmed[0]?.issueNumber).toBe(1009);
+    expect(trimmed.at(-1)?.issueNumber).toBe(10);
+  });
+
+  it("leaves entries under the cap untouched aside from sorting", () => {
+    const records = Array.from({ length: 5 }, (_, i) => closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
+    expect(trimHistory(records)).toHaveLength(5);
   });
 
   it("does not mutate the input array", () => {
