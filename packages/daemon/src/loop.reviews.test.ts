@@ -1,6 +1,6 @@
 import type { TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { pickReviewCandidates, shouldActOnFeedback } from "./reviews.ts";
+import { pickReviewCandidates, shouldActOnFeedback, shouldClearConflictGuard, shouldResumeForConflict } from "./reviews.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
   return {
@@ -72,5 +72,40 @@ describe("shouldActOnFeedback", () => {
 
   it("does nothing for an approved review with no comments", () => {
     expect(shouldActOnFeedback({ hasChangesRequested: false, reviews: [], comments: [] })).toBe(false);
+  });
+});
+
+describe("shouldResumeForConflict", () => {
+  it("resumes on a fresh CONFLICTING state", () => {
+    expect(shouldResumeForConflict("CONFLICTING", undefined)).toBe(true);
+  });
+
+  it("does not resume a CONFLICTING state already handled", () => {
+    expect(shouldResumeForConflict("CONFLICTING", true)).toBe(false);
+  });
+
+  it("never resumes on UNKNOWN", () => {
+    expect(shouldResumeForConflict("UNKNOWN", undefined)).toBe(false);
+    expect(shouldResumeForConflict("UNKNOWN", true)).toBe(false);
+  });
+
+  it("never resumes on MERGEABLE", () => {
+    expect(shouldResumeForConflict("MERGEABLE", undefined)).toBe(false);
+  });
+});
+
+describe("shouldClearConflictGuard", () => {
+  it("clears a previously-handled conflict once the PR is MERGEABLE again", () => {
+    expect(shouldClearConflictGuard("MERGEABLE", true)).toBe(true);
+  });
+
+  it("does nothing when there was nothing to clear", () => {
+    expect(shouldClearConflictGuard("MERGEABLE", undefined)).toBe(false);
+    expect(shouldClearConflictGuard("MERGEABLE", false)).toBe(false);
+  });
+
+  it("does not clear on CONFLICTING or UNKNOWN", () => {
+    expect(shouldClearConflictGuard("CONFLICTING", true)).toBe(false);
+    expect(shouldClearConflictGuard("UNKNOWN", true)).toBe(false);
   });
 });

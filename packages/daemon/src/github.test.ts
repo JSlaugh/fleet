@@ -1,6 +1,7 @@
 import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
 import {
+  buildConflictPrompt,
   buildPrFeedback,
   buildReviewFeedbackPrompt,
   dependencyStatus,
@@ -286,5 +287,19 @@ describe("buildReviewFeedbackPrompt", () => {
       comments: [{ path: "README.md", line: null, body: "fix typo", author: "bob", createdAt: "2026-01-01T00:00:00.000Z" }],
     });
     expect(prompt).toContain("README.md:?");
+  });
+});
+
+describe("buildConflictPrompt", () => {
+  it("names the default branch to merge in", () => {
+    const prompt = buildConflictPrompt("main");
+    expect(prompt).toContain("origin/main");
+    expect(prompt).toContain("conflicts with `main`");
+  });
+
+  it("asks for a re-run of checks and an updated structured result", () => {
+    const prompt = buildConflictPrompt("main");
+    expect(prompt).toContain("re-run the project's checks");
+    expect(prompt).toContain("finish with an updated structured result");
   });
 });
