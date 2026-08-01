@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "./approvals.ts";
-import { shouldAutoElevate } from "./finish.ts";
+import type { LoopContext } from "./context.ts";
+import { PostCompletionError, reportRunFailure, shouldAutoElevate } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 import { StateStore } from "./state.ts";
 
@@ -99,7 +100,13 @@ function makeLoop(seed?: TicketRecord) {
   const approvals = { request: vi.fn() } as unknown as ApprovalManager;
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const internals = loop as unknown as {
-    finishFailed: (p: ProjectConfig, issue: { number: number; title: string }, error: string) => Promise<void>;
+    finishFailed: (
+      p: ProjectConfig,
+      issue: { number: number; title: string },
+      error: string,
+      opts?: { postCompletion?: boolean },
+    ) => Promise<void>;
+    ctx: LoopContext;
   };
   return { loop, state, internals };
 }
@@ -149,5 +156,60 @@ describe("finishFailed auto-escalation", () => {
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
     expect(github.swapLabel).toHaveBeenCalledWith(optedOut, 7, "fleet:in-progress", "fleet:needs-input");
+  });
+
+  it("never auto-elevates a post-completion failure, even when the ticket is otherwise eligible", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
+
+    await internals.finishFailed(
+      project,
+      { number: 7, title: "issue 7" },
+      "git push ... failed (exit 1): ! [rejected] (non-fast-forward)",
+      { postCompletion: true },
+    );
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    const updated = state.get("alpha", 7);
+    expect(updated?.autoElevated).toBeFalsy();
+    const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
+    expect(commentBody).toContain("completed successfully");
+    expect(commentBody).toContain("non-fast-forward");
+  });
+
+  it("still auto-elevates a session-phase failure (postCompletion unset) exactly as today", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
+
+    await internals.finishFailed(project, { number: 7, title: "issue 7" }, "SDK query rejected");
+
+    expect(github.escalateToElevated).toHaveBeenCalledWith(project, 7);
+    expect(state.get("alpha", 7)?.autoElevated).toBe(true);
+  });
+});
+
+describe("reportRunFailure — routing a PostCompletionError", () => {
+  it("marks the failure as post-completion so finishFailed never auto-elevates it", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
+
+    await reportRunFailure(
+      internals.ctx,
+      project,
+      { number: 7, title: "issue 7", body: "", labels: [] },
+      "failed",
+      new PostCompletionError("the worker completed successfully (commits exist on `fleet/7`) but the push/PR pipeline failed: non-fast-forward"),
+    );
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(state.get("alpha", 7)?.autoElevated).toBeFalsy();
+  });
+
+  it("still auto-elevates a plain error (e.g. a crashed SDK session)", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
+
+    await reportRunFailure(internals.ctx, project, { number: 7, title: "issue 7", body: "", labels: [] }, "failed", new Error("SDK crashed"));
+
+    expect(github.escalateToElevated).toHaveBeenCalledWith(project, 7);
+    expect(state.get("alpha", 7)?.autoElevated).toBe(true);
   });
 });

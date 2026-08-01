@@ -210,8 +210,13 @@ export class FleetLoop {
     return finishBlocked(this.ctx, project, issue, reason, summary);
   }
 
-  private finishFailed(project: ProjectConfig, issue: ReadyIssue, error: string): Promise<void> {
-    return finishFailed(this.ctx, project, issue, error);
+  private finishFailed(
+    project: ProjectConfig,
+    issue: ReadyIssue,
+    error: string,
+    opts?: { postCompletion?: boolean },
+  ): Promise<void> {
+    return finishFailed(this.ctx, project, issue, error, opts);
   }
 
   private resetForFreshClaim(project: ProjectConfig, issueNumber: number): Promise<void> {

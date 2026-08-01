@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "./approvals.ts";
+import { PostCompletionError } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 import { StateStore } from "./state.ts";
 
@@ -100,6 +101,7 @@ const completedResult = { prTitle: "Fix the thing", prBody: "It's fixed.", files
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(worktreeMod.hasCommits).mockResolvedValue(true);
+  vi.mocked(worktreeMod.pushBranch).mockResolvedValue(undefined);
   vi.mocked(github.createPullRequest).mockResolvedValue("https://github.com/acme/alpha/pull/7");
 });
 
@@ -124,6 +126,40 @@ describe("finishCompleted — status comment error policy", () => {
     expect(github.upsertStatusComment).toHaveBeenCalledOnce();
     expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
     expect(state.get("alpha", 7)?.status).toBe("review");
+  });
+});
+
+describe("finishCompleted — post-completion pipeline failures", () => {
+  it("wraps a push rejection in a PostCompletionError instead of a plain error", async () => {
+    vi.mocked(worktreeMod.pushBranch).mockRejectedValue(
+      new Error("git -C /tmp/wt/7 push -u origin fleet/7 failed (exit 1): ! [rejected] fleet/7 -> fleet/7 (non-fast-forward)"),
+    );
+    const { internals } = makeLoop(record());
+
+    const failure = await internals
+      .finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult)
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(PostCompletionError);
+    expect((failure as Error).message).toContain("commits exist on `fleet/7`");
+    expect((failure as Error).message).toContain("non-fast-forward");
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("wraps a gh pr create failure in a PostCompletionError", async () => {
+    vi.mocked(github.createPullRequest).mockRejectedValue(
+      new Error("gh pr create --repo acme/alpha ... failed (exit 1): pull request create failed: a pull request for branch \"fleet/7\" already exists"),
+    );
+    const { internals } = makeLoop(record());
+
+    const failure = await internals
+      .finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult)
+      .catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(PostCompletionError);
+    expect((failure as Error).message).toContain("already exists");
+    expect(github.swapLabel).not.toHaveBeenCalled();
   });
 });
 
