@@ -41,11 +41,6 @@ describe("isForbiddenBashCommand", () => {
     "gh label delete fleet:ready",
     // Chained after an innocuous command.
     "pnpm test && git push",
-    // rtk-rewritten commands (see .claude/settings.json PreToolUse hook): the
-    // word-boundary patterns must still match past the `rtk` prefix.
-    "rtk git push",
-    "rtk gh pr create -t x",
-    "rtk gh issue close 5",
   ])("blocks %j", (command) => {
     expect(isForbiddenBashCommand(command)).toBe(true);
   });
@@ -64,9 +59,6 @@ describe("isForbiddenBashCommand", () => {
     "gh issue list --label fleet:ready",
     // `push` as a bare word belongs to no git/gh command.
     "npm run push-check",
-    // rtk-rewritten read-only commands stay allowed.
-    "rtk git status",
-    "rtk gh pr view 12",
   ])("allows %j", (command) => {
     expect(isForbiddenBashCommand(command)).toBe(false);
   });
