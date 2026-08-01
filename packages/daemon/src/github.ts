@@ -297,6 +297,22 @@ export async function getPrState(project: ProjectConfig, prUrl: string): Promise
   return state;
 }
 
+export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+
+/**
+ * GitHub computes mergeability lazily, so `UNKNOWN` is a legitimate, common
+ * answer (not an error) — callers treat it as "not conflicting, check again
+ * next cycle" rather than retrying immediately.
+ */
+export async function getPrMergeable(project: ProjectConfig, prUrl: string): Promise<PrMergeable> {
+  const { mergeable } = await runJson<{ mergeable: string }>("gh", [
+    "pr", "view", prUrl,
+    "--repo", project.githubRepo,
+    "--json", "mergeable",
+  ]);
+  return mergeable === "MERGEABLE" || mergeable === "CONFLICTING" ? mergeable : "UNKNOWN";
+}
+
 interface GhReview {
   user: { login: string } | null;
   state: string;
@@ -414,6 +430,14 @@ export function buildReviewFeedbackPrompt(feedback: { reviews: PrReview[]; comme
 
   parts.push("Address each point, commit your changes, and finish with an updated structured result. The PR updates automatically when you complete.");
   return parts.join("\n\n");
+}
+
+/** Appended when the PR reports CONFLICTING — a sibling PR merged underneath this branch. */
+export function buildConflictPrompt(defaultBranch: string): string {
+  return [
+    `## Merge conflict`,
+    `This ticket's PR now conflicts with \`${defaultBranch}\` — another PR merged underneath it. Merge \`origin/${defaultBranch}\` into this branch, resolve the conflicts preserving both sides' intent, re-run the project's checks, and finish with an updated structured result. The PR updates automatically when you complete.`,
+  ].join("\n\n");
 }
 
 export async function ensureLabels(project: ProjectConfig): Promise<void> {

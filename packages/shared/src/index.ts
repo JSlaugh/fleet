@@ -142,6 +142,12 @@ export interface TicketRecord {
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
   /**
+   * Once-per-conflict-episode guard: set when a CONFLICTING PR has already
+   * earned its one automatic resolution resume, cleared as soon as the PR
+   * reports MERGEABLE again so a later, distinct conflict is eligible too.
+   */
+  conflictHandled?: boolean;
+  /**
    * Machine pre-review outcome — doubles as the once-per-ticket cap: any value
    * (including "pending", which survives a crash mid-review) means a review was
    * already attempted, so later completions skip straight to human review.
