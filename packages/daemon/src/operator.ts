@@ -187,6 +187,11 @@ export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfi
     sessionLive: false,
     autoResumed: false,
     machineReviewOutcome: undefined,
+    // A restarted ticket's worktree is torn down and rebuilt from scratch, so
+    // any PR the previous session opened no longer reflects what's about to
+    // run — and a lingering `prUrl` would make the claim guard in `claim.ts`
+    // treat this ticket as permanently past ready.
+    prUrl: undefined,
     lastSummary: RESTART_SUMMARY,
     lastActivityAt: new Date().toISOString(),
     lastActivityNote: undefined,

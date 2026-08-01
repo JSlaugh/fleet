@@ -118,6 +118,16 @@ describe("restartTicket with no live session", () => {
     expect(body).not.toContain("failed");
   });
 
+  it("clears a stale prUrl so a ticket restarted from fleet:review is reclaimable again", async () => {
+    const { loop, state } = makeLoop(
+      record({ status: "review", sessionLive: false, prUrl: "https://github.com/acme/alpha/pull/72" }),
+    );
+
+    await loop.restartTicket("alpha", 7);
+
+    expect(state.get("alpha", 7)?.prUrl).toBeUndefined();
+  });
+
   it("still re-queues an issue that has no state record at all", async () => {
     const { loop } = makeLoop();
 

@@ -171,5 +171,16 @@ describe("selectEligibleReady", () => {
       );
       expect(picked.map((i) => i.number)).toEqual([62]);
     });
+
+    it("claims normally once an operator restarts a ticket that had reached fleet:review (resetForFreshClaim clears prUrl)", () => {
+      // Mirrors what `resetForFreshClaim` (operator.ts) leaves behind: status
+      // "restarting", prUrl cleared. Without that clear this would deadlock —
+      // see the record guard's prUrl check above.
+      const picked = selectEligibleReady(
+        [issue(62)],
+        opts({ getRecord: () => record({ issueNumber: 62, status: "restarting", prUrl: undefined }) }),
+      );
+      expect(picked.map((i) => i.number)).toEqual([62]);
+    });
   });
 });
