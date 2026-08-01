@@ -67,8 +67,27 @@ async function main(): Promise<void> {
   const dashboardDist = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "dashboard", "dist");
   startServer({ port: config.dashboardPort, loop, state, approvals, dataDir, dashboardDist });
 
+  // Ctrl+C (or a process manager's SIGTERM) is a stop-now: abort live sessions
+  // rather than let the OS kill them mid-turn, so the next boot can auto-resume
+  // each of them instead of burning their once-only stall recovery on top of
+  // an unclean crash. Shares `beginShutdown`'s guard with the HTTP endpoint, so
+  // a second signal (or a shutdown already requested from the dashboard) is a
+  // no-op rather than a second, overlapping abort pass.
+  const onStopSignal = (signal: string) => {
+    if (!loop.beginShutdown()) return;
+    log("daemon", `${signal} received — stopping now (live sessions abort; each auto-resumes once on the next boot)`);
+    void loop.shutdownNow().then(() => {
+      log("daemon", "stop-now complete — exiting");
+      process.exit(0);
+    });
+  };
+  process.on("SIGINT", () => onStopSignal("SIGINT"));
+  process.on("SIGTERM", () => onStopSignal("SIGTERM"));
+
   for (;;) {
+    if (loop.isShuttingDown) break;
     await loop.cycle();
+    if (loop.isShuttingDown) break;
     await new Promise((resolve) => setTimeout(resolve, config.pollIntervalSeconds * 1000));
   }
 }

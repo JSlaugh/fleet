@@ -46,8 +46,10 @@ export function createApp(opts: {
   approvals: ApprovalManager;
   dataDir: string;
   dashboardDist: string;
+  /** Called once shutdown work (drain or stop-now) finishes. Defaults to `process.exit`; tests override it. */
+  exit?: (code: number) => void;
 }): Hono {
-  const { loop, state, approvals, dataDir, dashboardDist } = opts;
+  const { loop, state, approvals, dataDir, dashboardDist, exit = process.exit.bind(process) } = opts;
   const app = new Hono();
 
   app.get("/api/board", (c) =>
@@ -65,6 +67,23 @@ export function createApp(opts: {
     if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);
     loop.setPaused(paused);
     return c.json({ ok: true, paused });
+  });
+
+  // Terminal: the process exits once the requested mode's work finishes, so
+  // the response the client gets back is the last thing this server ever
+  // sends. Kicked off rather than awaited — a drain can take arbitrarily long,
+  // and the dashboard reads progress off `/api/board` (`paused`/`runningCount`)
+  // until the connection drops instead of holding this request open.
+  app.post("/api/daemon/shutdown", async (c) => {
+    const { mode } = await c.req.json<{ mode?: string }>().catch(() => ({ mode: undefined }));
+    if (mode !== "drain" && mode !== "now") return c.json({ error: 'mode must be "drain" or "now"' }, 400);
+    if (!loop.beginShutdown()) return c.json({ error: "shutdown already in progress" }, 409);
+    log("server", `daemon shutdown requested: ${mode}`);
+    void (mode === "drain" ? loop.shutdownDrain() : loop.shutdownNow()).then(() => {
+      log("server", `${mode} shutdown complete — exiting`);
+      exit(0);
+    });
+    return c.json({ ok: true, mode });
   });
 
   app.get("/api/tickets/:project/:issue", (c) => {
@@ -210,6 +229,7 @@ export function startServer(opts: {
   approvals: ApprovalManager;
   dataDir: string;
   dashboardDist: string;
+  exit?: (code: number) => void;
 }): void {
   const { port, loop, approvals } = opts;
   const app = createApp(opts);

@@ -176,6 +176,13 @@ export async function finishBlocked(
  * reset `restartTicket` is about to do — so a restarting key is logged and
  * dropped instead. Guarding here rather than at the call sites means no failure
  * path can leak past it.
+ *
+ * A daemon stop-now aborts sessions the same way, but for a different reason:
+ * the ticket isn't being reset, it's being interrupted so the *next* boot can
+ * resume it for free. That ends in `stalled` with `sessionId` left untouched
+ * (`runSession`'s `finally` already wrote it back) and `autoResumed` cleared,
+ * rather than `needs-input` — no status comment or label churn either, same
+ * as the restart guard above.
  */
 export async function finishFailed(
   ctx: LoopContext,
@@ -186,6 +193,12 @@ export async function finishFailed(
   const scope = key(project.name, issue.number);
   if (ctx.restarting.has(scope)) {
     log("loop", `${scope}: run ended during an operator restart (${error}) — not reporting it as a failure`);
+    return;
+  }
+  if (ctx.stopping.has(scope)) {
+    ctx.state.update(project.name, issue.number, { status: "stalled", autoResumed: false });
+    ctx.emitBoard();
+    log("loop", `${scope}: run ended during a daemon stop-now (${error}) — left stalled with its session for auto-resume on next boot`);
     return;
   }
 

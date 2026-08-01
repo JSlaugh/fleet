@@ -38,6 +38,7 @@ Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via tu
 
 - `GET /api/board` — board tickets (including a synthesized Done column of recently-closed tickets), plus the daemon's pause state and running count.
 - `POST /api/daemon/pause` — `{ paused: boolean }`; toggles drain mode (below).
+- `POST /api/daemon/shutdown` — `{ mode: "drain" | "now" }`; stops the long-running daemon (below). 409s if a shutdown is already in progress.
 - `GET /api/tickets/:project/:issue` — a ticket's record plus a journal tail.
 - `POST /api/tickets/:project/:issue/priority`, `POST /api/tickets/:project/:issue/restart`, `POST /api/tickets/:project/:issue/reply` — dashboard actions (reprioritize, force-restart, steer or resume a session).
 - `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); this is what the `@fleet/mcp` server and the fleet-backlog skill call so an agent can queue follow-up work without touching `gh` directly.
@@ -50,6 +51,10 @@ For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to t
 The dashboard header has a **Pause/Resume** toggle (drain mode): while paused, the daemon claims nothing new and resumes nothing — no `fleet:ready` pickups, no review-feedback resumes, no stall recovery — but sessions already running are left to finish, and board polling plus merged-ticket cleanup keep going. The pause is persisted in `.fleet/state.json`, so it survives a daemon restart and is cleared only by an explicit resume. It's the same gate the plan usage-limit pause uses, so the two can't fight each other.
 
 Ticket detail has a **Restart** button for stuck, stalled, or failed tickets: it force-closes the session and puts the issue back in `fleet:ready`, so the next cycle re-runs it from scratch. The fresh claim recreates the branch and worktree from `origin/<defaultBranch>`, which **discards the previous session's commits** — the dashboard confirms before firing.
+
+Stopping the long-running daemon (`--once` runs need none of this) has two modes, both guarded against firing twice:
+- **Drain** (`POST /api/daemon/shutdown` with `{ "mode": "drain" }`) enables the same pause as the dashboard's Pause toggle, then exits once every running ticket reaches a normal terminal state (review/needs-input/failed) — nothing is interrupted.
+- **Stop now** (`{ "mode": "now" }`, and Ctrl+C / SIGTERM) aborts every live session immediately and leaves each interrupted ticket `stalled` with its session id intact and `autoResumed` cleared, so the next `pnpm daemon` boot auto-resumes every one of them exactly once instead of burning that budget recovering from an unclean stop.
 
 Operational state lives in `.fleet/` (ticket records in `state.json`, closed-ticket archive in `history.json`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
 

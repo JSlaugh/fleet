@@ -31,6 +31,8 @@ export interface LoopContext {
   readonly live: Map<string, WorkerSession>;
   /** Keys whose session an operator is force-closing; see `finishFailed`. */
   readonly restarting: Set<string>;
+  /** Keys whose session a daemon stop-now is aborting; see `finishFailed`. */
+  readonly stopping: Set<string>;
   /** Resolvers for sessions parked after reporting `blocked`; `undefined` releases the park without a reply. */
   readonly replyWaiters: Map<string, (message: string | undefined) => void>;
   /** Last polled board tickets, per project. */
