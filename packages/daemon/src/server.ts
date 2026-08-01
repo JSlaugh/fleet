@@ -156,6 +156,27 @@ export function createApp(opts: {
     }
   });
 
+  // Closes out a reviewed plan epic: the issue close is the completion signal
+  // `cleanupFinished` acts on next cycle — this route does not touch the
+  // worktree/branch/history itself.
+  app.post("/api/tickets/:project/:issue/accept-plan", async (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const record = state.get(projectName, issueNumber);
+    if (!record) return c.json({ error: `${projectName}#${issueNumber} is not a known fleet ticket` }, 404);
+    if (!record.isPlan) return c.json({ error: `${projectName}#${issueNumber} is not a plan ticket` }, 400);
+    if (record.status !== "review") return c.json({ error: `${projectName}#${issueNumber} is not awaiting review` }, 400);
+    try {
+      await loop.acceptPlan(projectName, issueNumber);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
+    }
+  });
+
   // Agent-facing intake: file a fleet ticket without touching `gh` directly, so
   // GitHub stays the single source of truth for the board.
   app.post("/api/projects/:project/tickets", async (c) => {

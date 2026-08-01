@@ -7,7 +7,7 @@ import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
 import { logError } from "./log.ts";
-import { reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
+import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
 import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
@@ -91,6 +91,10 @@ export class FleetLoop {
 
   async restartTicket(projectName: string, issueNumber: number): Promise<void> {
     return restartTicket(this.ctx, projectName, issueNumber);
+  }
+
+  async acceptPlan(projectName: string, issueNumber: number): Promise<void> {
+    return acceptPlan(this.ctx, projectName, issueNumber);
   }
 
   ticketCapabilities(projectName: string, issueNumber: number, known: boolean): { canRestart: boolean; canReply: boolean } {

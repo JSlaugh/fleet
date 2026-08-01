@@ -440,6 +440,10 @@ export function buildConflictPrompt(defaultBranch: string): string {
   ].join("\n\n");
 }
 
+export async function closeIssue(project: ProjectConfig, issueNumber: number): Promise<void> {
+  await run("gh", ["issue", "close", String(issueNumber), "--repo", project.githubRepo]);
+}
+
 export async function ensureLabels(project: ProjectConfig): Promise<void> {
   for (const label of ALL_FLEET_LABELS) {
     await run("gh", [
