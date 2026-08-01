@@ -240,10 +240,14 @@ export const BOARD_COLUMNS: { status: BoardStatus; title: string }[] = [
   { status: "done", title: "Done" },
 ];
 
-/** A ticket's final record, archived at cleanup time once its PR and issue both close. */
+/**
+ * A ticket's final record, archived at cleanup time once its PR and issue
+ * both close — or, for a PR-less plan epic, once its issue alone closes
+ * (`prState: "NONE"`).
+ */
 export interface ClosedTicketRecord extends TicketRecord {
   closedAt: string;
-  prState: "MERGED" | "CLOSED";
+  prState: "MERGED" | "CLOSED" | "NONE";
 }
 
 export interface BoardTicket {

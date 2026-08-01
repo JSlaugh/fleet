@@ -50,6 +50,11 @@ export async function restartTicket(project: string, issueNumber: number): Promi
   await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" }));
 }
 
+/** Closes a reviewed plan epic's issue; cleanup (worktree/branch/history) happens on the daemon's next poll cycle. */
+export async function acceptPlan(project: string, issueNumber: number): Promise<void> {
+  await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/accept-plan`, { method: "POST" }));
+}
+
 /** Toggles drain mode: stops new claims/resumes while leaving running sessions to finish. */
 export async function setDaemonPaused(paused: boolean): Promise<void> {
   await json(

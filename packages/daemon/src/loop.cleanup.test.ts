@@ -141,4 +141,42 @@ describe("cleanupFinished", () => {
 
     expect(state.get("alpha", 7)).toBeUndefined();
   });
+
+  it("cleans up a PR-less plan record once its issue closes, without checking PR state", async () => {
+    const { state, internals } = makeLoop(record({ isPlan: true, prUrl: undefined }));
+
+    await internals.cleanupFinished(project, []);
+
+    expect(github.getPrState).not.toHaveBeenCalled();
+    expect(worktreeMod.removeWorktree).toHaveBeenCalledWith(project, "/tmp/wt/7");
+    expect(worktreeMod.deleteRemoteBranch).toHaveBeenCalledWith(project, "fleet/7");
+    expect(state.get("alpha", 7)).toBeUndefined();
+  });
+
+  it("archives a PR-less plan record with prState NONE", async () => {
+    const { loop, internals } = makeLoop(record({ isPlan: true, prUrl: undefined }));
+
+    await internals.cleanupFinished(project, []);
+
+    expect(loop.getHistoryRecord("alpha", 7)?.prState).toBe("NONE");
+  });
+
+  it("does not clean up a PR-less plan record while its issue is still open", async () => {
+    const { state, internals } = makeLoop(record({ isPlan: true, prUrl: undefined }));
+
+    await internals.cleanupFinished(project, [{ number: 7 }]);
+
+    expect(worktreeMod.removeWorktree).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)).toBeDefined();
+  });
+
+  it("still skips a non-plan record with no prUrl", async () => {
+    const { state, internals } = makeLoop(record({ isPlan: false, prUrl: undefined }));
+
+    await internals.cleanupFinished(project, []);
+
+    expect(github.getPrState).not.toHaveBeenCalled();
+    expect(worktreeMod.removeWorktree).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)).toBeDefined();
+  });
 });

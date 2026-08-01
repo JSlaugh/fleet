@@ -1,6 +1,6 @@
 import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
-import { markReady, upsertStatusComment } from "./github.ts";
+import { closeIssue, markReady, upsertStatusComment } from "./github.ts";
 import { Journal } from "./journal.ts";
 import { log, logError } from "./log.ts";
 import { resumeTicket } from "./runner.ts";
@@ -142,6 +142,31 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
   }
 
   await resetForFreshClaim(ctx, project, issueNumber);
+}
+
+/**
+ * Closes a reviewed plan epic's issue — the completion signal `cleanupFinished`
+ * (`board.ts`) needs to retire a PR-less plan record on the next poll cycle.
+ * Validation (must be a plan, must be in review) is the route's job, since it
+ * maps each failure to its own status code; this only guards the race the
+ * route can't see — the ticket moving mid-request.
+ */
+export async function acceptPlan(ctx: LoopContext, projectName: string, issueNumber: number): Promise<void> {
+  const scope = key(projectName, issueNumber);
+  const project = ctx.getProject(projectName);
+  if (!project) throw new Error(`unknown project ${projectName}`);
+  if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
+
+  const record = ctx.state.get(projectName, issueNumber);
+  const comment = [record?.lastSummary, "**Plan accepted by operator.**"].filter(Boolean).join("\n\n");
+  try {
+    await upsertStatusComment(project, issueNumber, comment);
+  } catch (err) {
+    logError("loop", `${scope}: could not post the plan-accepted status comment`, err);
+  }
+  await closeIssue(project, issueNumber);
+  ctx.emitBoard();
+  log("loop", `${scope}: plan accepted by operator — issue closed`);
 }
 
 /**

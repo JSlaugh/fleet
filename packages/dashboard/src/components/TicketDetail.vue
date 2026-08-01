@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { BoardTicket, TicketDetail } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
-import { fetchTicket, formatCost, formatTime, restartTicket, sendReply } from "../lib/api.ts";
+import { acceptPlan, fetchTicket, formatCost, formatTime, restartTicket, sendReply } from "../lib/api.ts";
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -25,8 +25,37 @@ const restarting = ref(false);
 const restartStatus = ref<string>();
 let timer: ReturnType<typeof setInterval> | undefined;
 
+const accepting = ref(false);
+const acceptStatus = ref<string>();
+
 const canReply = computed(() => detail.value?.canReply ?? false);
 const canRestart = computed(() => detail.value?.canRestart ?? false);
+const canAcceptPlan = computed(() => props.ticket.isPlan && detail.value?.record?.status === "review");
+
+async function confirmAcceptPlan() {
+  if (accepting.value) return;
+  const confirmed = window.confirm(
+    [
+      `Accept plan ${props.ticket.project}#${props.ticket.issueNumber}?`,
+      "",
+      "This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.",
+      "",
+      "Child tickets are not affected — release each with its own fleet:ready label.",
+    ].join("\n"),
+  );
+  if (!confirmed) return;
+  accepting.value = true;
+  acceptStatus.value = undefined;
+  try {
+    await acceptPlan(props.ticket.project, props.ticket.issueNumber);
+    acceptStatus.value = "Accepted — issue closed.";
+    void load();
+  } catch (err) {
+    acceptStatus.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    accepting.value = false;
+  }
+}
 
 async function confirmRestart() {
   if (restarting.value) return;
@@ -99,6 +128,16 @@ onUnmounted(() => clearInterval(timer));
           {{ ticket.title }}
         </h2>
         <button
+          v-if="canAcceptPlan"
+          type="button"
+          class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
+          :disabled="accepting"
+          title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
+          @click="confirmAcceptPlan"
+        >
+          {{ accepting ? "Accepting…" : "Accept plan" }}
+        </button>
+        <button
           v-if="canRestart"
           type="button"
           class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
@@ -116,6 +155,7 @@ onUnmounted(() => clearInterval(timer));
           Close
         </button>
       </div>
+      <p v-if="acceptStatus" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{{ acceptStatus }}</p>
       <p v-if="restartStatus" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{{ restartStatus }}</p>
       <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
         <a :href="ticket.url" target="_blank" rel="noopener" class="text-blue-600 hover:underline dark:text-blue-400">

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  acceptPlan,
   connectBoardSocket,
   fetchApprovals,
   fetchBoard,
@@ -120,6 +121,13 @@ describe("API functions", () => {
     vi.stubGlobal("fetch", fetchMock);
     await restartTicket("proj", 5);
     expect(fetchMock).toHaveBeenCalledWith("/api/tickets/proj/5/restart", { method: "POST" });
+  });
+
+  it("acceptPlan POSTs with no body", async () => {
+    const fetchMock = mockFetch(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    await acceptPlan("proj", 5);
+    expect(fetchMock).toHaveBeenCalledWith("/api/tickets/proj/5/accept-plan", { method: "POST" });
   });
 
   it("setDaemonPaused POSTs the paused flag as JSON", async () => {

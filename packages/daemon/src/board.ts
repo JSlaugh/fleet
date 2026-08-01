@@ -44,9 +44,11 @@ export function getBoard(ctx: LoopContext): BoardTicket[] {
 }
 
 /**
- * Retires tickets whose PR and issue have both closed: the worktree, local
- * branch and remote branch go away, and the record moves from live state into
- * history so the Done column can still show it.
+ * Retires finished tickets: the worktree, local branch and remote branch go
+ * away, and the record moves from live state into history so the Done column
+ * can still show it. Most tickets need both their PR and issue closed; a plan
+ * epic never opens a PR (`finishPlanned` files child issues instead), so for
+ * `isPlan` records the closed issue alone is the completion signal.
  */
 export async function cleanupFinished(
   ctx: LoopContext,
@@ -56,22 +58,29 @@ export async function cleanupFinished(
   const openNumbers = new Set(openIssues.map((i) => i.number));
   for (const record of ctx.state.all()) {
     if (record.project !== project.name) continue;
-    if (record.status !== "review" || !record.prUrl) continue;
+    if (record.status !== "review") continue;
+    if (!record.prUrl && !record.isPlan) continue;
     if (openNumbers.has(record.issueNumber)) continue;
     if (ctx.running.has(key(record.project, record.issueNumber))) continue;
 
     const scope = key(record.project, record.issueNumber);
-    let rawPrState: string;
-    try {
-      rawPrState = await getPrState(project, record.prUrl);
-    } catch (err) {
-      logError("loop", `${scope}: could not check PR state`, err);
-      continue;
+    let prState: "MERGED" | "CLOSED" | "NONE";
+    if (record.prUrl) {
+      let rawPrState: string;
+      try {
+        rawPrState = await getPrState(project, record.prUrl);
+      } catch (err) {
+        logError("loop", `${scope}: could not check PR state`, err);
+        continue;
+      }
+      if (rawPrState !== "MERGED" && rawPrState !== "CLOSED") continue;
+      prState = rawPrState;
+    } else {
+      prState = "NONE";
     }
-    if (rawPrState !== "MERGED" && rawPrState !== "CLOSED") continue;
-    const prState: "MERGED" | "CLOSED" = rawPrState;
 
-    log("loop", `${scope}: PR ${prState.toLowerCase()} and issue closed — cleaning up worktree + branch ${record.branch}`);
+    const reason = record.prUrl ? `PR ${prState.toLowerCase()} and issue closed` : "plan epic issue closed";
+    log("loop", `${scope}: ${reason} — cleaning up worktree + branch ${record.branch}`);
     await removeWorktree(project, record.worktreePath);
     await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
     await deleteRemoteBranch(project, record.branch);
