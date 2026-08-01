@@ -390,14 +390,39 @@ export function summarize(message: SDKMessage): Record<string, unknown> {
         .map((block) => block.text)
         .join("\n")
         .slice(0, 1000);
-      base.tools = content
-        .filter((block): block is { type: "tool_use"; name: string } =>
-          typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_use")
-        .map((block) => block.name);
+      const toolUseBlocks = content.filter(
+        (block): block is { type: "tool_use"; id: string; name: string; input: unknown } =>
+          typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_use",
+      );
+      base.tools = toolUseBlocks.map((block) => block.name);
+      if (toolUseBlocks.length > 0) {
+        base.toolCalls = toolUseBlocks.map((block) => ({
+          id: block.id,
+          name: block.name,
+          input: JSON.stringify(block.input).slice(0, 200),
+        }));
+      }
+    }
+  }
+  if (message.type === "user") {
+    const content = message.message.content;
+    if (Array.isArray(content)) {
+      const toolResultBlocks = content.filter(
+        (block): block is { type: "tool_result"; tool_use_id: string; is_error?: boolean } =>
+          typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_result",
+      );
+      if (toolResultBlocks.length > 0) {
+        base.toolResults = toolResultBlocks.map((block) => ({
+          id: block.tool_use_id,
+          isError: block.is_error ?? false,
+        }));
+      }
     }
   }
   if (message.type === "result") {
     base.costUsd = message.total_cost_usd;
+    base.numTurns = message.num_turns;
+    base.durationMs = message.duration_ms;
     if (message.subtype === "success") {
       base.structuredOutput = (message as { structured_output?: unknown }).structured_output;
     }
