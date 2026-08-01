@@ -6,7 +6,13 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { FLEET_LABELS, PRIORITY_LABELS, type JournalEntry, type TicketDetail } from "@fleet/shared";
+import {
+  FLEET_LABELS,
+  PRIORITY_LABELS,
+  type JournalEntry,
+  type TicketDetail,
+  type TicketReport,
+} from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
 import { createIssue, setPriority } from "./github.ts";
 import { log, logError } from "./log.ts";
@@ -106,6 +112,16 @@ export function createApp(opts: {
       canReply,
     };
     return c.json(detail);
+  });
+
+  app.get("/api/tickets/:project/:issue/report", (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const journal = readJournalTail(dataDir, projectName, issueNumber, Number.MAX_SAFE_INTEGER);
+    return c.json(buildTicketReport(journal));
   });
 
   app.post("/api/tickets/:project/:issue/priority", async (c) => {
@@ -269,4 +285,70 @@ function readJournalTail(dataDir: string, project: string, issueNumber: number, 
     logError("server", `reading journal for ${project}#${issueNumber}`, err);
     return [];
   }
+}
+
+/**
+ * Aggregates a ticket's full journal into per-tool/error/turn/cost stats. A
+ * "segment" is one worker resumption: from a `claimed`/`resumed` fleet event
+ * through the next `result` entry. Every enrichment field (`toolCalls`,
+ * `toolResults`, `numTurns`, `durationMs`) is optional on `JournalEntry`, so
+ * older journals just fall back to zeroed/null values rather than throwing.
+ */
+function buildTicketReport(journal: JournalEntry[]): TicketReport {
+  const toolCounts: Record<string, number> = {};
+  const toolErrorCounts: Record<string, number> = {};
+  const toolNameById = new Map<string, string>();
+  const segments: TicketReport["segments"] = [];
+  let errorCount = 0;
+  let segmentOpen = false;
+
+  for (const entry of journal) {
+    if (entry.type === "fleet" && (entry.event === "claimed" || entry.event === "resumed")) {
+      segmentOpen = true;
+      continue;
+    }
+
+    if (entry.type === "assistant") {
+      if (Array.isArray(entry.toolCalls)) {
+        for (const call of entry.toolCalls) {
+          toolCounts[call.name] = (toolCounts[call.name] ?? 0) + 1;
+          toolNameById.set(call.id, call.name);
+        }
+      } else if (Array.isArray(entry.tools)) {
+        for (const name of entry.tools) toolCounts[name] = (toolCounts[name] ?? 0) + 1;
+      }
+    }
+
+    if (Array.isArray(entry.toolResults)) {
+      for (const result of entry.toolResults) {
+        if (!result.isError) continue;
+        errorCount += 1;
+        const name = toolNameById.get(result.id);
+        if (name) toolErrorCounts[name] = (toolErrorCounts[name] ?? 0) + 1;
+      }
+    }
+
+    if (entry.type === "result" && segmentOpen) {
+      segments.push({
+        numTurns: typeof entry.numTurns === "number" ? entry.numTurns : null,
+        durationMs: typeof entry.durationMs === "number" ? entry.durationMs : null,
+        costUsd: typeof entry.costUsd === "number" ? entry.costUsd : 0,
+      });
+      segmentOpen = false;
+    }
+  }
+
+  return {
+    toolCounts,
+    toolErrorCounts,
+    errorCount,
+    segments,
+    totals: {
+      toolCalls: Object.values(toolCounts).reduce((sum, n) => sum + n, 0),
+      errors: errorCount,
+      turns: segments.reduce((sum, s) => sum + (s.numTurns ?? 0), 0),
+      durationMs: segments.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
+      costUsd: segments.reduce((sum, s) => sum + s.costUsd, 0),
+    },
+  };
 }
