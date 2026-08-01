@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
-import type { BoardTicket, ClosedTicketRecord, FleetConfig, ProjectConfig } from "@fleet/shared";
+import type { BoardTicket, ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "./approvals.ts";
-import { cleanupFinished, getBoard } from "./board.ts";
+import { cleanupFinished, getBoard, issueUrl } from "./board.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import type { ReadyIssue } from "./github.ts";
+import { type HistoryQuery, queryHistory } from "./history.ts";
 import { logError } from "./log.ts";
 import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
 import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
@@ -150,6 +151,14 @@ export class FleetLoop {
 
   getHistoryRecord(project: string, issueNumber: number): ClosedTicketRecord | undefined {
     return this.history.get(project, issueNumber);
+  }
+
+  getHistoryPage(query: HistoryQuery = {}): HistoryResponse {
+    const page = queryHistory(this.history.all(), query);
+    return {
+      ...page,
+      records: page.records.map((record) => ({ ...record, url: issueUrl(this.config.projects, record) })),
+    };
   }
 
   // ── Delegations ──────────────────────────────────────────────────────────

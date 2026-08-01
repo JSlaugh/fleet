@@ -5,6 +5,15 @@ import { getPrState } from "./github.ts";
 import { log, logError } from "./log.ts";
 import { deleteRemoteBranch, removeWorktree } from "./worktree.ts";
 
+/** GitHub issue URL for a ticket record, or "" if its project isn't in the current config (e.g. removed since it closed). */
+export function issueUrl(
+  projects: { name: string; githubRepo: string }[],
+  record: { project: string; issueNumber: number },
+): string {
+  const project = projects.find((p) => p.name === record.project);
+  return project ? `https://github.com/${project.githubRepo}/issues/${record.issueNumber}` : "";
+}
+
 /**
  * Synthesizes Done-column board tickets from archived history: the most
  * recently closed tickets overall (newest first), capped at `limit`. The
@@ -19,19 +28,16 @@ export function synthesizeDoneTickets(
   return [...history]
     .sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt))
     .slice(0, limit)
-    .map((record) => {
-      const project = projects.find((p) => p.name === record.project);
-      return {
-        project: record.project,
-        issueNumber: record.issueNumber,
-        title: record.issueTitle,
-        url: project ? `https://github.com/${project.githubRepo}/issues/${record.issueNumber}` : "",
-        status: "done" as const,
-        priority: null,
-        isPlan: record.isPlan ?? false,
-        record,
-      };
-    });
+    .map((record) => ({
+      project: record.project,
+      issueNumber: record.issueNumber,
+      title: record.issueTitle,
+      url: issueUrl(projects, record),
+      status: "done" as const,
+      priority: null,
+      isPlan: record.isPlan ?? false,
+      record,
+    }));
 }
 
 /** The dashboard board: this cycle's polled tickets joined to their live records, plus the Done column. */

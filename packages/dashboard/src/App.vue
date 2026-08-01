@@ -12,12 +12,14 @@ import {
 } from "./lib/api.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
+import HistoryView from "./components/HistoryView.vue";
 import TicketCard from "./components/TicketCard.vue";
 import TicketDetail from "./components/TicketDetail.vue";
 
 const tickets = ref<BoardTicket[]>([]);
 const approvals = ref<PendingApproval[]>([]);
 const showApprovals = ref(false);
+const view = ref<"board" | "history">("board");
 const pausedUntil = ref<string>();
 const paused = ref(false);
 const runningCount = ref(0);
@@ -183,7 +185,15 @@ onUnmounted(() => {
       </nav>
       <button
         type="button"
-        class="ml-auto flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+        class="ml-auto rounded-full px-2.5 py-1 text-xs font-medium"
+        :class="view === 'history' ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        @click="view = view === 'board' ? 'history' : 'board'"
+      >
+        {{ view === "board" ? "History" : "Board" }}
+      </button>
+      <button
+        type="button"
+        class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
         :class="paused ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
         :disabled="pauseToggling"
         @click="togglePaused"
@@ -224,7 +234,7 @@ onUnmounted(() => {
     </div>
 
     <div class="flex min-h-0 flex-1">
-      <main class="flex min-w-0 flex-1 gap-3 overflow-x-auto p-4" aria-label="Ticket board">
+      <main v-if="view === 'board'" class="flex min-w-0 flex-1 gap-3 overflow-x-auto p-4" aria-label="Ticket board">
         <BoardColumn
           v-for="column in BOARD_COLUMNS"
           :key="column.status"
@@ -243,6 +253,7 @@ onUnmounted(() => {
           />
         </BoardColumn>
       </main>
+      <HistoryView v-else :project-filter="projectFilter" @select="selected = $event" />
       <TicketDetail v-if="selected" :ticket="selected" @close="selected = undefined" />
       <ApprovalsPanel
         v-if="showApprovals"
