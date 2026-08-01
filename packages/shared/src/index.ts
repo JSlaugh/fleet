@@ -283,6 +283,13 @@ export interface JournalEntry {
   text?: string;
   tools?: string[];
   costUsd?: number;
+  event?: string;
+  /** Set to "machine-review" on entries from the one-shot reviewer sub-session, which shares this journal file but is not the ticket's own worker turn. */
+  session?: string;
+  toolCalls?: { id: string; name: string }[];
+  toolResults?: { id: string; isError?: boolean }[];
+  numTurns?: number;
+  durationMs?: number;
   [key: string]: unknown;
 }
 
@@ -293,4 +300,26 @@ export interface TicketDetail {
   /** Whether `restartTicket`/`reply` would actually accept this ticket right now — the dashboard gates its buttons on these rather than duplicating the daemon's policy. */
   canRestart: boolean;
   canReply: boolean;
+}
+
+/** One resumption of the worker: from a `claimed`/`resumed` fleet event through the next `result` entry. */
+export interface SessionSegmentReport {
+  numTurns: number | null;
+  durationMs: number | null;
+  costUsd: number;
+}
+
+/** Server-side aggregation of a ticket's full journal — derived and read-only, tolerant of journals written before any per-tool digest/error/turn enrichment existed. */
+export interface TicketReport {
+  toolCounts: Record<string, number>;
+  toolErrorCounts: Record<string, number>;
+  errorCount: number;
+  segments: SessionSegmentReport[];
+  totals: {
+    toolCalls: number;
+    errors: number;
+    turns: number;
+    durationMs: number;
+    costUsd: number;
+  };
 }
