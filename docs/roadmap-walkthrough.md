@@ -154,6 +154,12 @@ deploy.
 - Sandboxing benefits from §1 (worker isolation) arrive as a side effect of
   containerized workers.
 
+> **Superseded in part — see `docker-analysis.md`.** The follow-up analysis confirmed
+> `setup-token` works but revised the near-term plan: WSL2 + Claude Code's native
+> sandboxed Bash first (no Docker, no tooling problem), with the supervisor wrapper
+> (option A) as the restart mechanism now, and per-project devcontainers deferred to
+> the multi-daemon era.
+
 ## 7. Worktrees & provisioning performance
 
 - **Worktrees stay.** Branches alone can't work — branches share one working directory,
