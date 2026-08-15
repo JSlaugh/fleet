@@ -6,6 +6,7 @@ import type { ProjectConfig } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   collectBranchDiff,
+  collectBranchSummary,
   createWorktree,
   deleteRemoteBranch,
   hasCommits,
@@ -65,6 +66,8 @@ function setupProject(): ProjectConfig {
     autoElevateOnFailure: true,
     autoAddressReviews: true,
     machineReview: false,
+    autoMerge: false,
+    mergeMethod: "squash",
   };
 }
 
@@ -295,6 +298,38 @@ describe("collectBranchDiff / hasCommits", () => {
       expect(diff).toContain("new.txt");
       expect(diff).toContain("hello world");
       expect(commits).toContain("add new.txt");
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe("collectBranchSummary", () => {
+  it(
+    "reports empty commits/files on a freshly created worktree",
+    async () => {
+      const project = setupProject();
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+      const wt = await createWorktree(project, 109, worktreeRoot);
+
+      const summary = await collectBranchSummary(project, wt.path);
+      expect(summary).toEqual({ commits: "", filesChanged: [] });
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "reports the commit oneline log and changed file names once a commit is made",
+    async () => {
+      const project = setupProject();
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+      const wt = await createWorktree(project, 110, worktreeRoot);
+      writeFileSync(join(wt.path, "new.txt"), "hello world\n");
+      git(wt.path, ["add", "."]);
+      git(wt.path, ["commit", "-q", "-m", "add new.txt"]);
+
+      const { commits, filesChanged } = await collectBranchSummary(project, wt.path);
+      expect(commits).toContain("add new.txt");
+      expect(filesChanged).toEqual(["new.txt"]);
     },
     TEST_TIMEOUT,
   );

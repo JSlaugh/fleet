@@ -25,7 +25,7 @@ vi.mock("../github/worktree.ts", () => ({
 }));
 
 vi.mock("../github/exec.ts", () => ({
-  run: vi.fn(async () => ({ stdout: "" })),
+  run: vi.fn(async () => ({ stdout: "", stderr: "" })),
 }));
 
 vi.mock("../store/transcripts.ts", () => ({
@@ -48,6 +48,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {

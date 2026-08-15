@@ -18,6 +18,7 @@ import { createIssue, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
+import { readJournalTail } from "../store/journal.ts";
 import type { StateStore } from "../store/state.ts";
 
 /**
@@ -68,6 +69,7 @@ export function createApp(opts: {
       pausedProjects: loop.getPausedProjects(),
       runningCount: loop.activeCount,
       budget: loop.getBudgetStatus(),
+      workHoursReserve: loop.getWorkHoursReserveStatus(),
     }),
   );
 
@@ -339,21 +341,6 @@ export function startServer(opts: {
   approvals.events.on("approvals", () => broadcast("approvals-updated"));
 
   log("server", `dashboard + API listening on http://localhost:${port}`);
-}
-
-function readJournalTail(dataDir: string, project: string, issueNumber: number, limit: number): JournalEntry[] {
-  const file = join(dataDir, "journals", project, `${issueNumber}.jsonl`);
-  if (!existsSync(file)) return [];
-  try {
-    return readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .slice(-limit)
-      .map((line) => JSON.parse(line) as JournalEntry);
-  } catch (err) {
-    logError("server", `reading journal for ${project}#${issueNumber}`, err);
-    return [];
-  }
 }
 
 /**

@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { FleetConfig, ProjectConfig, TicketRecord, WorkHoursReserveConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { healStaleReadyLabels, processTicket } from "./claim.ts";
@@ -44,6 +44,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 /** `dryRun: true` so cycleProject only logs what it would do — no real `gh`/git calls, no worktree/session mocking needed. */
@@ -208,6 +210,73 @@ describe("cycleProject budget gate", () => {
 
     expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
     expect(loggedLines().some((l) => l.includes("holding all claims"))).toBe(true);
+  });
+});
+
+describe("cycleProject work-hours reserve", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.mocked(github.listFleetIssues).mockReset();
+  });
+
+  function loggedLines(): string[] {
+    return logSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  // Spans a full day-plus, so it always contains "now" regardless of when this test runs.
+  const ALWAYS_ACTIVE_RESERVE: WorkHoursReserveConfig = {
+    workStart: "23:59",
+    reserveHours: 25,
+    days: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
+  };
+  // windowStart == workStart, so the interval is empty and never contains "now".
+  const NEVER_ACTIVE_RESERVE: WorkHoursReserveConfig = {
+    workStart: "09:00",
+    reserveHours: 0,
+    days: ["sun", "mon", "tue", "wed", "thu", "fri", "sat"],
+  };
+
+  it("claims normally when workHoursReserve is unset — feature off", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("claims normally when configured but the reserve window isn't active", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop({}, { workHoursReserve: NEVER_ACTIVE_RESERVE });
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("holds all claims while the reserve window is active", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop({}, { workHoursReserve: ALWAYS_ACTIVE_RESERVE });
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
+    expect(loggedLines().some((l) => l.includes("alpha: work-hours reserve active — holding claims until"))).toBe(true);
+  });
+
+  it("still checks review feedback for in-flight tickets while the reserve holds new claims", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop({}, { workHoursReserve: ALWAYS_ACTIVE_RESERVE });
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
   });
 });
 

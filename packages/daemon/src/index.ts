@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalManager } from "./session/approvals.ts";
 import { loadConfig } from "./config.ts";
-import { ensureLabels } from "./github/github.ts";
+import { ensureLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
 import { log, logError } from "./log.ts";
 import { startServer } from "./server/server.ts";
@@ -45,6 +45,14 @@ async function main(): Promise<void> {
   if (args[0] === "sync-templates") {
     await syncTemplates(config.projects);
     return;
+  }
+
+  // Resolved once here (and cached for the process's lifetime by `getAuthenticatedLogin`
+  // itself) rather than lazily on a project's first auto-merge check, so a `gh` auth
+  // problem surfaces at boot instead of silently blocking the first eligible merge.
+  if (config.projects.some((p) => p.autoMerge && (!p.approvers || p.approvers.length === 0))) {
+    const login = await getAuthenticatedLogin();
+    log("daemon", `auto-merge default approver resolved from gh auth: @${login}`);
   }
 
   const once = args.includes("--once");

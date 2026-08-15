@@ -17,6 +17,7 @@ import {
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { hasCommits, pushBranch } from "../github/worktree.ts";
+import { gatherFailurePostMortem } from "./postmortem.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
@@ -232,17 +233,14 @@ export async function finishFailed(
   // elevate here, and never touch `autoElevated` so a real model failure
   // later still gets its one shot.
   if (opts.postCompletion) {
+    const record = ctx.state.get(project.name, issue.number);
+    const postMortem = await gatherFailurePostMortem(ctx.dataDirPath, project, issue, record, {
+      leadLine: "The worker completed successfully, but a step after completion failed:",
+      error,
+      retryHint: "Resolve manually (the branch and its commits are intact) and reply from the dashboard, or re-label `fleet:ready` to retry.",
+    });
     try {
-      await upsertStatusComment(
-        project,
-        issue.number,
-        [
-          `**Status: needs input**`,
-          `The worker completed successfully, but a step after completion failed:`,
-          error,
-          "Resolve manually (the branch and its commits are intact) and reply from the dashboard, or re-label `fleet:ready` to retry.",
-        ].join("\n\n"),
-      );
+      await upsertStatusComment(project, issue.number, [`**Status: needs input**`, postMortem].join("\n\n"));
     } catch (err) {
       logError("loop", `${scope}: could not post the needs-input status comment`, err);
     }
@@ -275,12 +273,13 @@ export async function finishFailed(
     return;
   }
 
+  const postMortem = await gatherFailurePostMortem(ctx.dataDirPath, project, issue, record, {
+    leadLine: "The worker run failed:",
+    error,
+    retryHint: "Re-label with `fleet:ready` to retry, or reply from the dashboard to resume.",
+  });
   try {
-    await upsertStatusComment(
-      project,
-      issue.number,
-      [`**Status: failed**`, `The worker run failed: ${error}`, "Re-label with `fleet:ready` to retry, or reply from the dashboard to resume."].join("\n\n"),
-    );
+    await upsertStatusComment(project, issue.number, [`**Status: failed**`, postMortem].join("\n\n"));
   } catch (err) {
     logError("loop", `${scope}: could not post the failed status comment`, err);
   }

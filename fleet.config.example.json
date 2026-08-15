@@ -13,6 +13,11 @@
   "budgetLightThreshold": 0.85,
   "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
   "dataDir": ".fleet",
+  "workHoursReserve": {
+    "workStart": "09:00",
+    "days": ["mon", "tue", "wed", "thu", "fri"],
+    "reserveHours": 2
+  },
   "projects": [
     {
       "name": "example",
@@ -29,7 +34,10 @@
       "planChildrenReady": false,
       "autoElevateOnFailure": true,
       "autoAddressReviews": true,
-      "machineReview": true
+      "machineReview": true,
+      "autoMerge": false,
+      "approvers": ["j"],
+      "mergeMethod": "squash"
     }
   ]
 }

@@ -6,6 +6,8 @@ export interface RunOptions {
 
 export interface RunResult {
   stdout: string;
+  /** Only meaningful when `allowFailure` was set — a rejected call never resolves, so its stderr lives in the thrown Error instead. */
+  stderr: string;
 }
 
 export function run(command: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
@@ -22,7 +24,7 @@ export function run(command: string, args: string[], options: RunOptions = {}): 
           reject(new Error(`${command} ${args.join(" ")} failed (exit ${exitCode}): ${stderr || stdout || error.message}`));
           return;
         }
-        resolve({ stdout: stdout.toString() });
+        resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
       },
     );
   });
@@ -40,7 +42,7 @@ export function runShell(command: string, cwd: string): Promise<RunResult> {
         reject(new Error(`${command} failed (exit ${error.code ?? 1}): ${stderr || stdout || error.message}`));
         return;
       }
-      resolve({ stdout: stdout.toString() });
+      resolve({ stdout: stdout.toString(), stderr: stderr.toString() });
     });
   });
 }
