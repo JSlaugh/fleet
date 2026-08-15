@@ -196,7 +196,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
   try {
     await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.inProgress);
     const comments = await getIssueComments(project, issue.number);
-    const worktree = await createWorktree(project, issue.number, ctx.config.worktreeRoot);
+    const worktree = await createWorktree(project, issue.number, ctx.config.worktreeRoot, issue.labels);
 
     const elevated = issue.labels.includes(ELEVATE_LABEL);
     const light = issue.labels.includes(LIGHT_LABEL);

@@ -86,7 +86,42 @@ A few things happen automatically without reclaiming a ticket from `fleet:ready`
 
 See `fleet.config.example.json`. Top level: `worktreeRoot`, `pollIntervalSeconds`, `dashboardPort` (default 4400), `dataDir` (default `.fleet`), `claudeExecutable` (optional, overrides which Claude CLI binary workers run), `stalledAfterMinutes`, `ticketTimeoutMinutes` (per-turn timeout), `approvalTimeoutMinutes` (how long an approval or `AskUserQuestion` waits before auto-denying), `replyWaitMinutes` (how long a blocked ticket holds its session open for a dashboard reply before closing it resumable), and `limitResumeSlackMinutes`/`limitDefaultBackoffMinutes` (plan usage-limit pause tuning, above).
 
-Per project: `repoPath` (local clone), `githubRepo` (`owner/repo`), `defaultBranch`, `maxConcurrent`, `maxInReview` (default 3 — claiming holds once this many issues are labeled `fleet:review`, so the review queue can't outpace a human reviewer), optional `setupCommand` (run in each fresh worktree, e.g. `pnpm install`), optional `model`/`elevatedModel`/`lightModel` and `allowedTools` overrides, `planChildrenReady` (default off — file `fleet:plan` children straight into `fleet:ready`), `autoElevateOnFailure` (default on), `autoAddressReviews` (default on), and `machineReview` (default on — pre-review every completed code ticket with a cheap model before human review).
+Per project: `repoPath` (local clone), `githubRepo` (`owner/repo`), `defaultBranch`, `maxConcurrent`, `maxInReview` (default 3 — claiming holds once this many issues are labeled `fleet:review`, so the review queue can't outpace a human reviewer), optional `setupCommand` (run in each fresh worktree, e.g. `pnpm install` — ignored when the target repo declares its own `fleet.yaml`, below), optional `model`/`elevatedModel`/`lightModel` and `allowedTools` overrides, `planChildrenReady` (default off — file `fleet:plan` children straight into `fleet:ready`), `autoElevateOnFailure` (default on), `autoAddressReviews` (default on), and `machineReview` (default on — pre-review every completed code ticket with a cheap model before human review).
+
+## Worktree provisioning: `fleet.yaml`
+
+A target repo can self-describe its own setup instead of the fleet operator encoding it in `setupCommand`, by committing a `fleet.yaml` to its root:
+
+```yaml
+# Simple repo — a bare step list, run in order
+setup:
+  - name: install
+    run: pnpm install
+```
+
+```yaml
+# Monorepo — named profiles, selected per ticket
+setup:
+  default:
+    - name: install
+      run: pnpm install
+  frontend:
+    - name: install
+      run: pnpm install
+    - name: build-storybook
+      run: pnpm --filter web build-storybook
+  backend:
+    - name: install
+      run: pnpm install
+    - name: test-db
+      run: pnpm db:migrate:test
+```
+
+In map form a `default` profile is required; every other key becomes a selectable profile. The daemon reads `fleet.yaml` from the **fresh worktree**, after `git worktree add` and before the worker session starts — provisioning stays fully deterministic and daemon-side, with no agent or model involvement.
+
+**Profile selection** is driven by a `fleet:type:<name>` label on the issue: `fleet:type:frontend` selects the `frontend` profile. No type label, or one that names a profile the file doesn't declare, falls back to `default` (a warning is logged for the unknown case; the claim is never failed for it). Multiple type labels pick the first match in alphabetical order and log a warning about the ambiguity. `pnpm daemon init-labels` creates a `fleet:type:<name>` label for every profile a repo's `fleet.yaml` declares (skipping `default`) — per-repo, not part of the global `fleet:*` label set.
+
+**Precedence:** `fleet.yaml` present in the worktree wins outright — `setupCommand` is ignored for that claim. No `fleet.yaml` → `setupCommand` behaves exactly as before (including being a no-op when unset). A malformed `fleet.yaml` (bad YAML, or schema-invalid — e.g. a profile map missing `default`) fails the claim with the problem named in the status comment and daemon log; it never silently falls back to `setupCommand`, since that could mask a broken spec indefinitely. A step that fails also fails the claim, naming which step failed (e.g. `setup step "build-storybook" failed: ... (exit 1)`).
 
 ## Roadmap
 

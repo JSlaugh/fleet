@@ -12,6 +12,7 @@
     "@hono/node-server": "^1.14.0",
     "hono": "^4.7.0",
     "ws": "^8.18.0",
+    "yaml": "^2.9.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
