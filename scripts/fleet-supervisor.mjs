@@ -43,7 +43,16 @@ function runOnce() {
       ? spawn([PNPM_CMD, ...args].map(winQuoteArg).join(" "), { stdio: "inherit", shell: true })
       : spawn(PNPM_CMD, args, { stdio: "inherit" });
 
+    // Set the moment the supervisor itself receives a stop signal — an
+    // operator's explicit SIGINT/SIGTERM always means "stop", never
+    // "relaunch", regardless of what exit code the child ends up producing.
+    // That override matters most on Windows: a SIGTERM there is delivered by
+    // force-killing the whole process tree (see below), which can't ever
+    // produce a real, honest exit-0 the way a graceful shutdown would.
+    let deliberateStop = false;
+
     const forward = (signal) => {
+      deliberateStop = true;
       if (IS_WINDOWS) {
         if (signal === "SIGINT") {
           // Nothing to do: a real Ctrl+C at an attached console is a Windows
@@ -67,7 +76,9 @@ function runOnce() {
         // SIGTERM has no console-control equivalent and no graceful delivery
         // path on Windows at all. taskkill /T is the only way to reach the
         // whole tree instead of leaving the daemon orphaned mid-shutdown; it
-        // is a hard kill, not a graceful one — the next boot's
+        // is a hard kill, not a graceful one — `deliberateStop` above is what
+        // tells the caller to treat this as a clean stop rather than a
+        // crash to relaunch from, and the next boot's
         // `StateStore.clearLiveFlags()` reconciles anything left running.
         log(`${signal} received — no graceful signal exists on Windows; force-killing the process tree`);
         spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
@@ -79,19 +90,21 @@ function runOnce() {
     process.on("SIGINT", forward);
     process.on("SIGTERM", forward);
 
-    child.on("exit", (code, signal) => {
+    child.on("exit", (code) => {
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
-      // A signal-killed child (no exit code) is treated as a crash, same as
-      // any other unexpected nonzero exit — a clean stop always exits 0 itself.
-      resolve(code ?? 1);
+      // A signal-killed child (no exit code, and never 0 on a Windows
+      // force-kill) is treated as a crash unless the supervisor itself asked
+      // for the stop — a clean stop with no signal involved always exits 0
+      // on its own.
+      resolve(deliberateStop ? 0 : (code ?? 1));
     });
 
     child.on("error", (err) => {
       log(`failed to spawn daemon: ${err.message}`);
       process.off("SIGINT", forward);
       process.off("SIGTERM", forward);
-      resolve(1);
+      resolve(deliberateStop ? 0 : 1);
     });
   });
 }

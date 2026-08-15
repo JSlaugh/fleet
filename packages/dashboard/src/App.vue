@@ -158,6 +158,7 @@ async function confirmRestartDaemon() {
     await restartDaemon();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
+  } finally {
     restartingDaemon.value = false;
   }
 }
