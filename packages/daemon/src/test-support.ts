@@ -66,6 +66,7 @@ export function makeIssue(
     title: `issue ${number}`,
     body: "",
     labels,
+    author: "collab-author",
     url: `https://github.com/acme/alpha/issues/${number}`,
     ...patch,
   };
@@ -134,6 +135,7 @@ export function makeCtx(patch: Partial<LoopContext> = {}): LoopContext {
     stopping: new Set(),
     replyWaiters: new Map(),
     boardCache: new Map(),
+    contributorFloorSkipsLogged: new Set(),
     emitBoard: () => {},
     getProject: (name) => config.projects.find((p) => p.name === name),
     isShuttingDown: () => false,

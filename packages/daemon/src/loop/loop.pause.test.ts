@@ -8,10 +8,17 @@ import { isProjectPaused } from "./pause.ts";
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
   listFleetIssues: vi.fn(async (project: ProjectConfig) => [
-    { number: project.name === "alpha" ? 7 : 8, title: `issue on ${project.name}`, body: "", labels: ["fleet:ready"] },
+    {
+      number: project.name === "alpha" ? 7 : 8,
+      title: `issue on ${project.name}`,
+      body: "",
+      labels: ["fleet:ready"],
+      author: "collab-author",
+    },
   ]),
   listIssueStates: vi.fn(async () => ({ open: new Set([7, 8]), all: new Set([7, 8]) })),
   toBoardTicket: vi.fn(() => null),
+  getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
 }));
 
 const github = await import("../github/github.ts");

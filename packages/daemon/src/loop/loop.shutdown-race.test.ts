@@ -27,8 +27,9 @@ vi.mock("../github/github.ts", async (importActual) => ({
 	})),
 	getPrMergeable: vi.fn(async () => "MERGEABLE"),
 	getPrState: vi.fn(),
+	getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
 	listFleetIssues: vi.fn(async () => [
-		{ number: 7, title: "issue 7", body: "", labels: ["fleet:ready"] },
+		{ number: 7, title: "issue 7", body: "", labels: ["fleet:ready"], author: "collab-author" },
 	]),
 	listIssueStates: vi.fn(async () => ({
 		open: new Set([7]),

@@ -9,6 +9,7 @@ function issue(number: number, patch: Partial<ReadyIssue> = {}): ReadyIssue {
     title: `issue ${number}`,
     body: "",
     labels: ["fleet:ready"],
+    author: "collab-author",
     ...patch,
   };
 }

@@ -152,7 +152,7 @@ export async function resumeTicket(
   record: TicketRecord,
   message: string,
 ): Promise<void> {
-  const issue: ReadyIssue = { number: record.issueNumber, title: record.issueTitle, body: "", labels: [] };
+  const issue: ReadyIssue = { number: record.issueNumber, title: record.issueTitle, body: "", labels: [], author: "" };
   const scope = key(project.name, record.issueNumber);
   log("loop", `${scope}: resuming session ${record.sessionId}`);
   try {
