@@ -324,7 +324,7 @@ export function buildIssuePrompt(project: ProjectConfig, issue: { number: number
   return parts.join("\n\n");
 }
 
-function activityNote(entry: Record<string, unknown>): string | undefined {
+export function activityNote(entry: Record<string, unknown>): string | undefined {
   if (entry.type !== "assistant") return undefined;
   const tools = entry.tools as string[] | undefined;
   const text = entry.text as string | undefined;
