@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit && pnpm --filter @fleet/dashboard typecheck",
     "build": "turbo run build",
     "daemon": "pnpm install && turbo run start --filter=@fleet/daemon --",
+    "daemon:supervised": "node scripts/fleet-supervisor.mjs",
     "mcp": "pnpm --filter @fleet/mcp start",
     "dashboard:dev": "pnpm --filter @fleet/dashboard dev",
     "dashboard:build": "turbo run build --filter=@fleet/dashboard"

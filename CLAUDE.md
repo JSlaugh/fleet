@@ -17,6 +17,7 @@ pnpm daemon -- --dry-run --once # poll and report; changes nothing
 pnpm daemon -- --once           # one full cycle, then exit (no dashboard server: worker approvals are auto-denied immediately)
 pnpm mcp                        # run the stdio MCP server directly (normally launched by a repo's .mcp.json)
 pnpm daemon                     # real loop + dashboard on :4400
+pnpm daemon:supervised          # daemon under scripts/fleet-supervisor.mjs: auto-relaunches on crash or restart request
 pnpm daemon init-labels         # create fleet:* labels in each configured repo
 pnpm daemon sync-templates      # stamp the fleet-backlog skill + .mcp.json into each configured repo
 pnpm dashboard:dev              # Vite on :4401, proxying /api and /ws to :4400
