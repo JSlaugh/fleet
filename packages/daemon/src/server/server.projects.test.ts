@@ -25,6 +25,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 function makeApp() {

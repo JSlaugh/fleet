@@ -15,6 +15,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: true,
+  autoMerge: false,
+  mergeMethod: "squash",
   model: "claude-sonnet-5",
 };
 

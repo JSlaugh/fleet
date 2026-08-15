@@ -34,7 +34,10 @@
       "planChildrenReady": false,
       "autoElevateOnFailure": true,
       "autoAddressReviews": true,
-      "machineReview": true
+      "machineReview": true,
+      "autoMerge": false,
+      "approvers": ["j"],
+      "mergeMethod": "squash"
     }
   ]
 }
