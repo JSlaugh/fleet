@@ -15,6 +15,7 @@ vi.mock("../github/github.ts", () => ({
   swapLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
+  clearAssignees: vi.fn(async () => {}),
 }));
 
 const github = await import("../github/github.ts");

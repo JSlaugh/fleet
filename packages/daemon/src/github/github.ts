@@ -24,6 +24,13 @@ export interface ReadyIssue {
   labels: string[];
   /** Issue-opener's login — the contributor-floor check filters claims on this. Empty for synthetic issues built for a resume, where the original author isn't tracked. */
   author: string;
+  /**
+   * Current issue assignees, for the claim routing rule (unassigned or
+   * assigned-to-me is claimable; assigned to anyone else is not). Undefined
+   * for synthetic issues built for a resume, where callers treat it the same
+   * as empty rather than needing every call site to populate it.
+   */
+  assignees?: string[];
 }
 
 interface FleetIssue extends ReadyIssue {
@@ -37,6 +44,7 @@ interface GhIssueJson {
   labels: { name: string }[];
   url: string;
   author: { login: string };
+  assignees: { login: string }[];
 }
 
 interface RestComment {
@@ -60,7 +68,7 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
     "issue", "list",
     "--repo", project.githubRepo,
     "--state", "open",
-    "--json", "number,title,body,labels,url,author",
+    "--json", "number,title,body,labels,url,author,assignees",
     "--limit", "100",
   ]);
   return issues
@@ -71,6 +79,7 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
       labels: issue.labels.map((l) => l.name),
       url: issue.url,
       author: issue.author?.login ?? "",
+      assignees: issue.assignees.map((a) => a.login),
     }))
     .filter((issue) => issue.labels.some((l) => l.startsWith("fleet:")))
     .sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels) || a.number - b.number);
@@ -293,6 +302,49 @@ export function readyLabelArgs(project: ProjectConfig, issueNumber: number): str
 
 export async function markReady(project: ProjectConfig, issueNumber: number): Promise<void> {
   await run("gh", readyLabelArgs(project, issueNumber));
+}
+
+/**
+ * `gh issue edit --add-assignee` is additive — it doesn't clear existing
+ * assignees — which is exactly what lets two daemons racing to claim the
+ * same issue both land in the assignee list for the set-then-verify check.
+ */
+export async function addAssignee(project: ProjectConfig, issueNumber: number, login: string): Promise<void> {
+  await run("gh", [
+    "issue", "edit", String(issueNumber),
+    "--repo", project.githubRepo,
+    "--add-assignee", login,
+  ]);
+}
+
+export async function removeAssignee(project: ProjectConfig, issueNumber: number, login: string): Promise<void> {
+  await run("gh", [
+    "issue", "edit", String(issueNumber),
+    "--repo", project.githubRepo,
+    "--remove-assignee", login,
+  ]);
+}
+
+export async function getIssueAssignees(project: ProjectConfig, issueNumber: number): Promise<string[]> {
+  const { assignees } = await runJson<{ assignees: { login: string }[] }>("gh", [
+    "issue", "view", String(issueNumber),
+    "--repo", project.githubRepo,
+    "--json", "assignees",
+  ]);
+  return assignees.map((a) => a.login);
+}
+
+/**
+ * Drops every current assignee — used when an issue returns to the shared
+ * pool (an operator restart) so the routing rule sees it as unassigned again
+ * rather than still routed to whoever last claimed it.
+ */
+export async function clearAssignees(project: ProjectConfig, issueNumber: number): Promise<void> {
+  const assignees = await getIssueAssignees(project, issueNumber);
+  if (assignees.length === 0) return;
+  const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
+  for (const login of assignees) args.push("--remove-assignee", login);
+  await run("gh", args);
 }
 
 /**

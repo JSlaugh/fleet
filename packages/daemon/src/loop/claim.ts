@@ -14,12 +14,16 @@ import { reportRunFailure } from "./finish.ts";
 import { isProjectPaused } from "./pause.ts";
 import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
 import {
+  addAssignee,
   dependencyStatus,
+  getAuthenticatedLogin,
+  getIssueAssignees,
   getIssueComments,
   getPushCollaborators,
   listFleetIssues,
   listIssueStates,
   parseDependsOn,
+  removeAssignee,
   swapLabel,
   toBoardTicket,
   type ReadyIssue,
@@ -43,9 +47,11 @@ const POST_READY_RECORD_STATUSES = new Set<TicketRecord["status"]>(["review", "n
  * The `fleet:ready` issues that are actually claimable this cycle: not already
  * in flight, not carrying a stale `fleet:ready` alongside a status label that
  * says otherwise, not already past ready per the daemon's own state record,
- * and with every `Depends-on` reference satisfied (closed, or pointing at an
- * issue number this repo has never had). Preserves the input order, which
- * callers sort by priority-then-number before this filter runs.
+ * routed to this daemon (unassigned, or assigned to `myLogin` — never an
+ * issue assigned to someone else, whether that's a competing daemon or a
+ * human), and with every `Depends-on` reference satisfied (closed, or
+ * pointing at an issue number this repo has never had). Preserves the input
+ * order, which callers sort by priority-then-number before this filter runs.
  */
 export function selectEligibleReady(
   issues: ReadyIssue[],
@@ -55,11 +61,21 @@ export function selectEligibleReady(
     isRunning: (issueNumber: number) => boolean;
     getRecord: (issueNumber: number) => TicketRecord | undefined;
     projectName: string;
+    myLogin: string;
   },
 ): ReadyIssue[] {
   return issues.filter((issue) => {
     if (!issue.labels.includes(FLEET_LABELS.ready)) return false;
     if (opts.isRunning(issue.number)) return false;
+
+    const others = (issue.assignees ?? []).filter((login) => login !== opts.myLogin);
+    if (others.length > 0) {
+      log(
+        "loop",
+        `${key(opts.projectName, issue.number)}: assigned to ${others.join(", ")}, not this daemon — skipping claim`,
+      );
+      return false;
+    }
 
     const conflicting = POST_READY_STATUS_LABELS.filter((label) => issue.labels.includes(label));
     if (conflicting.length > 0) {
@@ -252,12 +268,14 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     return;
   }
 
+  const myLogin = await getAuthenticatedLogin();
   let ready = selectEligibleReady(issues, {
     openIssueNumbers,
     allIssueNumbers,
     isRunning: (issueNumber) => ctx.running.has(key(project.name, issueNumber)),
     getRecord: (issueNumber) => ctx.state.get(project.name, issueNumber),
     projectName: project.name,
+    myLogin,
   });
   ready = await applyContributorFloor(ctx, project, ready);
 
@@ -291,7 +309,36 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
   }
 }
 
-/** Claims a ready issue: label swap, fresh worktree + branch, state record, then a session. */
+/**
+ * How long to wait between self-assigning and reading the assignee list back
+ * — closest available thing to compare-and-swap, since label/assignee writes
+ * on the GitHub REST API aren't atomic. Long enough for a second daemon's
+ * concurrent write (started around the same moment) to have landed by the
+ * time this reads it back; not a retry loop, just one settle-then-check.
+ */
+const CLAIM_VERIFY_DELAY_MS = 2_500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export type ClaimVerdict = "won" | "lost";
+
+/**
+ * Given this daemon's own login and the issue's assignees right after both
+ * competing daemons have raced to self-assign, decides who keeps the claim:
+ * lexicographically lowest login wins. Pure so the tiebreak is unit-testable
+ * without mocking `gh`. `selectEligibleReady`'s routing rule already excludes
+ * issues pre-assigned to anyone else, so any assignee besides `myLogin` seen
+ * here is a same-cycle competing claim, not a stale human assignment.
+ */
+export function resolveClaimCollision(myLogin: string, assignees: string[]): ClaimVerdict {
+  const distinct = [...new Set(assignees)];
+  if (distinct.length <= 1) return "won";
+  return [...distinct].sort()[0] === myLogin ? "won" : "lost";
+}
+
+/** Claims a ready issue: label swap, self-assign CAS, fresh worktree + branch, state record, then a session. */
 export async function processTicket(ctx: LoopContext, project: ProjectConfig, issue: ReadyIssue): Promise<void> {
   const now = new Date().toISOString();
   const scope = key(project.name, issue.number);
@@ -299,6 +346,18 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
 
   try {
     await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.inProgress);
+
+    const myLogin = await getAuthenticatedLogin();
+    await addAssignee(project, issue.number, myLogin);
+    await delay(CLAIM_VERIFY_DELAY_MS);
+    const assignees = await getIssueAssignees(project, issue.number);
+    if (resolveClaimCollision(myLogin, assignees) === "lost") {
+      const winner = assignees.filter((login) => login !== myLogin).sort()[0];
+      log("loop", `${scope}: lost the claim race to ${winner} — abandoning (label stays fleet:in-progress, owned by the winner)`);
+      await removeAssignee(project, issue.number, myLogin);
+      return;
+    }
+
     const comments = await getIssueComments(project, issue.number);
     const worktree = await createWorktree(project, issue.number, ctx.config.worktreeRoot, issue.labels);
 
