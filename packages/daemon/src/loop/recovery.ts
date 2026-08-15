@@ -1,6 +1,7 @@
 import type { TicketRecord } from "@fleet/shared";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { log } from "../log.ts";
+import { isProjectPaused } from "./pause.ts";
 import { resumeTicket } from "./runner.ts";
 
 const STALL_NUDGE = [
@@ -49,10 +50,13 @@ export function flagStalled(ctx: LoopContext): void {
 /**
  * Resume stalled tickets that still have a session, once each. Covers both boot
  * reconciliation (`clearLiveFlags` turns orphaned `running` tickets into
- * `stalled`) and mid-run stalls flagged by `flagStalled`.
+ * `stalled`) and mid-run stalls flagged by `flagStalled`. A project the
+ * operator has paused (daemon-wide or individually) is skipped entirely —
+ * its stalled tickets stay stalled until the pause lifts.
  */
 export function recoverStalled(ctx: LoopContext): void {
   for (const project of ctx.config.projects) {
+    if (isProjectPaused(ctx, project.name)) continue;
     for (const record of pickAutoResumable(ctx.state.all(), project, ctx.running.keys())) {
       const scope = key(record.project, record.issueNumber);
       if (ctx.dryRun) {

@@ -22,6 +22,29 @@ export function setPaused(ctx: LoopContext, paused: boolean): void {
   ctx.emitBoard();
 }
 
+/**
+ * True while claims and resumes should be skipped for `projectName` alone: the
+ * daemon-wide pause (which takes precedence and covers every project), or an
+ * operator-initiated pause of this project specifically. Live sessions of a
+ * paused project are never aborted — they drain to their natural terminal
+ * state, same as the daemon-wide drain.
+ */
+export function isProjectPaused(ctx: LoopContext, projectName: string): boolean {
+  return isPaused(ctx) || ctx.state.isProjectPaused(projectName);
+}
+
+/** Operator-initiated pause toggle for a single project — persists across restarts until explicitly resumed. */
+export function setProjectPaused(ctx: LoopContext, projectName: string, paused: boolean): void {
+  ctx.state.setProjectPaused(projectName, paused);
+  log(
+    "loop",
+    paused
+      ? `${projectName}: paused — no new claims or resumes for this project`
+      : `${projectName}: resumed — claiming and resuming as normal`,
+  );
+  ctx.emitBoard();
+}
+
 /** Clears an expired pause; called once at the top of every cycle before anything checks `isPaused`. */
 export function updatePauseState(ctx: LoopContext): void {
   const pausedUntil = ctx.state.getPausedUntil();

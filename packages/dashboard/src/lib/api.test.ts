@@ -13,6 +13,7 @@ import {
   restartTicket,
   sendReply,
   setDaemonPaused,
+  setProjectPaused,
   setTicketPriority,
 } from "./api.ts";
 
@@ -144,6 +145,17 @@ describe("API functions", () => {
     vi.stubGlobal("fetch", fetchMock);
     await setDaemonPaused(true);
     expect(fetchMock).toHaveBeenCalledWith("/api/daemon/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    });
+  });
+
+  it("setProjectPaused POSTs the paused flag as JSON, URL-encoding the project", async () => {
+    const fetchMock = mockFetch(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    await setProjectPaused("owner/repo", true);
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/owner%2Frepo/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paused: true }),

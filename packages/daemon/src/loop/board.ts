@@ -51,6 +51,16 @@ export function getBoard(ctx: LoopContext): BoardTicket[] {
 }
 
 /**
+ * Individually-paused project names, for the board payload — filtered to
+ * projects still in config so a name left over from one since removed
+ * doesn't leak into the dashboard.
+ */
+export function pausedProjectNames(ctx: LoopContext): string[] {
+  const configured = new Set(ctx.config.projects.map((p) => p.name));
+  return ctx.state.getPausedProjects().filter((name) => configured.has(name));
+}
+
+/**
  * Retires finished tickets: the worktree, local branch and remote branch go
  * away, and the record moves from live state into history so the Done column
  * can still show it. Most tickets need both their PR and issue closed; a plan

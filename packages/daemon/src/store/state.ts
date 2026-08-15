@@ -82,6 +82,22 @@ export class StateStore {
     this.write();
   }
 
+  getPausedProjects(): string[] {
+    return [...(this.state.pausedProjects ?? [])];
+  }
+
+  isProjectPaused(project: string): boolean {
+    return (this.state.pausedProjects ?? []).includes(project);
+  }
+
+  setProjectPaused(project: string, paused: boolean): void {
+    const projects = new Set(this.state.pausedProjects ?? []);
+    if (paused) projects.add(project);
+    else projects.delete(project);
+    this.state.pausedProjects = [...projects];
+    this.write();
+  }
+
   clearLiveFlags(): void {
     let changed = false;
     for (const ticket of this.state.tickets) {

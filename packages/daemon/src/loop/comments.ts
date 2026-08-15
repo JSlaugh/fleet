@@ -3,6 +3,7 @@ import { countRunning, key, type LoopContext } from "./context.ts";
 import { getPushCollaborators, getTimestampedIssueComments, isNewerThan, type TimestampedComment } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { reply, ticketCapabilities } from "./operator.ts";
+import { isProjectPaused } from "./pause.ts";
 
 /** Ticket statuses steerable by an issue comment. `review` has its own feedback channel (`addressReviews`). */
 const COMMENTABLE_STATUSES = new Set<TicketRecord["status"]>(["running", "needs-input"]);
@@ -59,8 +60,12 @@ export async function addressComments(
     // A cold resume (no live session, no parked reply waiter) is new work the
     // way a stall-recovery or review-feedback resume is, so it must respect
     // the project's concurrency cap the way those do — unlike a dashboard
-    // reply, an explicit human action `reply()` never gates on capacity.
+    // reply, an explicit human action `reply()` never gates on capacity. It's
+    // also the only part of comment handling a pause (daemon-wide or
+    // per-project) should hold: steering a comment into an already-live
+    // session isn't new work, so that keeps happening while paused.
     const isColdResume = !ctx.replyWaiters.has(scope) && !ctx.live.has(scope);
+    if (isColdResume && isProjectPaused(ctx, project.name)) continue;
     if (isColdResume && countRunning(ctx.running.keys(), project.name) >= project.maxConcurrent) continue;
 
     let comments: TimestampedComment[];

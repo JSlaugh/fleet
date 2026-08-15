@@ -133,13 +133,13 @@ beforeEach(() => {
 describe("cycleProject claiming vs. a live shutdown", () => {
 	it("tracks a fresh claim when not shutting down", async () => {
 		const { ctx } = makeCtx(false);
-		await cycleProject(ctx, project, false);
+		await cycleProject(ctx, project);
 		expect(ctx.running.has("alpha#7")).toBe(true);
 	});
 
 	it("does not claim once isShuttingDown() is true, even though `paused` is still false", async () => {
 		const { ctx } = makeCtx(true);
-		await cycleProject(ctx, project, false);
+		await cycleProject(ctx, project);
 		expect(ctx.running.size).toBe(0);
 		expect(github.swapLabel).not.toHaveBeenCalled();
 	});

@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { BoardTicket, ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { cleanupFinished, getBoard, issueUrl } from "./board.ts";
+import { cleanupFinished, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
@@ -9,7 +9,7 @@ import type { ReadyIssue } from "../github/github.ts";
 import { type HistoryQuery, queryHistory } from "../store/history.ts";
 import { logError } from "../log.ts";
 import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
-import { handlePlanLimit, isPaused, setPaused, updatePauseState } from "./pause.ts";
+import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
 import { HistoryStore, StateStore } from "../store/state.ts";
@@ -75,11 +75,10 @@ export class FleetLoop {
   async cycle(): Promise<void> {
     this.flagStalled();
     this.updatePauseState();
-    const paused = this.isPaused();
-    if (!paused) this.recoverStalled();
+    this.recoverStalled();
     for (const project of this.config.projects) {
       try {
-        await cycleProject(this.ctx, project, paused);
+        await cycleProject(this.ctx, project);
       } catch (err) {
         logError("loop", `polling ${project.name} failed`, err);
       }
@@ -104,6 +103,14 @@ export class FleetLoop {
 
   setPaused(paused: boolean): void {
     setPaused(this.ctx, paused);
+  }
+
+  setProjectPaused(projectName: string, paused: boolean): void {
+    setProjectPaused(this.ctx, projectName, paused);
+  }
+
+  getPausedProjects(): string[] {
+    return pausedProjectNames(this.ctx);
   }
 
   async drain(): Promise<void> {

@@ -10,6 +10,7 @@ import {
 import { cleanupFinished } from "./board.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
+import { isProjectPaused } from "./pause.ts";
 import {
   dependencyStatus,
   getIssueComments,
@@ -111,9 +112,15 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
  * feedback), then claim `fleet:ready` issues with whatever capacity is left
  * — capped by both `maxConcurrent` (running sessions) and `maxInReview`
  * (issues already labeled `fleet:review`, so the review queue can't grow
- * faster than a human can clear it).
+ * faster than a human can clear it). Board polling, cleanup, and issue-comment
+ * injection all run regardless of pause state, daemon-wide or per-project —
+ * pause means no *new* work, and steering a comment into an already-live
+ * session isn't new work (`addressComments` gates only its own cold-resume
+ * path on pause, same as it already does for a live shutdown). Review
+ * feedback resumption and new claims are new work, so they're held while
+ * either pause applies.
  */
-export async function cycleProject(ctx: LoopContext, project: ProjectConfig, paused: boolean): Promise<void> {
+export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Promise<void> {
   const issues = await listFleetIssues(project);
   const { open: openIssueNumbers, all: allIssueNumbers } = await listIssueStates(project);
 
@@ -146,18 +153,18 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     await healStaleReadyLabels(ctx, project, issues);
   }
 
-  if (paused) return;
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for new issue comments to inject`);
+  } else {
+    await addressComments(ctx, project, openIssueNumbers);
+  }
+
+  if (isProjectPaused(ctx, project.name)) return;
 
   if (ctx.dryRun) {
     log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);
   } else {
     await addressReviews(ctx, project, openIssueNumbers);
-  }
-
-  if (ctx.dryRun) {
-    log("loop", `[dry-run] would check ${project.name} for new issue comments to inject`);
-  } else {
-    await addressComments(ctx, project, openIssueNumbers);
   }
 
   const inReview = issues.filter((issue) => issue.labels.includes(FLEET_LABELS.review)).length;
