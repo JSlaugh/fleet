@@ -50,6 +50,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: true,
+  autoMerge: false,
+  mergeMethod: "squash",
   model: "claude-sonnet-5",
   lightModel: "claude-haiku-4-5",
 };

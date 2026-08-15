@@ -44,6 +44,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 /** `dryRun: true` so cycleProject only logs what it would do — no real `gh`/git calls, no worktree/session mocking needed. */

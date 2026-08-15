@@ -19,6 +19,8 @@ const project: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 /** Wires a real `ApprovalManager` (not stubbed) so requesting/resolving approvals actually settles promises. */

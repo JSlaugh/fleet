@@ -26,6 +26,7 @@ import {
 import { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
 import { addressComments } from "./comments.ts";
+import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
 import { runSession } from "./runner.ts";
 import { buildIssuePrompt } from "../session/worker.ts";
@@ -120,7 +121,9 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
  * session isn't new work (`addressComments` gates only its own cold-resume
  * path on pause, same as it already does for a live shutdown). Review
  * feedback resumption and new claims are new work, so they're held while
- * either pause applies.
+ * either pause applies; auto-merge sits between them — it starts no session,
+ * but shares their pause gate anyway since there's no case for merging PRs
+ * out from under an operator-requested pause.
  */
 export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Promise<void> {
   const issues = await listFleetIssues(project);
@@ -167,6 +170,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);
   } else {
     await addressReviews(ctx, project, openIssueNumbers);
+  }
+
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for approved, green PRs to auto-merge`);
+  } else {
+    await autoMergeReady(ctx, project, openIssueNumbers);
   }
 
   const inReview = issues.filter((issue) => issue.labels.includes(FLEET_LABELS.review)).length;

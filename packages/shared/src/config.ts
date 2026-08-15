@@ -16,6 +16,11 @@ export const ProjectConfigSchema = z.object({
   autoElevateOnFailure: z.boolean().default(true),
   autoAddressReviews: z.boolean().default(true),
   machineReview: z.boolean().default(true),
+  /** Opt-in: merge a `fleet:review` PR automatically once it clears `approvers` + green CI + mergeable. Default off. */
+  autoMerge: z.boolean().default(false),
+  /** GitHub logins whose approval authorizes an auto-merge, case-insensitive. Unset defaults to the account the daemon's `gh` is logged in as. */
+  approvers: z.array(z.string()).optional(),
+  mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 

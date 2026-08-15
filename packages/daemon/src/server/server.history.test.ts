@@ -19,6 +19,8 @@ const projectAlpha: ProjectConfig = {
   autoElevateOnFailure: true,
   autoAddressReviews: true,
   machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
 };
 
 const projectBeta: ProjectConfig = { ...projectAlpha, name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" };
