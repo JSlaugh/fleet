@@ -70,7 +70,7 @@ function fakeSession() {
   };
 }
 
-function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore } {
+function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore; loop: FleetLoop } {
   const dataDir = mkdtempSync(join(tmpdir(), "fleet-comments-"));
   const state = new StateStore(dataDir);
   if (seed) state.upsert(seed);
@@ -90,7 +90,7 @@ function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore } {
   const approvals = { request: vi.fn() } as unknown as ApprovalManager;
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const ctx = (loop as unknown as { ctx: LoopContext }).ctx;
-  return { ctx, state };
+  return { ctx, state, loop };
 }
 
 const openIssues = new Set([7]);
@@ -211,6 +211,22 @@ describe("addressComments — cold resume", () => {
   it("does not resume a needs-input ticket with no recorded session", async () => {
     vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
     const { ctx, state } = makeCtx(record({ status: "needs-input", sessionId: undefined }));
+
+    await addressComments(ctx, project, openIssues);
+
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)?.lastCommentHandledAt).toBeUndefined();
+  });
+
+  it("defers rather than drops a cold-resume comment caught by a shutdownNow race, leaving the watermark untouched", async () => {
+    vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
+    const { ctx, state, loop } = makeCtx(record({ status: "needs-input" }));
+    // Mirrors shutdownNow (SIGTERM/Ctrl+C): `shuttingDown` flips without `paused`
+    // being set the way `shutdownDrain` does, so `cycleProject` still calls
+    // `addressComments` mid-drain — this is the exact race `reply()`'s own
+    // cold-resume guard throws on, which must not have already spent the
+    // watermark by the time that throw would happen.
+    loop.beginShutdown();
 
     await addressComments(ctx, project, openIssues);
 

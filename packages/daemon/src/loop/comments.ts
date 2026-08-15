@@ -92,6 +92,14 @@ export async function addressComments(
       }
     }
 
+    // A cold resume is about to `track()` new work via `reply()`, same as the
+    // resume paths in `recovery.ts`/`reviews.ts` — re-check right before doing
+    // so (the several awaits above since the earlier capacity check can make
+    // that snapshot stale) rather than relying on `reply()`'s own throw, which
+    // would otherwise land after the watermark below is already written and
+    // turn this comment into a silently dropped one instead of a deferred one.
+    if (isColdResume && eligible.length > 0 && ctx.isShuttingDown()) continue;
+
     // Written before injecting — same discipline as `lastReviewHandledAt` — so
     // a crash between the two can't reprocess the same comments. A cycle with
     // nothing eligible (all status/non-collaborator) still advances: those
