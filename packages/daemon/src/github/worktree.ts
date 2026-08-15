@@ -76,6 +76,16 @@ export async function collectBranchDiff(
   return { diff, commits: commits.trim() };
 }
 
+/** Commit list and changed file names against the PR base — cheaper than `collectBranchDiff` for callers that don't need the full diff body (e.g. a failure post-mortem). */
+export async function collectBranchSummary(
+  project: ProjectConfig,
+  worktreePath: string,
+): Promise<{ commits: string; filesChanged: string[] }> {
+  const { stdout: commits } = await run("git", ["-C", worktreePath, "log", "--oneline", `origin/${project.defaultBranch}..HEAD`]);
+  const { stdout: files } = await run("git", ["-C", worktreePath, "diff", "--name-only", `origin/${project.defaultBranch}...HEAD`]);
+  return { commits: commits.trim(), filesChanged: files.trim().split("\n").filter(Boolean) };
+}
+
 export async function hasCommits(project: ProjectConfig, worktreePath: string): Promise<boolean> {
   const { stdout } = await run("git", [
     "-C", worktreePath,
