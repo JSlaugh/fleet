@@ -19,6 +19,18 @@ export const ProjectConfigSchema = z.object({
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
+export const WORK_DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+export type WorkDay = (typeof WORK_DAYS)[number];
+
+export const WorkHoursReserveSchema = z.object({
+  /** Local machine time, 24h HH:MM, when the workday starts. */
+  workStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM"),
+  days: z.array(z.enum(WORK_DAYS)).default(["mon", "tue", "wed", "thu", "fri"]),
+  /** Hours of hard claim hold immediately before `workStart` on each configured day. */
+  reserveHours: z.number().min(0),
+});
+export type WorkHoursReserveConfig = z.infer<typeof WorkHoursReserveSchema>;
+
 export const FleetConfigSchema = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),
   dashboardPort: z.number().int().min(1).default(4400),
@@ -44,6 +56,13 @@ export const FleetConfigSchema = z.object({
   budgetLightThreshold: z.number().min(0).max(1).default(0.85),
   claudeExecutable: z.string().optional(),
   dataDir: z.string().default(".fleet"),
+  /**
+   * Hard stop on new claims for `reserveHours` before `workStart` on each
+   * configured day, so the plan's usage window is back at full capacity when
+   * the human's workday begins. Unset (default) disables the feature —
+   * resumes and already-live sessions are never held back either way.
+   */
+  workHoursReserve: WorkHoursReserveSchema.optional(),
   projects: z.array(ProjectConfigSchema).min(1),
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;

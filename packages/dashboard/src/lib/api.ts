@@ -1,4 +1,12 @@
-import type { BoardTicket, BudgetStatus, HistoryResponse, PendingApproval, TicketDetail, TicketReport } from "@fleet/shared";
+import type {
+  BoardTicket,
+  BudgetStatus,
+  HistoryResponse,
+  PendingApproval,
+  TicketDetail,
+  TicketReport,
+  WorkHoursReserveStatus,
+} from "@fleet/shared";
 
 export interface BoardResponse {
   tickets: BoardTicket[];
@@ -8,6 +16,7 @@ export interface BoardResponse {
   pausedProjects: string[];
   runningCount: number;
   budget?: BudgetStatus;
+  workHoursReserve?: WorkHoursReserveStatus;
 }
 
 async function json<T>(res: Response): Promise<T> {
