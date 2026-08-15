@@ -72,7 +72,7 @@ All three are thin wrappers over the REST endpoints above; GitHub issues stay th
 
 - **Comments are the refinement surface.** At claim time the worker's first prompt includes the issue body and every comment on it, read fresh — so adding a comment before a ticket is claimed is fully effective. Nobody needs to edit the original body for routine refinement.
 - **Body edits are for genuine rescoping only** — reserve them for when the problem itself changed, not as a substitute for a comment.
-- **Machine-filed tickets are never born ready.** Plan children default to not-ready unless the project sets `planChildrenReady: true` (see [Epic decomposition](#epic-decomposition-fleetplan) below), and the fleet-backlog skill defaults to filing with `ready: false` too. Either way a human reviews it and labels it `fleet:ready` — and becomes its natural owner.
+- **Plan children default to not-ready.** Unless the project sets `planChildrenReady: true` (see [Epic decomposition](#epic-decomposition-fleetplan) below), a decomposed epic's child tickets are filed without `fleet:ready` — a human reviews each one and labels it ready themselves, becoming its natural owner. Tickets filed via the fleet-backlog skill work the other way: `ready` defaults to true (immediately pickable), and the filer passes `ready: false` when a ticket needs human curation first.
 - **What "ready" means:** a self-contained problem statement, acceptance criteria, and verification steps — an agent with no other context could act on it without needing to ask a clarifying question first.
 
 ## Epic decomposition (`fleet:plan`)
