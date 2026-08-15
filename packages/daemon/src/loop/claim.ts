@@ -22,6 +22,7 @@ import {
 } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
+import { addressComments } from "./comments.ts";
 import { addressReviews } from "./reviews.ts";
 import { runSession } from "./runner.ts";
 import { buildIssuePrompt } from "../session/worker.ts";
@@ -153,6 +154,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     await addressReviews(ctx, project, openIssueNumbers);
   }
 
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for new issue comments to inject`);
+  } else {
+    await addressComments(ctx, project, openIssueNumbers);
+  }
+
   const inReview = issues.filter((issue) => issue.labels.includes(FLEET_LABELS.review)).length;
   if (inReview >= project.maxInReview) {
     log("loop", `${project.name}: ${inReview} in review >= maxInReview ${project.maxInReview} — holding claims`);
@@ -219,6 +226,10 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       light,
       isPlan,
       autoElevated,
+      // Every comment that exists at claim time is already in `comments`, folded
+      // into the first prompt below — the watermark stops the next cycle's
+      // `addressComments` from re-injecting them.
+      lastCommentHandledAt: now,
     });
 
     const journal = new Journal(ctx.dataDirPath, project.name, issue.number);

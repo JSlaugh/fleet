@@ -33,6 +33,14 @@ export interface TicketRecord {
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
   /**
+   * ISO timestamp watermark: issue comments at or before this have already
+   * been considered for mid-flight injection (whether that meant relaying
+   * them into the session or ignoring them as noise/non-collaborator). Set at
+   * claim time to the claim moment, since the first prompt already includes
+   * every comment that exists then.
+   */
+  lastCommentHandledAt?: string;
+  /**
    * Once-per-conflict-episode guard: set when a CONFLICTING PR has already
    * earned its one automatic resolution resume, cleared as soon as the PR
    * reports MERGEABLE again so a later, distinct conflict is eligible too.
