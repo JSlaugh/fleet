@@ -16,6 +16,7 @@ import { run, runJson } from "./exec.ts";
 import { log, logError } from "../log.ts";
 
 const STATUS_MARKER = "<!-- fleet-status -->";
+const HEARTBEAT_LINE_REGEX = /^<!--\s*fleet-heartbeat:\s*(\S+)\s+owner:\s*(\S+)\s*-->$/m;
 
 export interface ReadyIssue {
   number: number;
@@ -347,6 +348,49 @@ export async function clearAssignees(project: ProjectConfig, issueNumber: number
   await run("gh", args);
 }
 
+export interface StatusHeartbeat {
+  timestamp: string;
+  owner: string;
+}
+
+function formatHeartbeatLine(heartbeat: StatusHeartbeat): string {
+  return `<!-- fleet-heartbeat: ${heartbeat.timestamp} owner: ${heartbeat.owner} -->`;
+}
+
+/**
+ * Reads the heartbeat line back out of a status comment body. Tolerant of
+ * comments written before this feature existed (no line at all, or one with
+ * an unparseable timestamp) — those are treated the same as "no heartbeat"
+ * by callers rather than throwing.
+ */
+export function parseHeartbeat(body: string): StatusHeartbeat | undefined {
+  const match = HEARTBEAT_LINE_REGEX.exec(body);
+  if (!match) return undefined;
+  const [, timestamp, owner] = match;
+  if (!timestamp || !owner || Number.isNaN(Date.parse(timestamp))) return undefined;
+  return { timestamp, owner };
+}
+
+/** Stamps `heartbeat` onto `body`, replacing an existing heartbeat line or inserting one right after the status marker. */
+function withFreshHeartbeat(body: string, heartbeat: StatusHeartbeat): string {
+  const line = formatHeartbeatLine(heartbeat);
+  if (HEARTBEAT_LINE_REGEX.test(body)) return body.replace(HEARTBEAT_LINE_REGEX, line);
+  return body.replace(STATUS_MARKER, `${STATUS_MARKER}\n${line}`);
+}
+
+function findStatusComment(project: ProjectConfig, issueNumber: number): Promise<RestComment | undefined> {
+  return listComments(project, issueNumber).then((comments) => comments.find((c) => c.body.startsWith(STATUS_MARKER)));
+}
+
+async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Promise<void> {
+  const owner = await getAuthenticatedLogin();
+  const full = withFreshHeartbeat(existing.body, { timestamp: new Date().toISOString(), owner });
+  await run("gh", [
+    "api", `repos/${project.githubRepo}/issues/comments/${existing.id}`,
+    "-X", "PATCH", "-f", `body=${full}`,
+  ]);
+}
+
 /**
  * Error policy: the status comment only mirrors ticket state for humans on
  * GitHub — labels (via `swapLabel`) remain the source of truth the daemon
@@ -354,10 +398,16 @@ export async function clearAssignees(project: ProjectConfig, issueNumber: number
  * continue, rather than letting a transient `gh` failure while posting a
  * comment escalate into a ticket reported as failed even though the actual
  * work succeeded.
+ *
+ * Every upsert also stamps a fresh heartbeat line (this daemon's login, now)
+ * — the multi-daemon stale-claim detector's write side; see `refreshHeartbeat`
+ * / `refreshHeartbeatIfStale` for the read-cycle refresh and
+ * `getStatusCommentInfo` for the peer-side staleness read.
  */
 export async function upsertStatusComment(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
-  const full = `${STATUS_MARKER}\n${body}`;
-  const existing = (await listComments(project, issueNumber)).find((c) => c.body.startsWith(STATUS_MARKER));
+  const owner = await getAuthenticatedLogin();
+  const full = withFreshHeartbeat(`${STATUS_MARKER}\n${body}`, { timestamp: new Date().toISOString(), owner });
+  const existing = await findStatusComment(project, issueNumber);
   if (existing) {
     await run("gh", [
       "api", `repos/${project.githubRepo}/issues/comments/${existing.id}`,
@@ -370,6 +420,43 @@ export async function upsertStatusComment(project: ProjectConfig, issueNumber: n
       "--body", full,
     ]);
   }
+}
+
+/** Unconditionally stamps a fresh heartbeat onto the existing status comment; a no-op when there isn't one yet. */
+export async function refreshHeartbeat(project: ProjectConfig, issueNumber: number): Promise<void> {
+  const existing = await findStatusComment(project, issueNumber);
+  if (!existing) return;
+  await patchHeartbeat(project, existing);
+}
+
+/**
+ * Refreshes the heartbeat only once it's aged past `maxAgeMs` — the per-cycle
+ * in-flight touch, gated so it isn't PATCHing the comment (and burning a `gh`
+ * call) every single cycle for every ticket this daemon is actively working.
+ */
+export async function refreshHeartbeatIfStale(project: ProjectConfig, issueNumber: number, maxAgeMs: number): Promise<void> {
+  const existing = await findStatusComment(project, issueNumber);
+  if (!existing) return;
+  const heartbeat = parseHeartbeat(existing.body);
+  if (heartbeat && Date.now() - Date.parse(heartbeat.timestamp) < maxAgeMs) return;
+  await patchHeartbeat(project, existing);
+}
+
+export interface StatusCommentInfo {
+  createdAt: string;
+  heartbeat?: StatusHeartbeat;
+}
+
+/**
+ * The read side for a peer daemon's staleness check: `undefined` when there's
+ * no status comment at all (too ambiguous to act on — see `isClaimStale`),
+ * otherwise the comment's creation time plus whatever heartbeat it carries
+ * (possibly none, for a pre-heartbeat claim).
+ */
+export async function getStatusCommentInfo(project: ProjectConfig, issueNumber: number): Promise<StatusCommentInfo | undefined> {
+  const existing = await findStatusComment(project, issueNumber);
+  if (!existing) return undefined;
+  return { createdAt: existing.created_at, heartbeat: parseHeartbeat(existing.body) };
 }
 
 export async function createPullRequest(

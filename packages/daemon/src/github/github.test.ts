@@ -15,11 +15,16 @@ const {
   dependencyStatus,
   escalateLabelArgs,
   getPrChecks,
+  getStatusCommentInfo,
   issueNumberFromUrl,
   mergePullRequest,
   parseDependsOn,
+  parseHeartbeat,
   priorityRank,
   readyLabelArgs,
+  refreshHeartbeat,
+  refreshHeartbeatIfStale,
+  upsertStatusComment,
 } = await import("./github.ts");
 
 const project = makeProject();
@@ -364,5 +369,187 @@ describe("mergePullRequest", () => {
     vi.mocked(exec.run).mockRejectedValueOnce(new Error("branch protection"));
     vi.mocked(exec.runJson).mockRejectedValue(new Error("gh: rate limited"));
     await expect(mergePullRequest(project, "https://github.com/acme/alpha/pull/7", "squash")).rejects.toThrow("branch protection");
+  });
+});
+
+describe("parseHeartbeat", () => {
+  it("parses a well-formed heartbeat line", () => {
+    const body = [
+      "<!-- fleet-status -->",
+      "<!-- fleet-heartbeat: 2026-01-01T00:00:00.000Z owner: daemon-a -->",
+      "**Status: in progress**",
+    ].join("\n");
+    expect(parseHeartbeat(body)).toEqual({ timestamp: "2026-01-01T00:00:00.000Z", owner: "daemon-a" });
+  });
+
+  it("returns undefined when the body has no heartbeat line (a pre-heartbeat claim)", () => {
+    expect(parseHeartbeat("<!-- fleet-status -->\n**Status: in progress**")).toBeUndefined();
+  });
+
+  it("returns undefined for a heartbeat line with an unparseable timestamp", () => {
+    const body = "<!-- fleet-status -->\n<!-- fleet-heartbeat: not-a-date owner: daemon-a -->\nbody";
+    expect(parseHeartbeat(body)).toBeUndefined();
+  });
+});
+
+/** `getAuthenticatedLogin` caches its result at module scope for the process's lifetime — every test below shares this one login. */
+function mockGhIdentity(login: string) {
+  vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+    if ((args as string[]).includes("user")) return { login } as never;
+    return [] as never;
+  });
+}
+
+function statusComment(patch: Partial<{ id: number; body: string; created_at: string }> = {}) {
+  return {
+    id: 5,
+    body: "<!-- fleet-status -->\nold body",
+    user: { login: "daemon-a" },
+    created_at: "2025-12-31T00:00:00.000Z",
+    ...patch,
+  };
+}
+
+describe("upsertStatusComment", () => {
+  beforeEach(() => {
+    mockGhIdentity("daemon-a");
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "", stderr: "" });
+  });
+
+  it("posts a new comment stamped with a heartbeat for this daemon's login when none exists yet", async () => {
+    await upsertStatusComment(project, 7, "**Status: running**");
+
+    const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("comment"));
+    const body = call?.[1]?.at(-1) ?? "";
+    expect(body).toContain("<!-- fleet-status -->");
+    expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
+    expect(body).toContain("**Status: running**");
+  });
+
+  it("PATCHes the existing comment with a fresh heartbeat when one already exists", async () => {
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment()] as never;
+    });
+
+    await upsertStatusComment(project, 7, "**Status: review**");
+
+    expect(exec.run).toHaveBeenCalledWith(
+      "gh",
+      expect.arrayContaining(["-X", "PATCH"]),
+    );
+    const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("PATCH"));
+    const body = call?.[1]?.at(-1) ?? "";
+    expect(body).toContain("**Status: review**");
+    expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
+  });
+});
+
+describe("refreshHeartbeat", () => {
+  beforeEach(() => {
+    mockGhIdentity("daemon-a");
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "", stderr: "" });
+  });
+
+  it("is a no-op when there is no status comment yet", async () => {
+    await refreshHeartbeat(project, 7);
+    expect(exec.run).not.toHaveBeenCalled();
+  });
+
+  it("unconditionally stamps a fresh heartbeat when a status comment exists, even a very recent one", async () => {
+    const recentTs = new Date(Date.now() - 1_000).toISOString();
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${recentTs} owner: daemon-a -->\nbody` })] as never;
+    });
+
+    await refreshHeartbeat(project, 7);
+
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+  });
+
+  it("inserts a heartbeat line into a pre-heartbeat comment rather than skipping it", async () => {
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })] as never;
+    });
+
+    await refreshHeartbeat(project, 7);
+
+    const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("PATCH"));
+    const body = call?.[1]?.at(-1) ?? "";
+    expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
+    expect(body).toContain("**Status: in progress**");
+  });
+});
+
+describe("refreshHeartbeatIfStale", () => {
+  beforeEach(() => {
+    mockGhIdentity("daemon-a");
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "", stderr: "" });
+  });
+
+  it("is a no-op when there is no status comment yet", async () => {
+    await refreshHeartbeatIfStale(project, 7, 60_000);
+    expect(exec.run).not.toHaveBeenCalled();
+  });
+
+  it("does not PATCH when the existing heartbeat is younger than maxAgeMs", async () => {
+    const freshTs = new Date(Date.now() - 1_000).toISOString();
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${freshTs} owner: daemon-a -->\nbody` })] as never;
+    });
+
+    await refreshHeartbeatIfStale(project, 7, 60_000);
+
+    expect(exec.run).not.toHaveBeenCalled();
+  });
+
+  it("PATCHes with a fresh heartbeat once the existing one is older than maxAgeMs", async () => {
+    const staleTs = new Date(Date.now() - 120_000).toISOString();
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${staleTs} owner: daemon-a -->\nbody` })] as never;
+    });
+
+    await refreshHeartbeatIfStale(project, 7, 60_000);
+
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+  });
+
+  it("treats a missing heartbeat line (pre-heartbeat comment) as stale", async () => {
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
+      return [statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })] as never;
+    });
+
+    await refreshHeartbeatIfStale(project, 7, 60_000);
+
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+  });
+});
+
+describe("getStatusCommentInfo", () => {
+  it("returns undefined when there is no status comment", async () => {
+    vi.mocked(exec.runJson).mockResolvedValue([]);
+    expect(await getStatusCommentInfo(project, 7)).toBeUndefined();
+  });
+
+  it("returns the comment's creation time and parsed heartbeat when both are present", async () => {
+    vi.mocked(exec.runJson).mockResolvedValue([
+      statusComment({ body: "<!-- fleet-status -->\n<!-- fleet-heartbeat: 2026-01-01T00:00:00.000Z owner: daemon-a -->\nbody" }),
+    ]);
+
+    expect(await getStatusCommentInfo(project, 7)).toEqual({
+      createdAt: "2025-12-31T00:00:00.000Z",
+      heartbeat: { timestamp: "2026-01-01T00:00:00.000Z", owner: "daemon-a" },
+    });
+  });
+
+  it("returns createdAt with an undefined heartbeat for a pre-heartbeat comment", async () => {
+    vi.mocked(exec.runJson).mockResolvedValue([statusComment({ body: "<!-- fleet-status -->\nold-style body" })]);
+
+    expect(await getStatusCommentInfo(project, 7)).toEqual({ createdAt: "2025-12-31T00:00:00.000Z", heartbeat: undefined });
   });
 });
