@@ -17,6 +17,7 @@ import type { ApprovalManager } from "../session/approvals.ts";
 import { createIssue, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
+import { RESTART_EXIT_CODE } from "../restart-code.ts";
 import type { StateStore } from "../store/state.ts";
 
 /**
@@ -116,6 +117,25 @@ export function createApp(opts: {
     void (mode === "drain" ? loop.shutdownDrain() : loop.shutdownNow()).then(() => {
       log("server", `${mode} shutdown complete — exiting`);
       exit(0);
+    });
+    return c.json({ ok: true, mode });
+  });
+
+  // Same shutdown machinery as above, but exits `RESTART_EXIT_CODE` instead of
+  // 0 — the supervisor wrapper (`scripts/fleet-supervisor.mjs`) treats that
+  // exit code as "relaunch immediately" rather than "stay stopped". Defaults
+  // to `now` (unlike shutdown's no default) since a deploy typically wants the
+  // relaunch to happen right away, live sessions aborting and auto-resuming
+  // on the next boot exactly as stop-now already does.
+  app.post("/api/daemon/restart", async (c) => {
+    const { mode: rawMode } = await c.req.json<{ mode?: string }>().catch(() => ({ mode: undefined }));
+    const mode = rawMode ?? "now";
+    if (mode !== "drain" && mode !== "now") return c.json({ error: 'mode must be "drain" or "now"' }, 400);
+    if (!loop.beginShutdown()) return c.json({ error: "shutdown already in progress" }, 409);
+    log("server", `daemon restart requested: ${mode}`);
+    void (mode === "drain" ? loop.shutdownDrain() : loop.shutdownNow()).then(() => {
+      log("server", `${mode} restart complete — exiting for relaunch`);
+      exit(RESTART_EXIT_CODE);
     });
     return c.json({ ok: true, mode });
   });

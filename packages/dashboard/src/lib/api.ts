@@ -92,6 +92,22 @@ export async function setDaemonPaused(paused: boolean): Promise<void> {
   );
 }
 
+/**
+ * Aborts live sessions and exits the daemon process with the "restart me"
+ * exit code, so a supervisor wrapper (`pnpm daemon:supervised`) relaunches
+ * it — the standard way to ship a fleet code change. Interrupted sessions
+ * auto-resume on the next boot, same as a manual stop-now.
+ */
+export async function restartDaemon(): Promise<void> {
+  await json(
+    await fetch("/api/daemon/restart", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "now" }),
+    }),
+  );
+}
+
 /** Toggles pause for a single project: stops new claims/resumes for it while leaving other projects and its own running sessions unaffected. */
 export async function setProjectPaused(project: string, paused: boolean): Promise<void> {
   await json(

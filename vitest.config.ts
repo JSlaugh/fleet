@@ -13,7 +13,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["packages/*/src/**/*.test.ts"],
+    include: ["packages/*/src/**/*.test.ts", "scripts/**/*.test.mjs"],
     // dashboard tests mount Vue components and need a DOM; everything else runs under node.
     environmentMatchGlobs: [["packages/dashboard/**", "happy-dom"]],
   },

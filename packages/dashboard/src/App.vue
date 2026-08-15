@@ -7,6 +7,7 @@ import {
   fetchBoard,
   formatCost,
   resolveApproval,
+  restartDaemon,
   setDaemonPaused,
   setProjectPaused,
   setTicketPriority,
@@ -27,6 +28,7 @@ const pausedProjects = ref<string[]>([]);
 const runningCount = ref(0);
 const budget = ref<BudgetStatus>();
 const pauseToggling = ref(false);
+const restartingDaemon = ref(false);
 const projectPauseToggling = ref<string>();
 const error = ref<string>();
 const approvalsError = ref<string>();
@@ -137,6 +139,26 @@ async function togglePaused() {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
     pauseToggling.value = false;
+  }
+}
+
+async function confirmRestartDaemon() {
+  if (restartingDaemon.value) return;
+  const confirmed = window.confirm(
+    [
+      "Restart the fleet daemon?",
+      "",
+      `This aborts ${runningCount.value} running ticket${runningCount.value === 1 ? "" : "s"} mid-turn and exits the process for a supervisor to relaunch.`,
+      "Interrupted tickets auto-resume from their last session on the next boot.",
+    ].join("\n"),
+  );
+  if (!confirmed) return;
+  restartingDaemon.value = true;
+  try {
+    await restartDaemon();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+    restartingDaemon.value = false;
   }
 }
 
@@ -257,6 +279,15 @@ onUnmounted(() => {
         @click="togglePaused"
       >
         {{ paused ? "Resume" : "Pause" }}
+      </button>
+      <button
+        type="button"
+        class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+        :disabled="restartingDaemon"
+        title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
+        @click="confirmRestartDaemon"
+      >
+        {{ restartingDaemon ? "Restarting…" : "Restart daemon" }}
       </button>
       <button
         type="button"
