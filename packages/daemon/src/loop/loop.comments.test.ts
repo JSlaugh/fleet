@@ -154,6 +154,20 @@ describe("addressComments — live session", () => {
     expect(runner.resumeTicket).not.toHaveBeenCalled();
   });
 
+  it("still steers a comment into a running session even while the project is paused — only cold-resumes are held", async () => {
+    vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
+    const { ctx, state, loop } = makeCtx(record());
+    loop.setProjectPaused("alpha", true);
+    const session = fakeSession();
+    ctx.live.set("alpha#7", session);
+    ctx.running.set("alpha#7", new Promise(() => {}));
+
+    await addressComments(ctx, project, openIssues);
+
+    expect(session.send).toHaveBeenCalledOnce();
+    expect(state.get("alpha", 7)?.lastCommentHandledAt).toBe("2026-01-02T00:00:00.000Z");
+  });
+
   it("does not re-inject a comment already covered by the watermark", async () => {
     vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
     const { ctx } = makeCtx(record({ lastCommentHandledAt: "2026-01-02T00:00:00.000Z" }));
@@ -180,6 +194,20 @@ describe("addressComments — parked reply waiter", () => {
     expect(waiter).toHaveBeenCalledWith(expect.stringContaining("@alice: please also handle the edge case"));
     expect(state.get("alpha", 7)?.lastCommentHandledAt).toBe("2026-01-02T00:00:00.000Z");
     expect(runner.resumeTicket).not.toHaveBeenCalled();
+  });
+
+  it("still releases a parked waiter while the project is paused", async () => {
+    vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
+    const { ctx, state, loop } = makeCtx(record({ status: "needs-input" }));
+    loop.setProjectPaused("alpha", true);
+    const waiter = vi.fn();
+    ctx.replyWaiters.set("alpha#7", waiter);
+    ctx.running.set("alpha#7", new Promise(() => {}));
+
+    await addressComments(ctx, project, openIssues);
+
+    expect(waiter).toHaveBeenCalledWith(expect.stringContaining("@alice: please also handle the edge case"));
+    expect(state.get("alpha", 7)?.lastCommentHandledAt).toBe("2026-01-02T00:00:00.000Z");
   });
 });
 
@@ -211,6 +239,17 @@ describe("addressComments — cold resume", () => {
   it("does not resume a needs-input ticket with no recorded session", async () => {
     vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
     const { ctx, state } = makeCtx(record({ status: "needs-input", sessionId: undefined }));
+
+    await addressComments(ctx, project, openIssues);
+
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)?.lastCommentHandledAt).toBeUndefined();
+  });
+
+  it("does not cold-resume a paused project, leaving the watermark for next cycle", async () => {
+    vi.mocked(github.getTimestampedIssueComments).mockResolvedValue([comment()]);
+    const { ctx, state, loop } = makeCtx(record({ status: "needs-input" }));
+    loop.setProjectPaused("alpha", true);
 
     await addressComments(ctx, project, openIssues);
 

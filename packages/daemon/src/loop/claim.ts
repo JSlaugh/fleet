@@ -112,10 +112,13 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
  * feedback), then claim `fleet:ready` issues with whatever capacity is left
  * — capped by both `maxConcurrent` (running sessions) and `maxInReview`
  * (issues already labeled `fleet:review`, so the review queue can't grow
- * faster than a human can clear it). Board polling and cleanup run
- * regardless of pause state, daemon-wide or per-project; everything past
- * that point (review feedback, comment injection, new claims) is held while
- * either applies.
+ * faster than a human can clear it). Board polling, cleanup, and issue-comment
+ * injection all run regardless of pause state, daemon-wide or per-project —
+ * pause means no *new* work, and steering a comment into an already-live
+ * session isn't new work (`addressComments` gates only its own cold-resume
+ * path on pause, same as it already does for a live shutdown). Review
+ * feedback resumption and new claims are new work, so they're held while
+ * either pause applies.
  */
 export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Promise<void> {
   const issues = await listFleetIssues(project);
@@ -150,18 +153,18 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     await healStaleReadyLabels(ctx, project, issues);
   }
 
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for new issue comments to inject`);
+  } else {
+    await addressComments(ctx, project, openIssueNumbers);
+  }
+
   if (isProjectPaused(ctx, project.name)) return;
 
   if (ctx.dryRun) {
     log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);
   } else {
     await addressReviews(ctx, project, openIssueNumbers);
-  }
-
-  if (ctx.dryRun) {
-    log("loop", `[dry-run] would check ${project.name} for new issue comments to inject`);
-  } else {
-    await addressComments(ctx, project, openIssueNumbers);
   }
 
   const inReview = issues.filter((issue) => issue.labels.includes(FLEET_LABELS.review)).length;
