@@ -68,6 +68,13 @@ A registered project gets an MCP server (`@fleet/mcp`, registered via `.mcp.json
 
 All three are thin wrappers over the REST endpoints above; GitHub issues stay the single source of truth.
 
+## Refining tickets
+
+- **Comments are the refinement surface.** At claim time the worker's first prompt includes the issue body and every comment on it, read fresh — so adding a comment before a ticket is claimed is fully effective. Nobody needs to edit the original body for routine refinement.
+- **Body edits are for genuine rescoping only** — reserve them for when the problem itself changed, not as a substitute for a comment.
+- **Plan children default to not-ready.** Unless the project sets `planChildrenReady: true` (see [Epic decomposition](#epic-decomposition-fleetplan) below), a decomposed epic's child tickets are filed without `fleet:ready` — a human reviews each one and labels it ready themselves, becoming its natural owner. Tickets filed via the fleet-backlog skill work the other way: `ready` defaults to true (immediately pickable), and the filer passes `ready: false` when a ticket needs human curation first.
+- **What "ready" means:** a self-contained problem statement, acceptance criteria, and verification steps — an agent with no other context could act on it without needing to ask a clarifying question first.
+
 ## Epic decomposition (`fleet:plan`)
 
 Labeling an issue `fleet:plan` runs it as a read-only planning session instead of a coding one: the worker explores the repo for context but never writes files or commits, and its structured result is a list of self-contained, PR-sized child tickets (each with a title, body, optional priority, and an honest `light`/`standard`/`elevated` tier guess) rather than a diff. On completion, fleet files each child as its own issue — tagged with its suggested tier label and, if the project sets `planChildrenReady: true`, `fleet:ready` immediately; otherwise a human labels children ready individually. The epic issue itself goes straight to `fleet:review` with the child list in its status comment, never opens a PR, and a blocked decomposition works exactly like a blocked coding ticket (question posted, session held open for a reply).

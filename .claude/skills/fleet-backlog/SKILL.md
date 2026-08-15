@@ -32,6 +32,10 @@ Don't use this for the work you're currently doing — finish that yourself. Thi
 
 5. **Tell the user** what you filed, with the issue number and URL the tool returns, and continue with your original task.
 
+## Refining an existing ticket
+
+Prefer commenting on the issue over editing the body. At claim time the worker's first prompt includes the issue body and every comment on it, read fresh — so a comment added before the ticket is claimed is just as effective as editing the body, without disturbing the original problem statement. Reserve body edits for genuine rescoping.
+
 ## Tools
 
 - `fleet_query_backlog` — lists this project's current tickets (number, title, status, priority). No input.
