@@ -24,6 +24,15 @@ pnpm daemon sync-templates                       # stamps the fleet skill + .mcp
 
 `templates/` in this repo (the fleet-backlog skill and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file as-is and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates that touch the templates.
 
+## Deploying updates
+
+```bash
+pnpm daemon update              # pull, install, restart the running daemon now
+pnpm daemon update -- --drain   # same, but request a drain-mode restart instead
+```
+
+This is a manual step — fleet never self-updates. It runs `git pull --ff-only` in the fleet repo root (aborting with a clear message rather than merging or rebasing if the tree has diverged or has local changes), then `pnpm install`, then `POST /api/daemon/restart` against the configured `dashboardPort` (below) — the same restart contract the supervisor understands, so live sessions abort and auto-resume on the next boot exactly like a stop-now/restart triggered from the dashboard. If the daemon isn't running, the pull and install still happen and the command exits 0 with a note to start it via `pnpm daemon:supervised`. `--config` is respected, same as the other subcommands.
+
 ## Running
 
 ```bash
