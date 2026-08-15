@@ -1,16 +1,45 @@
 import type { ProjectConfig } from "@fleet/shared";
-import { describe, expect, it } from "vitest";
-import {
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("./exec.ts", async (importActual) => ({
+  ...(await importActual<typeof import("./exec.ts")>()),
+  run: vi.fn(),
+  runJson: vi.fn(),
+}));
+
+const exec = await import("./exec.ts");
+const {
   buildConflictPrompt,
   buildPrFeedback,
   buildReviewFeedbackPrompt,
   dependencyStatus,
   escalateLabelArgs,
+  getPrChecks,
   issueNumberFromUrl,
+  mergePullRequest,
   parseDependsOn,
   priorityRank,
   readyLabelArgs,
-} from "./github.ts";
+} = await import("./github.ts");
+
+const project = {
+  name: "alpha",
+  repoPath: "/repo/alpha",
+  githubRepo: "acme/alpha",
+  defaultBranch: "main",
+  maxConcurrent: 1,
+  maxInReview: 3,
+  planChildrenReady: false,
+  autoElevateOnFailure: true,
+  autoAddressReviews: true,
+  machineReview: false,
+  autoMerge: false,
+  mergeMethod: "squash",
+} satisfies ProjectConfig;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("priorityRank", () => {
   it("ranks p1 above p2 above p3", () => {
@@ -40,6 +69,8 @@ describe("readyLabelArgs", () => {
     autoElevateOnFailure: true,
     autoAddressReviews: true,
     machineReview: false,
+    autoMerge: false,
+    mergeMethod: "squash",
   } satisfies ProjectConfig;
 
   it("removes every other fleet state label and adds fleet:ready", () => {
@@ -70,6 +101,8 @@ describe("escalateLabelArgs", () => {
     autoElevateOnFailure: true,
     autoAddressReviews: true,
     machineReview: false,
+    autoMerge: false,
+    mergeMethod: "squash",
   } satisfies ProjectConfig;
 
   it("swaps in-progress for elevate + ready", () => {
@@ -303,5 +336,57 @@ describe("buildConflictPrompt", () => {
     const prompt = buildConflictPrompt("main");
     expect(prompt).toContain("re-run the project's checks");
     expect(prompt).toContain("finish with an updated structured result");
+  });
+});
+
+describe("getPrChecks", () => {
+  it("parses the reported checks", async () => {
+    vi.mocked(exec.run).mockResolvedValue({ stdout: '[{"name":"ci","bucket":"pass"}]' });
+    expect(await getPrChecks(project, "https://github.com/acme/alpha/pull/7")).toEqual([{ name: "ci", bucket: "pass" }]);
+    expect(exec.run).toHaveBeenCalledWith(
+      "gh",
+      ["pr", "checks", "https://github.com/acme/alpha/pull/7", "--repo", "acme/alpha", "--json", "name,bucket"],
+      { allowFailure: true },
+    );
+  });
+
+  it("treats empty stdout (no checks reported) as an empty list", async () => {
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "" });
+    expect(await getPrChecks(project, "https://github.com/acme/alpha/pull/7")).toEqual([]);
+  });
+
+  it("treats unparseable stdout as an empty list rather than throwing", async () => {
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "no checks reported on the 'fleet/7' branch" });
+    expect(await getPrChecks(project, "https://github.com/acme/alpha/pull/7")).toEqual([]);
+  });
+});
+
+describe("mergePullRequest", () => {
+  it("merges with the requested method's flag", async () => {
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "" });
+    await mergePullRequest(project, "https://github.com/acme/alpha/pull/7", "rebase");
+    expect(exec.run).toHaveBeenCalledWith("gh", [
+      "pr", "merge", "https://github.com/acme/alpha/pull/7",
+      "--repo", "acme/alpha",
+      "--rebase",
+    ]);
+  });
+
+  it("treats an already-merged PR as success instead of throwing", async () => {
+    vi.mocked(exec.run).mockRejectedValueOnce(new Error("gh: Pull request is not mergeable"));
+    vi.mocked(exec.runJson).mockResolvedValue({ state: "MERGED" });
+    await expect(mergePullRequest(project, "https://github.com/acme/alpha/pull/7", "squash")).resolves.toBeUndefined();
+  });
+
+  it("rethrows when the merge failed and the PR is still open", async () => {
+    vi.mocked(exec.run).mockRejectedValueOnce(new Error("branch protection"));
+    vi.mocked(exec.runJson).mockResolvedValue({ state: "OPEN" });
+    await expect(mergePullRequest(project, "https://github.com/acme/alpha/pull/7", "squash")).rejects.toThrow("branch protection");
+  });
+
+  it("rethrows the original error even when the PR-state fallback check itself fails", async () => {
+    vi.mocked(exec.run).mockRejectedValueOnce(new Error("branch protection"));
+    vi.mocked(exec.runJson).mockRejectedValue(new Error("gh: rate limited"));
+    await expect(mergePullRequest(project, "https://github.com/acme/alpha/pull/7", "squash")).rejects.toThrow("branch protection");
   });
 });

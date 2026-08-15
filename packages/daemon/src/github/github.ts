@@ -494,6 +494,79 @@ export function buildConflictPrompt(defaultBranch: string): string {
   ].join("\n\n");
 }
 
+export interface PrApprovalReview {
+  author: string;
+  state: string;
+  submittedAt: string;
+}
+
+/** Every review on the PR, unfiltered — auto-merge needs the latest state per reviewer, not just what's new since a watermark. */
+export async function getPrReviews(project: ProjectConfig, prUrl: string): Promise<PrApprovalReview[]> {
+  const prNumber = issueNumberFromUrl(prUrl);
+  const rawReviews = await runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]);
+  return rawReviews.map((r) => ({ author: r.user?.login ?? "unknown", state: r.state, submittedAt: r.submitted_at }));
+}
+
+export interface PrCheck {
+  name: string;
+  bucket: string;
+}
+
+/**
+ * `gh pr checks` exits non-zero whenever a check is pending/failing (and when
+ * there are no checks at all), so this always allows failure and falls back to
+ * an empty list rather than throwing — a PR with zero checks reported is
+ * meant to read as "nothing blocking", not as an error.
+ */
+export async function getPrChecks(project: ProjectConfig, prUrl: string): Promise<PrCheck[]> {
+  const { stdout } = await run(
+    "gh",
+    ["pr", "checks", prUrl, "--repo", project.githubRepo, "--json", "name,bucket"],
+    { allowFailure: true },
+  );
+  try {
+    return JSON.parse(stdout.trim() || "[]") as PrCheck[];
+  } catch {
+    return [];
+  }
+}
+
+let authenticatedLoginPromise: Promise<string> | undefined;
+
+/**
+ * The GitHub login the daemon's `gh` is authenticated as — the default
+ * `approvers` allowlist for auto-merge. Cached for the process's lifetime;
+ * a failed lookup evicts the cache so a later call retries instead of caching
+ * the failure forever.
+ */
+export function getAuthenticatedLogin(): Promise<string> {
+  if (!authenticatedLoginPromise) {
+    authenticatedLoginPromise = runJson<{ login: string }>("gh", ["api", "user"]).then((u) => u.login);
+    authenticatedLoginPromise.catch(() => {
+      authenticatedLoginPromise = undefined;
+    });
+  }
+  return authenticatedLoginPromise;
+}
+
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/**
+ * Merges via `gh pr merge`. A PR the daemon finds already merged (e.g. a human
+ * beat it to it) is treated as success rather than an error — the outcome
+ * auto-merge wants, an issue-closing merge, already happened.
+ */
+export async function mergePullRequest(project: ProjectConfig, prUrl: string, method: MergeMethod): Promise<void> {
+  const flag = method === "squash" ? "--squash" : method === "rebase" ? "--rebase" : "--merge";
+  try {
+    await run("gh", ["pr", "merge", prUrl, "--repo", project.githubRepo, flag]);
+  } catch (err) {
+    const state = await getPrState(project, prUrl).catch(() => undefined);
+    if (state === "MERGED") return;
+    throw err;
+  }
+}
+
 export async function closeIssue(project: ProjectConfig, issueNumber: number): Promise<void> {
   await run("gh", ["issue", "close", String(issueNumber), "--repo", project.githubRepo]);
 }
