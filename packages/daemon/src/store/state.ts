@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ClosedTicketRecord, FleetState, TicketRecord } from "@fleet/shared";
+import type { ClosedTicketRecord, FleetState, SpendLedgerEntry, TicketRecord } from "@fleet/shared";
 
 /** How many archived tickets `HistoryStore` keeps on disk. */
 const HISTORY_LIMIT = 1000;
@@ -96,6 +96,33 @@ export class StateStore {
     else projects.delete(project);
     this.state.pausedProjects = [...projects];
     this.write();
+  }
+
+  /**
+   * Sums ledger entries within the trailing `windowHours`, pruning anything
+   * older off the stored ledger first so it never grows past what the widest
+   * window in use actually needs.
+   */
+  getWindowSpend(windowHours: number): number {
+    return this.prunedLedger(windowHours).reduce((sum, entry) => sum + entry.usd, 0);
+  }
+
+  /** Appends one spend delta (never a running total) and prunes anything past `windowHours`. A non-positive delta is a no-op. */
+  appendSpend(usd: number, windowHours: number): void {
+    if (usd <= 0) return;
+    this.state.spendLedger = [...this.prunedLedger(windowHours), { at: new Date().toISOString(), usd }];
+    this.write();
+  }
+
+  private prunedLedger(windowHours: number): SpendLedgerEntry[] {
+    const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
+    const ledger = this.state.spendLedger ?? [];
+    const pruned = ledger.filter((entry) => Date.parse(entry.at) >= cutoff);
+    if (pruned.length !== ledger.length) {
+      this.state.spendLedger = pruned;
+      this.write();
+    }
+    return pruned;
   }
 
   clearLiveFlags(): void {

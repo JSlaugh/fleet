@@ -31,6 +31,17 @@ export const FleetConfigSchema = z.object({
   limitResumeSlackMinutes: z.number().int().min(0).default(5),
   /** Pause length used when a plan-limit hit is detected but no reset time could be parsed out of it. */
   limitDefaultBackoffMinutes: z.number().int().min(1).default(300),
+  /**
+   * Rolling-window self-estimated spend cap, summed from fleet's own spend
+   * ledger — unset (default) disables the budget gate entirely. This is a
+   * governor, not a guarantee: interactive Claude use on the same plan is
+   * invisible to it.
+   */
+  windowBudgetUsd: z.number().min(0).optional(),
+  /** Rolling window the budget above is measured over — mirrors the plan's own rolling window. */
+  usageWindowHours: z.number().min(0.1).default(5),
+  /** Fraction of `windowBudgetUsd` past which new claims are restricted to `fleet:light` issues. */
+  budgetLightThreshold: z.number().min(0).max(1).default(0.85),
   claudeExecutable: z.string().optional(),
   dataDir: z.string().default(".fleet"),
   projects: z.array(ProjectConfigSchema).min(1),

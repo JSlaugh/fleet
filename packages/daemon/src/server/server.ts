@@ -66,6 +66,7 @@ export function createApp(opts: {
       paused: state.getPaused(),
       pausedProjects: loop.getPausedProjects(),
       runningCount: loop.activeCount,
+      budget: loop.getBudgetStatus(),
     }),
   );
 

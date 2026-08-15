@@ -47,7 +47,7 @@ const project: ProjectConfig = {
 };
 
 /** `dryRun: true` so cycleProject only logs what it would do — no real `gh`/git calls, no worktree/session mocking needed. */
-function makeLoop(projectOverrides: Partial<ProjectConfig> = {}) {
+function makeLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverrides: Partial<FleetConfig> = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "fleet-claim-"));
   const state = new StateStore(dataDir);
   const config: FleetConfig = {
@@ -60,8 +60,11 @@ function makeLoop(projectOverrides: Partial<ProjectConfig> = {}) {
     replyWaitMinutes: 60,
     limitResumeSlackMinutes: 5,
     limitDefaultBackoffMinutes: 300,
+    usageWindowHours: 5,
+    budgetLightThreshold: 0.85,
     dataDir,
     projects: [{ ...project, ...projectOverrides }],
+    ...configOverrides,
   };
   const approvals = { request: vi.fn() } as unknown as ApprovalManager;
   const loop = new FleetLoop(config, state, dataDir, approvals, true);
@@ -144,6 +147,67 @@ describe("cycleProject with maxInReview backpressure", () => {
     await loop.cycle();
 
     expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
+  });
+});
+
+describe("cycleProject budget gate", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.mocked(github.listFleetIssues).mockReset();
+  });
+
+  function loggedLines(): string[] {
+    return logSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it("claims normally when windowBudgetUsd is unset — feature off", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop, state } = makeLoop();
+    state.appendSpend(1000, 5); // would blow past any budget if the gate were on
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("claims normally under the light threshold", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop, state } = makeLoop({}, { windowBudgetUsd: 10 });
+    state.appendSpend(5, 5); // under 0.85 * 10
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("restricts claims to fleet:light once spend passes the light threshold", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"]), issue(2, ["fleet:ready", "fleet:light"])]);
+    const { loop, state } = makeLoop({}, { windowBudgetUsd: 10 });
+    state.appendSpend(9, 5); // >= 0.85 * 10
+
+    await loop.cycle();
+
+    const claims = loggedLines().filter((l) => l.includes("would claim"));
+    expect(claims.some((l) => l.includes("alpha#1"))).toBe(false);
+    expect(claims.some((l) => l.includes("alpha#2"))).toBe(true);
+    expect(loggedLines().some((l) => l.includes("claiming fleet:light only"))).toBe(true);
+  });
+
+  it("holds all claims once spend reaches the budget", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready", "fleet:light"])]);
+    const { loop, state } = makeLoop({}, { windowBudgetUsd: 10 });
+    state.appendSpend(10, 5);
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
+    expect(loggedLines().some((l) => l.includes("holding all claims"))).toBe(true);
   });
 });
 
@@ -237,6 +301,8 @@ describe("processTicket", () => {
         replyWaitMinutes: 60,
         limitResumeSlackMinutes: 5,
         limitDefaultBackoffMinutes: 300,
+        usageWindowHours: 5,
+        budgetLightThreshold: 0.85,
         dataDir,
         projects: [project],
       },

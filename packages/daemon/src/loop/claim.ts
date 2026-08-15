@@ -8,6 +8,7 @@ import {
   type TicketRecord,
 } from "@fleet/shared";
 import { cleanupFinished } from "./board.ts";
+import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { isProjectPaused } from "./pause.ts";
@@ -179,13 +180,29 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
   );
   if (capacity <= 0) return;
 
-  const ready = selectEligibleReady(issues, {
+  let ready = selectEligibleReady(issues, {
     openIssueNumbers,
     allIssueNumbers,
     isRunning: (issueNumber) => ctx.running.has(key(project.name, issueNumber)),
     getRecord: (issueNumber) => ctx.state.get(project.name, issueNumber),
     projectName: project.name,
   });
+
+  const gate = computeBudgetGate(ctx);
+  if (gate.level === "blocked") {
+    log(
+      "loop",
+      `${project.name}: window spend $${gate.spentUsd.toFixed(2)} >= budget $${(gate.budgetUsd ?? 0).toFixed(2)} — holding all claims`,
+    );
+    return;
+  }
+  if (gate.level === "light-only") {
+    log(
+      "loop",
+      `${project.name}: window spend $${gate.spentUsd.toFixed(2)} past the light threshold of budget $${(gate.budgetUsd ?? 0).toFixed(2)} — claiming ${LIGHT_LABEL} only`,
+    );
+    ready = ready.filter((issue) => issue.labels.includes(LIGHT_LABEL));
+  }
 
   for (const issue of ready.slice(0, Math.max(0, capacity))) {
     if (ctx.dryRun) {
