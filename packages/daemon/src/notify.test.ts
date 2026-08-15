@@ -1,7 +1,7 @@
 import type { NotificationsConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeProject } from "./test-support.ts";
-import { buildNotificationMessage, issueUrl, notify, shouldNotify, type NotifyDetail } from "./notify.ts";
+import { buildNotificationMessage, issueUrl, notify, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
 
 const project = makeProject();
 
@@ -51,11 +51,28 @@ describe("buildNotificationMessage", () => {
     const labels = events.map((event) => buildNotificationMessage(event, project, detail).split("\n")[0]);
     expect(new Set(labels).size).toBe(events.length);
   });
+
+  it("scopes to just the project, with no #N, for a project-wide event with no triggering issue", () => {
+    const message = buildNotificationMessage("paused", project, {
+      title: "Budget gate",
+      detail: "window spend $10.00 >= budget $10.00 — holding all claims",
+      url: "https://github.com/acme/alpha",
+    });
+
+    expect(message).toContain("alpha Budget gate");
+    expect(message).not.toContain("alpha#");
+  });
 });
 
 describe("issueUrl", () => {
   it("builds a github issue link from githubRepo", () => {
     expect(issueUrl(project, 7)).toBe("https://github.com/acme/alpha/issues/7");
+  });
+});
+
+describe("projectUrl", () => {
+  it("builds a github repo link from githubRepo", () => {
+    expect(projectUrl(project)).toBe("https://github.com/acme/alpha");
   });
 });
 
@@ -91,13 +108,31 @@ describe("notify", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("posts the built message to the webhook", async () => {
+  it("posts the built message to the webhook, bounded by a timeout signal", async () => {
     await notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail);
 
     expect(fetch).toHaveBeenCalledWith("https://discord.example/webhook", expect.objectContaining({ method: "POST" }));
     const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(init.body as string) as { content: string };
     expect(body.content).toContain("Needs input");
+    // An unresponsive host must never hang the awaiting ticket path indefinitely.
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it("treats an aborted (timed-out) request the same as any other rejection — logged, never thrown", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation was aborted.", "TimeoutError");
+      }),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail)).resolves.toBeUndefined();
+
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
   });
 
   it("logs once and resolves cleanly when fetch rejects — never affects the ticket path", async () => {

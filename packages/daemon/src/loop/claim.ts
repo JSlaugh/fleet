@@ -31,6 +31,7 @@ import {
 } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
+import { notify, projectUrl } from "../notify.ts";
 import { addressComments } from "./comments.ts";
 import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
@@ -288,12 +289,17 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
 
   const gate = computeBudgetGate(ctx);
   if (gate.level === "blocked") {
-    log(
-      "loop",
-      `${project.name}: window spend $${gate.spentUsd.toFixed(2)} >= budget $${(gate.budgetUsd ?? 0).toFixed(2)} — holding all claims`,
-    );
+    const holdLine = `window spend $${gate.spentUsd.toFixed(2)} >= budget $${(gate.budgetUsd ?? 0).toFixed(2)} — holding all claims`;
+    log("loop", `${project.name}: ${holdLine}`);
+    // Only the first hold of a spell notifies — this gate is recomputed (and would re-fire) every
+    // poll cycle for as long as spend stays over budget, unlike extendPause's own once-per-hit dedup.
+    if (!ctx.budgetBlockedNotified.has(project.name)) {
+      ctx.budgetBlockedNotified.add(project.name);
+      await notify(ctx, "paused", project, { title: "Budget gate", detail: holdLine, url: projectUrl(project) });
+    }
     return;
   }
+  ctx.budgetBlockedNotified.delete(project.name);
   if (gate.level === "light-only") {
     log(
       "loop",

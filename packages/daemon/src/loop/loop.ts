@@ -51,6 +51,8 @@ export class FleetLoop {
   private readonly boardCache = new Map<string, BoardTicket[]>();
   /** `project#issue` keys already logged as skipped for a non-collaborator author — logged once per issue, not once per cycle. */
   private readonly contributorFloorSkipsLogged = new Set<string>();
+  /** Project names currently notified about a budget-gate `blocked` hold; see `LoopContext`. */
+  private readonly budgetBlockedNotified = new Set<string>();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
@@ -80,6 +82,7 @@ export class FleetLoop {
       replyWaiters: this.replyWaiters,
       boardCache: this.boardCache,
       contributorFloorSkipsLogged: this.contributorFloorSkipsLogged,
+      budgetBlockedNotified: this.budgetBlockedNotified,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
       isShuttingDown: () => this.shuttingDown,
