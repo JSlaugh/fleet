@@ -29,7 +29,7 @@ Vitest across shared+daemon+mcp: the `loop.*.test.ts` files (see [[add-daemon-fe
 pnpm daemon -- --dry-run --once
 ```
 
-**This is the step sessions skip.** It boots real config, real `gh` calls, and one live poll cycle — the only check that exercises the daemon end-to-end without unit-test mocks. Run it for anything touching `loop.ts` or its concern modules (`claim.ts`, `runner.ts`, `supervise.ts`, `finish.ts`, `pause.ts`, `recovery.ts`, `reviews.ts`, `board.ts`, `operator.ts`), `config.ts`, or `github.ts` — changes a unit test wouldn't catch because it mocks `gh` or `LoopContext` construction.
+**This is the step sessions skip.** It boots real config, real `gh` calls, and one live poll cycle — the only check that exercises the daemon end-to-end without unit-test mocks. Run it for anything touching `loop/loop.ts` or its concern modules (`loop/claim.ts`, `loop/runner.ts`, `loop/supervise.ts`, `loop/finish.ts`, `loop/pause.ts`, `loop/recovery.ts`, `loop/reviews.ts`, `loop/board.ts`, `loop/operator.ts`), `config.ts`, or `github/github.ts` — changes a unit test wouldn't catch because it mocks `gh` or `LoopContext` construction.
 
 It changes nothing (no claims, no worktrees, no label writes) — safe to run anytime `fleet.config.json` exists and `gh auth login` has been run. If neither is set up in the current environment, say so explicitly instead of skipping silently — a pure-dashboard or pure-schema change may not need it.
 
