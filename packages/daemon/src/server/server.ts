@@ -64,6 +64,7 @@ export function createApp(opts: {
       updatedAt: new Date().toISOString(),
       pausedUntil: state.getPausedUntil(),
       paused: state.getPaused(),
+      pausedProjects: loop.getPausedProjects(),
       runningCount: loop.activeCount,
     }),
   );
@@ -89,6 +90,15 @@ export function createApp(opts: {
     const { paused } = await c.req.json<{ paused: boolean }>().catch(() => ({ paused: undefined }));
     if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);
     loop.setPaused(paused);
+    return c.json({ ok: true, paused });
+  });
+
+  app.post("/api/projects/:name/pause", async (c) => {
+    const name = c.req.param("name");
+    if (!loop.getProject(name)) return c.json({ error: `unknown project ${name}` }, 404);
+    const { paused } = await c.req.json<{ paused: boolean }>().catch(() => ({ paused: undefined }));
+    if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);
+    loop.setProjectPaused(name, paused);
     return c.json({ ok: true, paused });
   });
 

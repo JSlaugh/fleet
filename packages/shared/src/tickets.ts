@@ -126,4 +126,6 @@ export interface FleetState {
   pausedUntil?: string;
   /** Operator-initiated drain mode: survives a restart, cleared only by an explicit resume. */
   paused?: boolean;
+  /** Project names an operator has individually paused: survives a restart, cleared only by an explicit resume. A name no longer in config is harmlessly ignored. */
+  pausedProjects?: string[];
 }

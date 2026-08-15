@@ -8,6 +8,7 @@ import {
   formatCost,
   resolveApproval,
   setDaemonPaused,
+  setProjectPaused,
   setTicketPriority,
 } from "./lib/api.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
@@ -22,8 +23,10 @@ const showApprovals = ref(false);
 const view = ref<"board" | "history">("board");
 const pausedUntil = ref<string>();
 const paused = ref(false);
+const pausedProjects = ref<string[]>([]);
 const runningCount = ref(0);
 const pauseToggling = ref(false);
+const projectPauseToggling = ref<string>();
 const error = ref<string>();
 const approvalsError = ref<string>();
 const connected = ref(false);
@@ -47,6 +50,7 @@ async function load() {
     tickets.value = board.tickets;
     pausedUntil.value = board.pausedUntil;
     paused.value = board.paused;
+    pausedProjects.value = board.pausedProjects;
     runningCount.value = board.runningCount;
     error.value = undefined;
     if (selected.value) {
@@ -134,6 +138,18 @@ async function togglePaused() {
   }
 }
 
+async function toggleProjectPaused(project: string) {
+  projectPauseToggling.value = project;
+  try {
+    await setProjectPaused(project, !pausedProjects.value.includes(project));
+    await load();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    projectPauseToggling.value = undefined;
+  }
+}
+
 function isSelected(ticket: BoardTicket): boolean {
   return selected.value?.project === ticket.project && selected.value?.issueNumber === ticket.issueNumber;
 }
@@ -163,8 +179,9 @@ onUnmounted(() => {
   <div class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
     <header class="flex items-center gap-4 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
       <h1 class="text-base font-bold tracking-tight">Fleet</h1>
-      <nav v-if="projects.length > 1" aria-label="Project filter" class="flex gap-1">
+      <nav v-if="projects.length > 0" aria-label="Project filter" class="flex flex-wrap items-center gap-1">
         <button
+          v-if="projects.length > 1"
           type="button"
           class="rounded-full px-2.5 py-1 text-xs font-medium"
           :class="!projectFilter ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
@@ -172,16 +189,36 @@ onUnmounted(() => {
         >
           All
         </button>
-        <button
+        <span
           v-for="project in projects"
           :key="project"
-          type="button"
-          class="rounded-full px-2.5 py-1 text-xs font-medium"
-          :class="projectFilter === project ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
-          @click="projectFilter = project"
+          class="flex items-center overflow-hidden rounded-full"
+          :class="pausedProjects.includes(project) ? 'bg-amber-50 dark:bg-amber-950' : ''"
         >
-          {{ project }}
-        </button>
+          <button
+            type="button"
+            class="px-2.5 py-1 text-xs font-medium"
+            :class="
+              projectFilter === project
+                ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+                : pausedProjects.includes(project)
+                  ? 'text-amber-800 dark:text-amber-200'
+                  : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+            "
+            @click="projectFilter = project"
+          >
+            {{ project }}<template v-if="pausedProjects.includes(project)"> · paused</template>
+          </button>
+          <button
+            type="button"
+            class="px-1.5 py-1 text-xs text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-900"
+            :disabled="projectPauseToggling === project"
+            :title="pausedProjects.includes(project) ? `Resume ${project}` : `Pause ${project}`"
+            @click="toggleProjectPaused(project)"
+          >
+            {{ pausedProjects.includes(project) ? "▶" : "⏸" }}
+          </button>
+        </span>
       </nav>
       <button
         type="button"

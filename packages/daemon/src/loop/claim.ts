@@ -10,6 +10,7 @@ import {
 import { cleanupFinished } from "./board.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
+import { isProjectPaused } from "./pause.ts";
 import {
   dependencyStatus,
   getIssueComments,
@@ -111,9 +112,12 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
  * feedback), then claim `fleet:ready` issues with whatever capacity is left
  * — capped by both `maxConcurrent` (running sessions) and `maxInReview`
  * (issues already labeled `fleet:review`, so the review queue can't grow
- * faster than a human can clear it).
+ * faster than a human can clear it). Board polling and cleanup run
+ * regardless of pause state, daemon-wide or per-project; everything past
+ * that point (review feedback, comment injection, new claims) is held while
+ * either applies.
  */
-export async function cycleProject(ctx: LoopContext, project: ProjectConfig, paused: boolean): Promise<void> {
+export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Promise<void> {
   const issues = await listFleetIssues(project);
   const { open: openIssueNumbers, all: allIssueNumbers } = await listIssueStates(project);
 
@@ -146,7 +150,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig, pau
     await healStaleReadyLabels(ctx, project, issues);
   }
 
-  if (paused) return;
+  if (isProjectPaused(ctx, project.name)) return;
 
   if (ctx.dryRun) {
     log("loop", `[dry-run] would check ${project.name} for PR review feedback to address`);

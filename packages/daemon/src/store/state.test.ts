@@ -168,6 +168,35 @@ describe("StateStore", () => {
     expect(new StateStore(dataDir).getPaused()).toBe(false);
   });
 
+  describe("per-project pause", () => {
+    it("defaults to unpaused, and setProjectPaused/isProjectPaused/getPausedProjects round-trip and persist", () => {
+      const dataDir = tempDataDir();
+      const store = new StateStore(dataDir);
+      expect(store.isProjectPaused("alpha")).toBe(false);
+      expect(store.getPausedProjects()).toEqual([]);
+
+      store.setProjectPaused("alpha", true);
+      expect(store.isProjectPaused("alpha")).toBe(true);
+      expect(store.isProjectPaused("beta")).toBe(false);
+      expect(store.getPausedProjects()).toEqual(["alpha"]);
+      expect(new StateStore(dataDir).getPausedProjects()).toEqual(["alpha"]);
+
+      store.setProjectPaused("beta", true);
+      expect(new StateStore(dataDir).getPausedProjects().sort()).toEqual(["alpha", "beta"]);
+
+      store.setProjectPaused("alpha", false);
+      expect(store.isProjectPaused("alpha")).toBe(false);
+      expect(new StateStore(dataDir).getPausedProjects()).toEqual(["beta"]);
+    });
+
+    it("is idempotent — pausing an already-paused project doesn't duplicate it", () => {
+      const store = new StateStore(tempDataDir());
+      store.setProjectPaused("alpha", true);
+      store.setProjectPaused("alpha", true);
+      expect(store.getPausedProjects()).toEqual(["alpha"]);
+    });
+  });
+
   describe("clearLiveFlags", () => {
     it("downgrades running tickets to stalled and clears sessionLive, as crash recovery on daemon restart", () => {
       const dataDir = tempDataDir();

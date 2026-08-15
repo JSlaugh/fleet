@@ -5,6 +5,7 @@ export interface BoardResponse {
   updatedAt: string;
   pausedUntil?: string;
   paused: boolean;
+  pausedProjects: string[];
   runningCount: number;
 }
 
@@ -83,6 +84,17 @@ export async function acceptPlan(project: string, issueNumber: number): Promise<
 export async function setDaemonPaused(paused: boolean): Promise<void> {
   await json(
     await fetch("/api/daemon/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused }),
+    }),
+  );
+}
+
+/** Toggles pause for a single project: stops new claims/resumes for it while leaving other projects and its own running sessions unaffected. */
+export async function setProjectPaused(project: string, paused: boolean): Promise<void> {
+  await json(
+    await fetch(`/api/projects/${encodeURIComponent(project)}/pause`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paused }),

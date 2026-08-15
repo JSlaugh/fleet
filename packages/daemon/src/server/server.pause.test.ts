@@ -21,7 +21,7 @@ const project: ProjectConfig = {
   machineReview: false,
 };
 
-function makeApp() {
+function makeApp(projects: ProjectConfig[] = [project]) {
   const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-pause-"));
   const state = new StateStore(dataDir);
   const config: FleetConfig = {
@@ -35,7 +35,7 @@ function makeApp() {
     limitResumeSlackMinutes: 5,
     limitDefaultBackoffMinutes: 300,
     dataDir,
-    projects: [project],
+    projects,
   };
   const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
@@ -89,17 +89,79 @@ describe("POST /api/daemon/pause", () => {
 });
 
 describe("GET /api/board", () => {
-  it("includes paused, pausedUntil, and runningCount", async () => {
+  it("includes paused, pausedUntil, pausedProjects, and runningCount", async () => {
     const { app } = makeApp();
 
     const board = (await (await app.request("/api/board")).json()) as {
       paused: boolean;
       pausedUntil?: string;
+      pausedProjects: string[];
       runningCount: number;
     };
 
     expect(board.paused).toBe(false);
     expect(board.pausedUntil).toBeUndefined();
+    expect(board.pausedProjects).toEqual([]);
     expect(board.runningCount).toBe(0);
+  });
+});
+
+describe("POST /api/projects/:name/pause", () => {
+  const beta: ProjectConfig = { ...project, name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" };
+
+  it("pauses one project and is reflected on GET /api/board without affecting the other", async () => {
+    const { app, state } = makeApp([project, beta]);
+
+    const res = await app.request("/api/projects/alpha/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, paused: true });
+    expect(state.isProjectPaused("alpha")).toBe(true);
+    expect(state.isProjectPaused("beta")).toBe(false);
+
+    const board = (await (await app.request("/api/board")).json()) as { pausedProjects: string[] };
+    expect(board.pausedProjects).toEqual(["alpha"]);
+  });
+
+  it("resumes a paused project", async () => {
+    const { app, state } = makeApp();
+    state.setProjectPaused("alpha", true);
+
+    const res = await app.request("/api/projects/alpha/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: false }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(state.isProjectPaused("alpha")).toBe(false);
+  });
+
+  it("rejects a non-boolean paused value", async () => {
+    const { app } = makeApp();
+
+    const res = await app.request("/api/projects/alpha/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: "yes" }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for an unknown project", async () => {
+    const { app } = makeApp();
+
+    const res = await app.request("/api/projects/nope/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paused: true }),
+    });
+
+    expect(res.status).toBe(404);
   });
 });
