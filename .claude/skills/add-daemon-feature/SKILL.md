@@ -5,27 +5,29 @@ description: Orientation map for changing daemon behavior in packages/daemon/src
 
 # add-daemon-feature
 
-`loop.ts` (`FleetLoop`) is only a coordinator: it owns the shared `LoopContext` (`context.ts`) and hands it to plain-function modules. Find the concern, then find its test file.
+`packages/daemon/src` is grouped into subdirectories by concern: `loop/` (the poll loop and its supporting modules), `session/` (worker sessions, machine review, approvals), `github/` (GitHub/git shelling out), `server/` (the dashboard's REST/WS API), `store/` (on-disk state/history/journal), and a handful of root files (`index.ts`, `config.ts`, `log.ts`, `sync-templates.ts`, `throttle.ts`). Tests are colocated with their subject module.
+
+`loop/loop.ts` (`FleetLoop`) is only a coordinator: it owns the shared `LoopContext` (`loop/context.ts`) and hands it to plain-function modules, all also in `loop/`. Find the concern, then find its test file.
 
 ## Where behavior lives
 
 | Module | Concern |
 |---|---|
-| `context.ts` | `LoopContext` type; `key`/`countRunning`/`track`/`markWorking` helpers shared by everything else |
-| `claim.ts` | Per-project poll cycle; picking which ready issues to claim |
-| `runner.ts` | Opening/resuming a worker session, model selection, `canUseTool` |
-| `supervise.ts` | **The turn state machine** — `supervise()` loops on `session.nextResult()`; `completed` → `machineReviewGate` → `finishCompleted`; `blocked` → `park()` (waits `replyWaitMinutes` for a dashboard reply, resumable after); anything else → `finishFailed` |
-| `finish.ts` | Terminal paths: completed (push+PR)/planned (file child issues)/blocked (status comment)/failed |
-| `pause.ts` | Plan usage-limit pause (`handlePlanLimit`, `extendPause`) — daemon-wide, gates claims/resumes |
-| `recovery.ts` | Stall detection + picking tickets to auto-resume |
-| `reviews.ts` | Resuming `fleet:review` tickets on changes-requested/new comments/merge conflicts |
-| `review.ts` | The machine-review reviewer session itself (prompt building, running it, verdict parsing) |
-| `board.ts` | Board projection for the dashboard + finished-ticket cleanup (`cleanupFinished`) |
-| `operator.ts` | Dashboard-triggered reply/restart |
+| `loop/context.ts` | `LoopContext` type; `key`/`countRunning`/`track`/`markWorking` helpers shared by everything else |
+| `loop/claim.ts` | Per-project poll cycle; picking which ready issues to claim |
+| `loop/runner.ts` | Opening/resuming a worker session, model selection, `canUseTool` |
+| `loop/supervise.ts` | **The turn state machine** — `supervise()` loops on `session.nextResult()`; `completed` → `machineReviewGate` → `finishCompleted`; `blocked` → `park()` (waits `replyWaitMinutes` for a dashboard reply, resumable after); anything else → `finishFailed` |
+| `loop/finish.ts` | Terminal paths: completed (push+PR)/planned (file child issues)/blocked (status comment)/failed |
+| `loop/pause.ts` | Plan usage-limit pause (`handlePlanLimit`, `extendPause`) — daemon-wide, gates claims/resumes |
+| `loop/recovery.ts` | Stall detection + picking tickets to auto-resume |
+| `loop/reviews.ts` | Resuming `fleet:review` tickets on changes-requested/new comments/merge conflicts |
+| `session/review.ts` | The machine-review reviewer session itself (prompt building, running it, verdict parsing) |
+| `loop/board.ts` | Board projection for the dashboard + finished-ticket cleanup (`cleanupFinished`) |
+| `loop/operator.ts` | Dashboard-triggered reply/restart |
 
-## Test file map (`loop.*.test.ts`)
+## Test file map (`loop/loop.*.test.ts`)
 
-Each file tests one exported function, imported from its real module (not `loop.ts`) — `loop.ts` itself has no dedicated test file since it's just wiring.
+Each file tests one exported function, imported from its real module (not `loop.ts`) — `loop.ts` itself has no dedicated test file since it's just wiring. All live in `loop/` alongside the modules they cover.
 
 - `loop.deps.test.ts` — `selectEligibleReady` (claim.ts): label/dependency/in-flight filtering
 - `loop.model.test.ts` — `selectModel` (runner.ts): label → model tier resolution

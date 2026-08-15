@@ -1,12 +1,12 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ApprovalManager } from "./approvals.ts";
+import { ApprovalManager } from "./session/approvals.ts";
 import { loadConfig } from "./config.ts";
-import { ensureLabels } from "./github.ts";
-import { FleetLoop } from "./loop.ts";
+import { ensureLabels } from "./github/github.ts";
+import { FleetLoop } from "./loop/loop.ts";
 import { log, logError } from "./log.ts";
-import { startServer } from "./server.ts";
-import { StateStore } from "./state.ts";
+import { startServer } from "./server/server.ts";
+import { StateStore } from "./store/state.ts";
 import { syncTemplates } from "./sync-templates.ts";
 
 const USAGE = `Usage:
