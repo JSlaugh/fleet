@@ -49,6 +49,15 @@ export const FleetConfigSchema = z.object({
   /** Pause length used when a plan-limit hit is detected but no reset time could be parsed out of it. */
   limitDefaultBackoffMinutes: z.number().int().min(1).default(300),
   /**
+   * How long a peer daemon waits without seeing a fresh heartbeat on another
+   * daemon's `fleet:in-progress`/`fleet:needs-input` claim before releasing it
+   * back to `fleet:ready`. Must comfortably exceed both a normal restart
+   * window and a `replyWaitMinutes` park — heartbeats on those tickets only
+   * refresh once per poll cycle, so setting this too close to either makes a
+   * live claim look dead.
+   */
+  staleClaimMinutes: z.number().int().min(1).default(45),
+  /**
    * Rolling-window self-estimated spend cap, summed from fleet's own spend
    * ledger — unset (default) disables the budget gate entirely. This is a
    * governor, not a guarantee: interactive Claude use on the same plan is

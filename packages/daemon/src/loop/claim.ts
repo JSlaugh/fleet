@@ -11,6 +11,7 @@ import { cleanupFinished } from "./board.ts";
 import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
+import { releaseStaleClaims } from "./heartbeat.ts";
 import { isProjectPaused } from "./pause.ts";
 import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
 import {
@@ -197,6 +198,7 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
 export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Promise<void> {
   const issues = await listFleetIssues(project);
   const { open: openIssueNumbers, all: allIssueNumbers } = await listIssueStates(project);
+  const myLogin = await getAuthenticatedLogin();
 
   const blockedByIssue = new Map<number, number[]>();
   for (const issue of issues) {
@@ -225,6 +227,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     log("loop", `[dry-run] would heal stale fleet:ready labels for ${project.name}`);
   } else {
     await healStaleReadyLabels(ctx, project, issues);
+  }
+
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for stale claims to release`);
+  } else {
+    await releaseStaleClaims(ctx, project, issues, myLogin);
   }
 
   if (ctx.dryRun) {
@@ -268,7 +276,6 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     return;
   }
 
-  const myLogin = await getAuthenticatedLogin();
   let ready = selectEligibleReady(issues, {
     openIssueNumbers,
     allIssueNumbers,

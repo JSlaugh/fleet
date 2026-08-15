@@ -14,6 +14,7 @@ import { budgetStatus } from "./budget.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
+import { refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { ReadyIssue } from "../github/github.ts";
 import { type HistoryQuery, queryHistory } from "../store/history.ts";
 import { logError } from "../log.ts";
@@ -85,10 +86,16 @@ export class FleetLoop {
     };
   }
 
+  /** Boot-only: force-refresh the heartbeat on this daemon's own stalled tickets before the first cycle, so a quick restart's recovery window never looks stale to a peer. */
+  async refreshBootHeartbeats(): Promise<void> {
+    await refreshStalledHeartbeatsOnBoot(this.ctx);
+  }
+
   async cycle(): Promise<void> {
     this.flagStalled();
     this.updatePauseState();
     this.recoverStalled();
+    await refreshOwnHeartbeats(this.ctx);
     for (const project of this.config.projects) {
       try {
         await cycleProject(this.ctx, project);

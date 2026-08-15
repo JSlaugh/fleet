@@ -48,6 +48,7 @@ export function makeFleetConfig(patch: Partial<FleetConfig> = {}): FleetConfig {
     replyWaitMinutes: 60,
     limitResumeSlackMinutes: 5,
     limitDefaultBackoffMinutes: 300,
+    staleClaimMinutes: 45,
     usageWindowHours: 5,
     budgetLightThreshold: 0.85,
     dataDir: ".fleet",
