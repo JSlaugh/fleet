@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectConfig } from "@fleet/shared";
@@ -25,6 +25,18 @@ function makeTempDir(prefix: string): string {
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" });
+}
+
+/** JSON is valid YAML, so this sidesteps YAML-quoting headaches in fixtures. */
+function commitFleetYaml(project: ProjectConfig, spec: unknown): void {
+  writeFileSync(join(project.repoPath, "fleet.yaml"), JSON.stringify(spec));
+  git(project.repoPath, ["add", "fleet.yaml"]);
+  git(project.repoPath, ["commit", "-q", "-m", "add fleet.yaml"]);
+  git(project.repoPath, ["push", "-q", "origin", project.defaultBranch]);
+}
+
+function nodeStep(name: string, script: string): { name: string; run: string } {
+  return { name, run: `"${process.execPath}" -e "${script}"` };
 }
 
 /** A real `origin` bare repo plus a real working clone with one commit on `main`, pushed. */
@@ -107,6 +119,82 @@ describe("createWorktree", () => {
       expect(second.path).toBe(first.path);
       expect(existsSync(join(second.path, "scratch.txt"))).toBe(false);
       expect(git(second.path, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()).toBe("fleet/103");
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe("createWorktree with fleet.yaml", () => {
+  it(
+    "runs fleet.yaml's steps in order and ignores setupCommand entirely when fleet.yaml is present",
+    async () => {
+      const project = setupProject();
+      project.setupCommand = `"${process.execPath}" -e "require('fs').writeFileSync('should-not-run.txt','x')"`;
+      commitFleetYaml(project, {
+        setup: [
+          nodeStep("step-one", "require('fs').writeFileSync('order.txt','1')"),
+          nodeStep("step-two", "require('fs').appendFileSync('order.txt','2')"),
+        ],
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 201, worktreeRoot);
+
+      expect(readFileSync(join(wt.path, "order.txt"), "utf8")).toBe("12");
+      expect(existsSync(join(wt.path, "should-not-run.txt"))).toBe(false);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "runs the profile matching a fleet:type:<name> label, falling back to default steps otherwise",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: {
+          default: [nodeStep("default-step", "require('fs').writeFileSync('default.txt','ok')")],
+          frontend: [nodeStep("frontend-step", "require('fs').writeFileSync('frontend.txt','ok')")],
+        },
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const defaultWt = await createWorktree(project, 202, worktreeRoot, ["fleet:ready"]);
+      expect(existsSync(join(defaultWt.path, "default.txt"))).toBe(true);
+      expect(existsSync(join(defaultWt.path, "frontend.txt"))).toBe(false);
+
+      const frontendWt = await createWorktree(project, 203, worktreeRoot, ["fleet:ready", "fleet:type:frontend"]);
+      expect(existsSync(join(frontendWt.path, "frontend.txt"))).toBe(true);
+      expect(existsSync(join(frontendWt.path, "default.txt"))).toBe(false);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "names the failing step when a setup step fails",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: [nodeStep("build-storybook", "process.exit(3)")],
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      await expect(createWorktree(project, 204, worktreeRoot)).rejects.toThrow(/setup step "build-storybook" failed/);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "fails the claim on a malformed fleet.yaml instead of silently falling back to setupCommand",
+    async () => {
+      const project = setupProject();
+      project.setupCommand = `"${process.execPath}" -e "require('fs').writeFileSync('should-not-run.txt','x')"`;
+      writeFileSync(join(project.repoPath, "fleet.yaml"), "setup: not-a-list-or-map\n");
+      git(project.repoPath, ["add", "fleet.yaml"]);
+      git(project.repoPath, ["commit", "-q", "-m", "add malformed fleet.yaml"]);
+      git(project.repoPath, ["push", "-q", "origin", project.defaultBranch]);
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      await expect(createWorktree(project, 205, worktreeRoot)).rejects.toThrow(/fleet\.yaml is invalid/);
     },
     TEST_TIMEOUT,
   );

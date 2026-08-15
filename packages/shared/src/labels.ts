@@ -15,6 +15,13 @@ export const LIGHT_LABEL = "fleet:light";
 
 export const PLAN_LABEL = "fleet:plan";
 
+/** Prefix for the per-repo, fleet.yaml-declared setup-profile labels — never added to `ALL_FLEET_LABELS` since these are per-repo, not global. */
+export const FLEET_TYPE_LABEL_PREFIX = "fleet:type:";
+
+export function typeLabel(name: string): string {
+  return `${FLEET_TYPE_LABEL_PREFIX}${name}`;
+}
+
 export const ALL_FLEET_LABELS: { name: string; color: string; description: string }[] = [
   { name: FLEET_LABELS.ready, color: "0e8a16", description: "Eligible for pickup by a fleet worker" },
   { name: FLEET_LABELS.inProgress, color: "fbca04", description: "A fleet worker session is on it" },

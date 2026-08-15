@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ProjectConfig } from "@fleet/shared";
+import { selectSetupProfile, type ProjectConfig } from "@fleet/shared";
+import { readBuildSpec } from "./buildspec.ts";
 import { run, runShell } from "./exec.ts";
 import { log } from "../log.ts";
 
@@ -13,6 +14,7 @@ export async function createWorktree(
   project: ProjectConfig,
   issueNumber: number,
   worktreeRoot: string,
+  issueLabels: string[] = [],
 ): Promise<Worktree> {
   const branch = `fleet/${issueNumber}`;
   const path = join(worktreeRoot, project.name, String(issueNumber));
@@ -29,7 +31,22 @@ export async function createWorktree(
     `origin/${project.defaultBranch}`,
   ]);
 
-  if (project.setupCommand) {
+  // A repo-declared fleet.yaml wins outright over the operator's setupCommand
+  // for this claim — no silent fallback, so a malformed spec fails loudly here
+  // rather than quietly running (or skipping) the old setup path.
+  const spec = readBuildSpec(path);
+  if (spec) {
+    const { profile, steps, warning } = selectSetupProfile(spec, issueLabels);
+    if (warning) log("worktree", `${project.name}#${issueNumber}: ${warning}`);
+    for (const step of steps) {
+      log("worktree", `${project.name}#${issueNumber}: running setup step "${step.name}" (profile "${profile}")`);
+      try {
+        await runShell(step.run, path);
+      } catch (err) {
+        throw new Error(`setup step "${step.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } else if (project.setupCommand) {
     log("worktree", `${project.name}#${issueNumber}: running setup: ${project.setupCommand}`);
     await runShell(project.setupCommand, path);
   }

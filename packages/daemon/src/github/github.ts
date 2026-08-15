@@ -6,10 +6,14 @@ import {
   PRIORITY_LABELS,
   boardStatusFromLabels,
   priorityOf,
+  profileNames,
+  typeLabel,
   type BoardTicket,
   type ProjectConfig,
 } from "@fleet/shared";
+import { readBuildSpec } from "./buildspec.ts";
 import { run, runJson } from "./exec.ts";
+import { log, logError } from "../log.ts";
 
 const STATUS_MARKER = "<!-- fleet-status -->";
 
@@ -451,6 +455,30 @@ export async function ensureLabels(project: ProjectConfig): Promise<void> {
       "--repo", project.githubRepo,
       "--color", label.color,
       "--description", label.description,
+      "--force",
+    ]);
+  }
+
+  // Type labels are per-repo (driven by that repo's own fleet.yaml), so they
+  // never join ALL_FLEET_LABELS — reading the main checkout after a fetch is
+  // acceptable here since init-labels is a one-off command, not the claim path.
+  await run("git", ["-C", project.repoPath, "fetch", "origin", project.defaultBranch], { allowFailure: true });
+  let spec;
+  try {
+    spec = readBuildSpec(project.repoPath);
+  } catch (err) {
+    logError("labels", `${project.name}: fleet.yaml is invalid — skipping type-label creation`, err);
+    return;
+  }
+  if (!spec) return;
+
+  for (const name of profileNames(spec)) {
+    log("labels", `${project.name}: creating type label for fleet.yaml profile "${name}"`);
+    await run("gh", [
+      "label", "create", typeLabel(name),
+      "--repo", project.githubRepo,
+      "--color", "c5def5",
+      "--description", `Route this ticket to the "${name}" fleet.yaml setup profile`,
       "--force",
     ]);
   }
