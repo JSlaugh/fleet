@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { mergeMcpConfig } from "./sync-templates.ts";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { makeProject } from "./test-support.ts";
+import { mergeMcpConfig, syncTemplates } from "./sync-templates.ts";
 
 const FLEET_ENTRY = {
   command: "pnpm",
@@ -54,5 +58,53 @@ describe("mergeMcpConfig", () => {
     const first = mergeMcpConfig(undefined, FLEET_ENTRY);
     const second = mergeMcpConfig(first, FLEET_ENTRY);
     expect(JSON.parse(second)).toEqual(JSON.parse(first));
+  });
+});
+
+describe("syncTemplates", () => {
+  const repoDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of repoDirs.splice(0)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stamps the skill and both issue forms into a project's working tree", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+
+    await syncTemplates([makeProject({ repoPath })]);
+
+    expect(existsSync(join(repoPath, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
+
+    const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
+    expect(readdirSync(issueTemplateDir).sort()).toEqual(["fleet-plan.yml", "fleet-task.yml"]);
+
+    const taskForm = readFileSync(join(issueTemplateDir, "fleet-task.yml"), "utf8");
+    expect(taskForm).toContain("name: Fleet task");
+    expect(taskForm).toContain("id: problem");
+
+    const planForm = readFileSync(join(issueTemplateDir, "fleet-plan.yml"), "utf8");
+    expect(planForm).toContain("name: Fleet plan (epic)");
+  });
+
+  it("overwrites previously stamped issue forms on rerun", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+    const project = makeProject({ repoPath });
+
+    await syncTemplates([project]);
+    const destPath = join(repoPath, ".github", "ISSUE_TEMPLATE", "fleet-task.yml");
+    const first = readFileSync(destPath, "utf8");
+
+    await syncTemplates([project]);
+    const second = readFileSync(destPath, "utf8");
+
+    expect(second).toEqual(first);
+  });
+
+  it("skips a project whose repoPath does not exist", async () => {
+    await expect(syncTemplates([makeProject({ repoPath: join(tmpdir(), "fleet-sync-missing-project") })])).resolves.toBeUndefined();
   });
 });

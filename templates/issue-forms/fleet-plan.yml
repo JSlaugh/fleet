@@ -1,0 +1,34 @@
+name: Fleet plan (epic)
+description: File an epic for fleet to decompose into child tickets.
+title: "[Fleet epic]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Epics filed here get no status label — a human reviews and adds `fleet:plan` (and eventually `fleet:ready`) before a fleet worker touches it, matching the existing curation flow for planned work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / goal
+      description: What this epic should accomplish and why.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope boundaries
+      description: What's explicitly out of scope, if known.
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: Add the matching label yourself (fleet:p1 / fleet:p2 / fleet:p3) — not applied automatically.
+      options:
+        - "P1 - highest"
+        - "P2 - default"
+        - "P3 - low"
+      default: 1
+    validations:
+      required: true

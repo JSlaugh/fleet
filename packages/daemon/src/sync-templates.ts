@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ProjectConfig } from "@fleet/shared";
@@ -7,6 +7,7 @@ import { log, logError } from "./log.ts";
 const TEMPLATES_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..", "templates");
 const SKILL_TEMPLATE_PATH = join(TEMPLATES_DIR, "fleet-backlog", "SKILL.md");
 const MCP_TEMPLATE_PATH = join(TEMPLATES_DIR, "mcp.json.example");
+const ISSUE_FORMS_DIR = join(TEMPLATES_DIR, "issue-forms");
 
 const BOM = String.fromCharCode(0xfeff);
 
@@ -47,6 +48,18 @@ function syncSkill(project: ProjectConfig): string {
   return destPath;
 }
 
+function syncIssueForms(project: ProjectConfig): string[] {
+  const destDir = join(project.repoPath, ".github", "ISSUE_TEMPLATE");
+  mkdirSync(destDir, { recursive: true });
+  const written: string[] = [];
+  for (const fileName of readdirSync(ISSUE_FORMS_DIR)) {
+    const destPath = join(destDir, fileName);
+    writeFileSync(destPath, readFileSync(join(ISSUE_FORMS_DIR, fileName), "utf8"));
+    written.push(destPath);
+  }
+  return written;
+}
+
 function syncMcpJson(project: ProjectConfig, fleetEntryTemplate: Record<string, unknown>): string {
   const destPath = join(project.repoPath, ".mcp.json");
   const existingRaw = existsSync(destPath) ? readFileSync(destPath, "utf8") : undefined;
@@ -65,6 +78,9 @@ export async function syncTemplates(projects: ProjectConfig[]): Promise<void> {
       continue;
     }
     log("sync-templates", `wrote ${syncSkill(project)}`);
+    for (const destPath of syncIssueForms(project)) {
+      log("sync-templates", `wrote ${destPath}`);
+    }
     try {
       log("sync-templates", `wrote ${syncMcpJson(project, fleetEntryTemplate)}`);
     } catch (err) {
