@@ -16,6 +16,7 @@ import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
 import {
   dependencyStatus,
   getIssueComments,
+  getPushCollaborators,
   listFleetIssues,
   listIssueStates,
   parseDependsOn,
@@ -24,7 +25,7 @@ import {
   type ReadyIssue,
 } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
-import { log } from "../log.ts";
+import { log, logError } from "../log.ts";
 import { addressComments } from "./comments.ts";
 import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
@@ -82,6 +83,58 @@ export function selectEligibleReady(
 
     const { blockedBy } = dependencyStatus(parseDependsOn(issue.body), opts.openIssueNumbers, opts.allIssueNumbers);
     return blockedBy.length === 0;
+  });
+}
+
+/**
+ * The contributor floor: `issues` whose author has push access to the repo,
+ * per `collaborators`. Anyone can open an issue, and `fleet:ready` on it is
+ * all it takes to get a worker with Bash access on the operator's machine
+ * running against it — this is the last line of defense against that. A
+ * skipped issue is logged once (via `alreadyLogged`, `LoopContext`-owned so
+ * it survives across cycles) rather than every cycle it sits in `fleet:ready`
+ * un-actioned.
+ */
+export function selectCollaboratorAuthored(
+  issues: ReadyIssue[],
+  collaborators: ReadonlySet<string>,
+  opts: { projectName: string; alreadyLogged: Set<string> },
+): ReadyIssue[] {
+  return issues.filter((issue) => {
+    if (collaborators.has(issue.author)) return true;
+    const scope = key(opts.projectName, issue.number);
+    if (!opts.alreadyLogged.has(scope)) {
+      opts.alreadyLogged.add(scope);
+      log("loop", `${scope}: author @${issue.author} is not a repo collaborator with push access — skipping claim`);
+    }
+    return false;
+  });
+}
+
+/**
+ * Fetches the repo's push collaborators (via `getPushCollaborators`'s
+ * per-repo, daemon-lifetime cache — already paid for by mid-flight comment
+ * ingestion in `comments.ts`, so an already-checked repo costs no extra `gh`
+ * call here) and applies the contributor floor. A lookup failure fails
+ * closed: every ready issue is held for this cycle rather than claimed on an
+ * unverified author, and the next cycle retries.
+ */
+export async function applyContributorFloor(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issues: ReadyIssue[],
+): Promise<ReadyIssue[]> {
+  if (issues.length === 0) return issues;
+  let collaborators: Set<string>;
+  try {
+    collaborators = await getPushCollaborators(project);
+  } catch (err) {
+    logError("loop", `${project.name}: could not verify issue authors against repo collaborators — holding all claims this cycle`, err);
+    return [];
+  }
+  return selectCollaboratorAuthored(issues, collaborators, {
+    projectName: project.name,
+    alreadyLogged: ctx.contributorFloorSkipsLogged,
   });
 }
 
@@ -206,6 +259,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     getRecord: (issueNumber) => ctx.state.get(project.name, issueNumber),
     projectName: project.name,
   });
+  ready = await applyContributorFloor(ctx, project, ready);
 
   const gate = computeBudgetGate(ctx);
   if (gate.level === "blocked") {

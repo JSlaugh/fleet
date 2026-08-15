@@ -48,6 +48,8 @@ export class FleetLoop {
   /** Resolvers for sessions parked after reporting `blocked`; `undefined` releases the park without a reply. */
   private readonly replyWaiters = new Map<string, (message: string | undefined) => void>();
   private readonly boardCache = new Map<string, BoardTicket[]>();
+  /** `project#issue` keys already logged as skipped for a non-collaborator author — logged once per issue, not once per cycle. */
+  private readonly contributorFloorSkipsLogged = new Set<string>();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
@@ -76,6 +78,7 @@ export class FleetLoop {
       stopping: this.stopping,
       replyWaiters: this.replyWaiters,
       boardCache: this.boardCache,
+      contributorFloorSkipsLogged: this.contributorFloorSkipsLogged,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
       isShuttingDown: () => this.shuttingDown,

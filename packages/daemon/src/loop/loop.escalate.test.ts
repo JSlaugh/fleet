@@ -160,7 +160,7 @@ describe("reportRunFailure — routing a PostCompletionError", () => {
     await reportRunFailure(
       internals.ctx,
       project,
-      { number: 7, title: "issue 7", body: "", labels: [] },
+      { number: 7, title: "issue 7", body: "", labels: [], author: "collab-author" },
       "failed",
       new PostCompletionError("the worker completed successfully (commits exist on `fleet/7`) but the push/PR pipeline failed: non-fast-forward"),
     );
@@ -173,7 +173,7 @@ describe("reportRunFailure — routing a PostCompletionError", () => {
   it("still auto-elevates a plain error (e.g. a crashed SDK session)", async () => {
     const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
 
-    await reportRunFailure(internals.ctx, project, { number: 7, title: "issue 7", body: "", labels: [] }, "failed", new Error("SDK crashed"));
+    await reportRunFailure(internals.ctx, project, { number: 7, title: "issue 7", body: "", labels: [], author: "collab-author" }, "failed", new Error("SDK crashed"));
 
     expect(github.escalateToElevated).toHaveBeenCalledWith(project, 7);
     expect(state.get("alpha", 7)?.autoElevated).toBe(true);

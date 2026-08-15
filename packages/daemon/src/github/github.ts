@@ -22,6 +22,8 @@ export interface ReadyIssue {
   title: string;
   body: string;
   labels: string[];
+  /** Issue-opener's login — the contributor-floor check filters claims on this. Empty for synthetic issues built for a resume, where the original author isn't tracked. */
+  author: string;
 }
 
 interface FleetIssue extends ReadyIssue {
@@ -34,6 +36,7 @@ interface GhIssueJson {
   body: string;
   labels: { name: string }[];
   url: string;
+  author: { login: string };
 }
 
 interface RestComment {
@@ -57,7 +60,7 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
     "issue", "list",
     "--repo", project.githubRepo,
     "--state", "open",
-    "--json", "number,title,body,labels,url",
+    "--json", "number,title,body,labels,url,author",
     "--limit", "100",
   ]);
   return issues
@@ -67,6 +70,7 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
       body: issue.body ?? "",
       labels: issue.labels.map((l) => l.name),
       url: issue.url,
+      author: issue.author?.login ?? "",
     }))
     .filter((issue) => issue.labels.some((l) => l.startsWith("fleet:")))
     .sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels) || a.number - b.number);

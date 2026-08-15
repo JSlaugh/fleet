@@ -45,6 +45,8 @@ export interface LoopContext {
   readonly replyWaiters: Map<string, (message: string | undefined) => void>;
   /** Last polled board tickets, per project. */
   readonly boardCache: Map<string, BoardTicket[]>;
+  /** `project#issue` keys already logged as skipped for a non-collaborator author — logged once per issue, not once per cycle. */
+  readonly contributorFloorSkipsLogged: Set<string>;
   emitBoard(): void;
   getProject(name: string): ProjectConfig | undefined;
 }

@@ -1,7 +1,7 @@
 import type { FleetConfig, ProjectConfig, WorkHoursReserveConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord, makeTempState } from "../test-support.ts";
-import { healStaleReadyLabels, processTicket } from "./claim.ts";
+import { applyContributorFloor, healStaleReadyLabels, processTicket, selectCollaboratorAuthored } from "./claim.ts";
 import { FleetLoop } from "./loop.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
@@ -11,6 +11,9 @@ vi.mock("../github/github.ts", async (importActual) => ({
   toBoardTicket: vi.fn(() => null),
   swapLabel: vi.fn(async () => {}),
   getIssueComments: vi.fn(async () => []),
+  // `makeIssue`'s default author is "collab-author" — this keeps existing
+  // claim-flow tests passing the contributor floor without opting in per test.
+  getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
 }));
 
 vi.mock("../github/worktree.ts", () => ({
@@ -242,6 +245,154 @@ describe("cycleProject work-hours reserve", () => {
     await loop.cycle();
 
     expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
+  });
+});
+
+describe("cycleProject contributor floor", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.mocked(github.getPushCollaborators).mockClear();
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.mocked(github.listFleetIssues).mockReset();
+  });
+
+  function loggedLines(): string[] {
+    return logSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it("does not claim a ready issue authored by a non-collaborator", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"], { author: "mallory" })]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
+    expect(loggedLines().some((l) => l.includes("alpha#1") && l.includes("@mallory") && l.includes("not a repo collaborator"))).toBe(
+      true,
+    );
+  });
+
+  it("applies the same floor to a fleet:plan issue", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:plan", "fleet:ready"], { author: "mallory" })]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
+  });
+
+  it("claims a collaborator-authored issue normally, including one authored by the operator's own bot account", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"], { author: "collab-author" })]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("checks collaborators once per cycle, not once per ready issue", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([
+      issue(1, ["fleet:ready"], { author: "collab-author" }),
+      issue(2, ["fleet:ready"], { author: "collab-author" }),
+      issue(3, ["fleet:ready"], { author: "mallory" }),
+    ]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(github.getPushCollaborators).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-log an already-skipped issue on a later cycle", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"], { author: "mallory" })]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+    expect(loggedLines().some((l) => l.includes("not a repo collaborator"))).toBe(true);
+
+    logSpy.mockClear();
+    await loop.cycle();
+    expect(loggedLines().some((l) => l.includes("not a repo collaborator"))).toBe(false);
+  });
+
+  it("holds all claims for the project when the collaborator lookup fails, and retries next cycle", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(github.getPushCollaborators).mockRejectedValueOnce(new Error("gh: rate limited"));
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"], { author: "collab-author" })]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+    expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("could not verify issue authors"))).toBe(true);
+
+    errorSpy.mockRestore();
+    logSpy.mockClear();
+    await loop.cycle();
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+});
+
+describe("selectCollaboratorAuthored", () => {
+  it("keeps an issue authored by a push collaborator", () => {
+    const picked = selectCollaboratorAuthored([issue(1, ["fleet:ready"], { author: "alice" })], new Set(["alice"]), {
+      projectName: "alpha",
+      alreadyLogged: new Set(),
+    });
+    expect(picked.map((i) => i.number)).toEqual([1]);
+  });
+
+  it("excludes an issue authored by a non-collaborator", () => {
+    const picked = selectCollaboratorAuthored([issue(1, ["fleet:ready"], { author: "mallory" })], new Set(["alice"]), {
+      projectName: "alpha",
+      alreadyLogged: new Set(),
+    });
+    expect(picked).toEqual([]);
+  });
+
+  it("logs a skip only the first time a given issue is seen", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const alreadyLogged = new Set<string>();
+    const opts = { projectName: "alpha", alreadyLogged };
+
+    selectCollaboratorAuthored([issue(1, ["fleet:ready"], { author: "mallory" })], new Set(["alice"]), opts);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+
+    selectCollaboratorAuthored([issue(1, ["fleet:ready"], { author: "mallory" })], new Set(["alice"]), opts);
+    expect(logSpy).toHaveBeenCalledTimes(1);
+
+    logSpy.mockRestore();
+  });
+});
+
+describe("applyContributorFloor", () => {
+  beforeEach(() => {
+    vi.mocked(github.getPushCollaborators).mockClear();
+  });
+
+  it("skips the collaborator lookup entirely when there are no issues to check", async () => {
+    const ctx = makeCtx();
+
+    const picked = await applyContributorFloor(ctx, project, []);
+
+    expect(picked).toEqual([]);
+    expect(github.getPushCollaborators).not.toHaveBeenCalled();
+  });
+
+  it("holds all issues and logs an error when the lookup fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(github.getPushCollaborators).mockRejectedValueOnce(new Error("gh: rate limited"));
+    const ctx = makeCtx();
+
+    const picked = await applyContributorFloor(ctx, project, [issue(1, ["fleet:ready"], { author: "collab-author" })]);
+
+    expect(picked).toEqual([]);
+    expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("could not verify issue authors"))).toBe(true);
+    errorSpy.mockRestore();
   });
 });
 
