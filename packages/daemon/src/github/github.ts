@@ -500,10 +500,18 @@ export interface PrApprovalReview {
   submittedAt: string;
 }
 
-/** Every review on the PR, unfiltered — auto-merge needs the latest state per reviewer, not just what's new since a watermark. */
+/**
+ * Every review on the PR, unfiltered — auto-merge needs the latest state per
+ * reviewer, not just what's new since a watermark. Paginated: an older
+ * outstanding CHANGES_REQUESTED must not fall off a truncated first page and
+ * go unseen by the auto-merge approval check.
+ */
 export async function getPrReviews(project: ProjectConfig, prUrl: string): Promise<PrApprovalReview[]> {
   const prNumber = issueNumberFromUrl(prUrl);
-  const rawReviews = await runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]);
+  const rawReviews = await runJson<GhReview[]>("gh", [
+    "api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`,
+    "--paginate",
+  ]);
   return rawReviews.map((r) => ({ author: r.user?.login ?? "unknown", state: r.state, submittedAt: r.submitted_at }));
 }
 
@@ -514,21 +522,33 @@ export interface PrCheck {
 
 /**
  * `gh pr checks` exits non-zero whenever a check is pending/failing (and when
- * there are no checks at all), so this always allows failure and falls back to
- * an empty list rather than throwing — a PR with zero checks reported is
- * meant to read as "nothing blocking", not as an error.
+ * there are no checks at all), so this always allows failure — a PR with zero
+ * checks reported is meant to read as "nothing blocking", not as an error.
+ * But that "no checks" case must stay distinguishable from a genuine fetch
+ * failure (rate limit, auth hiccup, network error): both can leave `stdout`
+ * empty, and silently mapping *any* empty/unparseable output to `[]` would
+ * make auto-merge read a transient `gh` failure as "checks are green" for an
+ * action that isn't reversible. Only gh's own "no checks reported" message on
+ * stderr is treated as the real zero-checks case; anything else throws so the
+ * caller treats it the same as a failed reviews/mergeable fetch — skip this
+ * candidate, retry next cycle.
  */
 export async function getPrChecks(project: ProjectConfig, prUrl: string): Promise<PrCheck[]> {
-  const { stdout } = await run(
+  const { stdout, stderr } = await run(
     "gh",
     ["pr", "checks", prUrl, "--repo", project.githubRepo, "--json", "name,bucket"],
     { allowFailure: true },
   );
-  try {
-    return JSON.parse(stdout.trim() || "[]") as PrCheck[];
-  } catch {
-    return [];
+  const trimmed = stdout.trim();
+  if (trimmed) {
+    try {
+      return JSON.parse(trimmed) as PrCheck[];
+    } catch (err) {
+      throw new Error(`could not parse \`gh pr checks\` output: ${trimmed}`, { cause: err });
+    }
   }
+  if (/no checks reported/i.test(stderr)) return [];
+  throw new Error(`\`gh pr checks\` produced no output${stderr.trim() ? `: ${stderr.trim()}` : ""}`);
 }
 
 let authenticatedLoginPromise: Promise<string> | undefined;

@@ -25,7 +25,7 @@ vi.mock("../github/worktree.ts", () => ({
 }));
 
 vi.mock("../github/exec.ts", () => ({
-  run: vi.fn(async () => ({ stdout: "" })),
+  run: vi.fn(async () => ({ stdout: "", stderr: "" })),
 }));
 
 vi.mock("../store/transcripts.ts", () => ({
