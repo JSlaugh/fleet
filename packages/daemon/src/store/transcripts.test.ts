@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { copyTicketTranscripts, sanitizeCwd } from "./transcripts.ts";
 
 function tempDir(prefix: string): string {
@@ -17,11 +18,7 @@ describe("sanitizeCwd", () => {
 });
 
 describe("copyTicketTranscripts", () => {
-  const record = {
-    project: "alpha",
-    issueNumber: 7,
-    worktreePath: "/tmp/wt/7",
-  };
+  const record = makeRecord({ issueNumber: 7, worktreePath: "/tmp/wt/7" });
 
   it("copies every session transcript from the sanitized-cwd source directory into the archive", () => {
     const claudeProjectsRoot = tempDir("fleet-transcripts-src-");

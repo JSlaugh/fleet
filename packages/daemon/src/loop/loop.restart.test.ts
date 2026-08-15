@@ -1,11 +1,9 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "./loop.ts";
-import { StateStore } from "../store/state.ts";
 
 vi.mock("../github/github.ts", () => ({
   createPullRequest: vi.fn(),
@@ -21,61 +19,29 @@ vi.mock("../github/github.ts", () => ({
 
 const github = await import("../github/github.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
+/** This file's ticket is issue 7 throughout; keep a local wrapper with those defaults over the shared factory. */
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber: 7,
     issueTitle: "issue 7",
     branch: "fleet/7",
     worktreePath: "/tmp/wt/7",
     sessionId: "sess-7",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 3,
     sessionLive: true,
     autoResumed: true,
     ...patch,
-  };
+  });
 }
 
 /** A `FleetLoop` over a throwaway data dir, plus handles on its private maps. */
 function makeLoop(seed?: TicketRecord) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-restart-"));
-  const state = new StateStore(dataDir);
+  const { dataDir, state } = makeTempState("fleet-restart-");
   if (seed) state.upsert(seed);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, false);
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const internals = loop as unknown as {
     live: Map<string, { abortController: AbortController; sessionId?: string }>;
     running: Map<string, Promise<void>>;

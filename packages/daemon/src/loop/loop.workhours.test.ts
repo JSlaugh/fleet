@@ -1,5 +1,6 @@
 import { WORK_DAYS, type FleetConfig, type WorkDay, type WorkHoursReserveConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
+import { makeCtx, makeFleetConfig } from "../test-support.ts";
 import { computeWorkHoursReserveGate, computeWorkHoursReserveWindow, workHoursReserveStatus } from "./workHoursReserve.ts";
 import type { LoopContext } from "./context.ts";
 
@@ -75,27 +76,8 @@ describe("computeWorkHoursReserveWindow", () => {
   });
 });
 
-function config(overrides: Partial<FleetConfig> = {}): FleetConfig {
-  return {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir: ".fleet",
-    projects: [],
-    ...overrides,
-  };
-}
-
 function ctxWith(configOverrides: Partial<FleetConfig> = {}): LoopContext {
-  return { config: config(configOverrides) } as unknown as LoopContext;
+  return makeCtx({ config: makeFleetConfig(configOverrides) });
 }
 
 // A window spanning a full day-plus so it always contains "now" no matter when

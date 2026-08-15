@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FleetConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { makeCtx, makeFleetConfig, makeRecord } from "../test-support.ts";
 import { budgetStatus, computeBudgetGate, recordSpend } from "./budget.ts";
 import type { LoopContext } from "./context.ts";
 import { StateStore } from "../store/state.ts";
@@ -21,42 +22,12 @@ afterEach(() => {
   }
 });
 
-function config(overrides: Partial<FleetConfig> = {}): FleetConfig {
-  return {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir: ".fleet",
-    projects: [],
-    ...overrides,
-  };
-}
-
 function ctxWith(state: StateStore, configOverrides: Partial<FleetConfig> = {}): LoopContext {
-  return { config: config(configOverrides), state } as unknown as LoopContext;
+  return makeCtx({ config: makeFleetConfig(configOverrides), state });
 }
 
 function ticket(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
-    issueNumber: 1,
-    issueTitle: "issue 1",
-    branch: "fleet/1",
-    worktreePath: "/tmp/wt/1",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    costUsd: 0,
-    ...patch,
-  };
+  return makeRecord({ issueNumber: 1, issueTitle: "issue 1", branch: "fleet/1", worktreePath: "/tmp/wt/1", ...patch });
 }
 
 describe("computeBudgetGate", () => {

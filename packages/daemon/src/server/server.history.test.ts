@@ -1,66 +1,33 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig, TicketRecord } from "@fleet/shared";
-import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import type { ClosedTicketRecord, HistoryResponse } from "@fleet/shared";
+import { describe, expect, it } from "vitest";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
-import { HistoryStore, StateStore } from "../store/state.ts";
+import { HistoryStore } from "../store/state.ts";
 
-const projectAlpha: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
-
-const projectBeta: ProjectConfig = { ...projectAlpha, name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" };
+const projectAlpha = makeProject();
+const projectBeta = makeProject({ name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" });
 
 function closedRecord(patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
-  const record: TicketRecord = {
-    project: "alpha",
+  const record = makeRecord({
     issueNumber: 1,
     issueTitle: "A ticket",
     branch: "fleet/1",
     worktreePath: "/tmp/wt/1",
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
     lastActivityAt: "2026-01-01T00:30:00.000Z",
     costUsd: 1,
-  };
+  });
   return { ...record, closedAt: "2026-01-01T01:00:00.000Z", prState: "MERGED", ...patch };
 }
 
 function makeApp(seedHistory: ClosedTicketRecord[] = []) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-history-"));
+  const { dataDir, state } = makeTempState("fleet-server-history-");
   const history = new HistoryStore(dataDir);
   for (const record of seedHistory) history.add(record);
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [projectAlpha, projectBeta],
-  };
-  const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
+  const config = makeFleetConfig({ dataDir, projects: [projectAlpha, projectBeta] });
+  const approvals = makeApprovals();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   return createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build") });
 }

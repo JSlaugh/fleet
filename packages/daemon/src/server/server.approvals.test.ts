@@ -1,59 +1,21 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
+import { makeFleetConfig, makeProject, makeTempState, postJson } from "../test-support.ts";
 import { ApprovalManager } from "../session/approvals.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
-import { StateStore } from "../store/state.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
 /** Wires a real `ApprovalManager` (not stubbed) so requesting/resolving approvals actually settles promises. */
 function makeApp() {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-approvals-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
+  const { dataDir, state } = makeTempState("fleet-server-approvals-");
+  const config = makeFleetConfig({ dataDir, projects: [project] });
   const approvals = new ApprovalManager();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const app = createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build") });
   return { app, approvals };
 }
-
-const post = (app: ReturnType<typeof makeApp>["app"], path: string, body: unknown) =>
-  app.request(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
 
 describe("GET /api/approvals", () => {
   it("lists nothing when there are no pending approvals", async () => {
@@ -94,7 +56,7 @@ describe("POST /api/approvals/:id", () => {
     });
     const id = approvals.list()[0]?.id;
 
-    const res = await post(app, `/api/approvals/${id}`, { decision: "allow" });
+    const res = await postJson(app, `/api/approvals/${id}`, { decision: "allow" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
@@ -113,7 +75,7 @@ describe("POST /api/approvals/:id", () => {
     });
     const id = approvals.list()[0]?.id;
 
-    const res = await post(app, `/api/approvals/${id}`, { decision: "deny" });
+    const res = await postJson(app, `/api/approvals/${id}`, { decision: "deny" });
 
     expect(res.status).toBe(200);
     await expect(outcome).resolves.toEqual({ allowed: false, message: undefined });
@@ -131,7 +93,7 @@ describe("POST /api/approvals/:id", () => {
     });
     const id = approvals.list()[0]?.id;
 
-    const res = await post(app, `/api/approvals/${id}`, { decision: "answer", message: "use option A" });
+    const res = await postJson(app, `/api/approvals/${id}`, { decision: "answer", message: "use option A" });
 
     expect(res.status).toBe(200);
     // The route only sets `allowed: true` for `decision === "allow"` — an
@@ -141,19 +103,19 @@ describe("POST /api/approvals/:id", () => {
 
   it("400s on an invalid decision", async () => {
     const { app } = makeApp();
-    const res = await post(app, "/api/approvals/whatever", { decision: "maybe" });
+    const res = await postJson(app, "/api/approvals/whatever", { decision: "maybe" });
     expect(res.status).toBe(400);
   });
 
   it("400s when answering without a message", async () => {
     const { app } = makeApp();
-    const res = await post(app, "/api/approvals/whatever", { decision: "answer" });
+    const res = await postJson(app, "/api/approvals/whatever", { decision: "answer" });
     expect(res.status).toBe(400);
   });
 
   it("404s for an approval that doesn't exist (already settled or timed out)", async () => {
     const { app } = makeApp();
-    const res = await post(app, "/api/approvals/nope", { decision: "allow" });
+    const res = await postJson(app, "/api/approvals/nope", { decision: "allow" });
     expect(res.status).toBe(404);
   });
 });

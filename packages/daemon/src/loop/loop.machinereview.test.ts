@@ -1,13 +1,9 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { machineReviewLine } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 import type { MachineReviewOutcome } from "../session/review.ts";
-import { StateStore } from "../store/state.ts";
 
 vi.mock("../github/github.ts", () => ({
   createPullRequest: vi.fn(),
@@ -39,63 +35,28 @@ const github = await import("../github/github.ts");
 const worktreeMod = await import("../github/worktree.ts");
 const review = await import("../session/review.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: true,
-  autoMerge: false,
-  mergeMethod: "squash",
-  model: "claude-sonnet-5",
-  lightModel: "claude-haiku-4-5",
-};
+const project = makeProject({ machineReview: true, model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber: 7,
     issueTitle: "issue 7",
     branch: "fleet/7",
     worktreePath: "/tmp/wt/7",
     sessionId: "sess-7",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 3,
     ...patch,
-  };
+  });
 }
 
 const issue = { number: 7, title: "issue 7", body: "body", labels: [] };
 const worktree = { path: "/tmp/wt/7", branch: "fleet/7" };
 
 function makeLoop(seed?: TicketRecord, opts: { dryRun?: boolean } = {}) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-machinereview-"));
-  const state = new StateStore(dataDir);
+  const { dataDir, state } = makeTempState("fleet-machinereview-");
   if (seed) state.upsert(seed);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, opts.dryRun ?? false);
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), opts.dryRun ?? false);
   const internals = loop as unknown as {
     machineReviewGate: (
       p: ProjectConfig,
@@ -204,7 +165,7 @@ describe("machineReviewGate", () => {
   });
 
   it("never runs when the project opts out", async () => {
-    const optedOut: ProjectConfig = { ...project, machineReview: false };
+    const optedOut = makeProject({ model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
     const { state, internals } = makeLoop(record());
 
     const gate = await internals.machineReviewGate(optedOut, issue, worktree, { costUsd: 0 });

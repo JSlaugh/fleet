@@ -1,22 +1,20 @@
 import type { TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { pickReviewCandidates, shouldActOnFeedback, shouldClearConflictGuard, shouldResumeForConflict } from "./reviews.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber,
     issueTitle: `issue ${issueNumber}`,
     branch: `fleet/${issueNumber}`,
     worktreePath: `/tmp/wt/${issueNumber}`,
     sessionId: `sess-${issueNumber}`,
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 1,
     prUrl: `https://github.com/acme/alpha/pull/${issueNumber}`,
     ...patch,
-  };
+  });
 }
 
 const project = { name: "alpha" };

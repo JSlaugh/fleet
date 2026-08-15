@@ -1,21 +1,19 @@
-import type { TicketRecord, TicketStatus } from "@fleet/shared";
+import type { TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { pickAutoResumable } from "./recovery.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber,
     issueTitle: `issue ${issueNumber}`,
     branch: `fleet/${issueNumber}`,
     worktreePath: `/tmp/wt/${issueNumber}`,
     sessionId: `sess-${issueNumber}`,
-    status: "stalled" as TicketStatus,
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
+    status: "stalled",
     costUsd: 1,
     ...patch,
-  };
+  });
 }
 
 const project = { name: "alpha", maxConcurrent: 2 };

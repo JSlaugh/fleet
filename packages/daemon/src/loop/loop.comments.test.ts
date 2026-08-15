@@ -1,14 +1,11 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { WorkerSession } from "../session/worker.ts";
 import { addressComments, buildCommentPrompt, pickCommentCandidates } from "./comments.ts";
 import type { LoopContext } from "./context.ts";
 import { FleetLoop } from "./loop.ts";
-import { StateStore } from "../store/state.ts";
+import type { StateStore } from "../store/state.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
@@ -23,35 +20,19 @@ vi.mock("./runner.ts", () => ({
 const github = await import("../github/github.ts");
 const runner = await import("./runner.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber: 7,
     issueTitle: "issue 7",
     branch: "fleet/7",
     worktreePath: "/tmp/wt/7",
     sessionId: "sess-7",
     status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 3,
     ...patch,
-  };
+  });
 }
 
 function comment(
@@ -73,26 +54,10 @@ function fakeSession() {
 }
 
 function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore; loop: FleetLoop } {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-comments-"));
-  const state = new StateStore(dataDir);
+  const { dataDir, state } = makeTempState("fleet-comments-");
   if (seed) state.upsert(seed);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, false);
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const ctx = (loop as unknown as { ctx: LoopContext }).ctx;
   return { ctx, state, loop };
 }

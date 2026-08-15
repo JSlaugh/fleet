@@ -1,14 +1,11 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeCtx as makeLoopCtx, makeFleetConfig, makeProject, makeRecord } from "../test-support.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext } from "./context.ts";
 import { recoverStalled } from "./recovery.ts";
 import { addressReviews } from "./reviews.ts";
-import { StateStore } from "../store/state.ts";
+import type { StateStore } from "../store/state.ts";
 
 // These exercise the exact race the daemon-shutdown review flagged: `cycle()`
 // snapshots `paused` once at the top of a cycle and threads it through several
@@ -55,79 +52,34 @@ vi.mock("../github/worktree.ts", () => ({
 
 const github = await import("../github/github.ts");
 
-const project: ProjectConfig = {
-	name: "alpha",
-	repoPath: "/repo/alpha",
-	githubRepo: "acme/alpha",
-	maxInReview: 3,
-	defaultBranch: "main",
-	maxConcurrent: 2,
-	planChildrenReady: false,
-	autoElevateOnFailure: true,
-	autoAddressReviews: true,
-	machineReview: false,
-	autoMerge: false,
-	mergeMethod: "squash",
-};
+const project = makeProject({ maxConcurrent: 2 });
 
+/** This file's ticket is issue 7 throughout; keep a local wrapper with those defaults over the shared factory. */
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-	return {
-		project: "alpha",
+	return makeRecord({
 		issueNumber: 7,
 		issueTitle: "issue 7",
 		branch: "fleet/7",
 		worktreePath: "/tmp/wt/7",
 		sessionId: "sess-7",
 		status: "stalled",
-		startedAt: "2026-01-01T00:00:00.000Z",
-		lastActivityAt: "2026-01-01T00:00:00.000Z",
 		costUsd: 1,
 		prUrl: "https://github.com/acme/alpha/pull/7",
 		...patch,
-	};
+	});
 }
 
-/** A minimal, hand-built `LoopContext` — no `FleetLoop` needed since these test plain functions that take it directly. */
+/** A `LoopContext` from the shared factory, with a caller-controlled `isShuttingDown`. */
 function makeCtx(
 	shuttingDown: boolean,
 	seed?: TicketRecord,
 ): { ctx: LoopContext; state: StateStore } {
-	const dataDir = mkdtempSync(join(tmpdir(), "fleet-shutdown-race-"));
-	const state = new StateStore(dataDir);
-	if (seed) state.upsert(seed);
-	const ctx: LoopContext = {
-		config: {
-			pollIntervalSeconds: 60,
-			dashboardPort: 4400,
-			worktreeRoot: "/tmp/wt",
-			stalledAfterMinutes: 10,
-			ticketTimeoutMinutes: 30,
-			approvalTimeoutMinutes: 10,
-			replyWaitMinutes: 60,
-			limitResumeSlackMinutes: 5,
-			limitDefaultBackoffMinutes: 300,
-			usageWindowHours: 5,
-			budgetLightThreshold: 0.85,
-			dataDir,
-			projects: [project],
-		},
-		state,
-		history: undefined as never,
-		dataDirPath: dataDir,
-		approvals: { request: vi.fn() } as unknown as ApprovalManager,
-		dryRun: false,
-		once: false,
-		running: new Map(),
-		live: new Map(),
-		restarting: new Set(),
-		stopping: new Set(),
-		replyWaiters: new Map(),
-		boardCache: new Map(),
-		emitBoard: () => {},
-		getProject: (name) => (name === "alpha" ? project : undefined),
+	const ctx = makeLoopCtx({
+		config: makeFleetConfig({ projects: [project] }),
 		isShuttingDown: () => shuttingDown,
-	};
-	return { ctx, state };
+	});
+	if (seed) ctx.state.upsert(seed);
+	return { ctx, state: ctx.state };
 }
 
 beforeEach(() => {

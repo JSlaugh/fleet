@@ -1,33 +1,12 @@
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
 import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
-import type { LoopContext } from "./context.ts";
+import { makeCtx as makeLoopCtx, makeProject } from "../test-support.ts";
 import { makeCanUseTool } from "./runner.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: true,
-  autoMerge: false,
-  mergeMethod: "squash",
-  model: "claude-sonnet-5",
-};
+const project = makeProject({ machineReview: true, model: "claude-sonnet-5" });
 
 function makeCtx(opts: { once?: boolean } = {}) {
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const ctx = {
-    config: { approvalTimeoutMinutes: 10 } as FleetConfig,
-    approvals,
-    once: opts.once ?? false,
-  } as unknown as LoopContext;
-  return { approvals, canUseTool: makeCanUseTool(ctx, project, 7) };
+  const ctx = makeLoopCtx({ once: opts.once ?? false });
+  return { approvals: ctx.approvals, canUseTool: makeCanUseTool(ctx, project, 7) };
 }
 
 const options = { signal: new AbortController().signal, toolUseID: "tool-1" };

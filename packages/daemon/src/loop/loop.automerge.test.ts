@@ -1,9 +1,6 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { LoopContext } from "./context.ts";
 import {
   autoMergeReady,
@@ -14,7 +11,7 @@ import {
   pickAutoMergeCandidates,
 } from "./automerge.ts";
 import { FleetLoop } from "./loop.ts";
-import { StateStore } from "../store/state.ts";
+import type { StateStore } from "../store/state.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
@@ -28,60 +25,27 @@ vi.mock("../github/github.ts", async (importActual) => ({
 
 const github = await import("../github/github.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 2,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: true,
-  approvers: ["alice"],
-  mergeMethod: "squash",
-};
+const project = makeProject({ maxConcurrent: 2, autoMerge: true, approvers: ["alice"] });
 
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber: 7,
     issueTitle: "issue 7",
     branch: "fleet/7",
     worktreePath: "/tmp/wt/7",
     sessionId: "sess-7",
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 3,
     prUrl: "https://github.com/acme/alpha/pull/7",
     ...patch,
-  };
+  });
 }
 
 function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore } {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-automerge-"));
-  const state = new StateStore(dataDir);
+  const { dataDir, state } = makeTempState("fleet-automerge-");
   if (seed) state.upsert(seed);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, false);
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const ctx = (loop as unknown as { ctx: LoopContext }).ctx;
   return { ctx, state };
 }

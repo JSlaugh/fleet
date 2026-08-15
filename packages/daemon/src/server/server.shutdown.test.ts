@@ -1,47 +1,16 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
+import type { ProjectConfig } from "@fleet/shared";
 import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeTempState, postJson } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
-import { StateStore } from "../store/state.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project: ProjectConfig = makeProject();
 
 function makeApp() {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-shutdown-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
+  const { dataDir, state } = makeTempState("fleet-server-shutdown-");
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const approvals = makeApprovals();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const exit = vi.fn();
   const app = createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build"), exit });
@@ -52,17 +21,10 @@ function makeApp() {
   return { app, state, loop, exit, internals };
 }
 
-const post = (app: ReturnType<typeof makeApp>["app"], body: unknown) =>
-  app.request("/api/daemon/shutdown", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
 describe("POST /api/daemon/shutdown", () => {
   it("rejects a mode that isn't drain or now", async () => {
     const { app, exit } = makeApp();
-    const res = await post(app, { mode: "later" });
+    const res = await postJson(app, "/api/daemon/shutdown", { mode: "later" });
     expect(res.status).toBe(400);
     expect(exit).not.toHaveBeenCalled();
   });
@@ -70,7 +32,7 @@ describe("POST /api/daemon/shutdown", () => {
   it("drain mode pauses immediately and exits once nothing is running", async () => {
     const { app, state, exit } = makeApp();
 
-    const res = await post(app, { mode: "drain" });
+    const res = await postJson(app, "/api/daemon/shutdown", { mode: "drain" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, mode: "drain" });
@@ -92,7 +54,7 @@ describe("POST /api/daemon/shutdown", () => {
       }),
     );
 
-    const res = await post(app, { mode: "now" });
+    const res = await postJson(app, "/api/daemon/shutdown", { mode: "now" });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, mode: "now" });
@@ -106,10 +68,10 @@ describe("POST /api/daemon/shutdown", () => {
     const { app, internals, exit } = makeApp();
     internals.running.set("alpha#7", new Promise<void>(() => {}));
 
-    const first = await post(app, { mode: "drain" });
+    const first = await postJson(app, "/api/daemon/shutdown", { mode: "drain" });
     expect(first.status).toBe(200);
 
-    const second = await post(app, { mode: "now" });
+    const second = await postJson(app, "/api/daemon/shutdown", { mode: "now" });
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: string };
     expect(body.error).toMatch(/already in progress/);

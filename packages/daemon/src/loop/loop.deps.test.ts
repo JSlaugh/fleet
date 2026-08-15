@@ -1,5 +1,5 @@
-import type { TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { selectEligibleReady } from "./claim.ts";
 import type { ReadyIssue } from "../github/github.ts";
 
@@ -24,21 +24,6 @@ function opts(patch: Partial<Parameters<typeof selectEligibleReady>[1]> = {}) {
     isRunning: notRunning,
     getRecord: noRecord,
     projectName: "alpha",
-    ...patch,
-  };
-}
-
-function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
-    issueNumber: 1,
-    issueTitle: "issue 1",
-    branch: "fleet/1",
-    worktreePath: "/tmp/wt/1",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    costUsd: 0,
     ...patch,
   };
 }
@@ -135,7 +120,7 @@ describe("selectEligibleReady", () => {
     it("excludes a cleanly-labeled ready issue whose record already shows review", () => {
       const picked = selectEligibleReady(
         [issue(62)],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }) }),
+        opts({ getRecord: () => makeRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }) }),
       );
       expect(picked).toEqual([]);
     });
@@ -143,7 +128,7 @@ describe("selectEligibleReady", () => {
     it("excludes a cleanly-labeled ready issue whose record already shows needs-input", () => {
       const picked = selectEligibleReady(
         [issue(62)],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "needs-input" }) }),
+        opts({ getRecord: () => makeRecord({ status: "needs-input" }) }),
       );
       expect(picked).toEqual([]);
     });
@@ -151,7 +136,7 @@ describe("selectEligibleReady", () => {
     it("excludes a ready issue whose record carries a prUrl even if status looks earlier", () => {
       const picked = selectEligibleReady(
         [issue(62)],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "running", prUrl: "https://github.com/acme/alpha/pull/72" }) }),
+        opts({ getRecord: () => makeRecord({ status: "running", prUrl: "https://github.com/acme/alpha/pull/72" }) }),
       );
       expect(picked).toEqual([]);
     });
@@ -159,7 +144,7 @@ describe("selectEligibleReady", () => {
     it("does not exclude a stalled record — stall recovery must stay separate from new claims", () => {
       const picked = selectEligibleReady(
         [issue(62)],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "stalled" }) }),
+        opts({ getRecord: () => makeRecord({ status: "stalled" }) }),
       );
       expect(picked.map((i) => i.number)).toEqual([62]);
     });
@@ -167,7 +152,7 @@ describe("selectEligibleReady", () => {
     it("claims normally once auto-escalation moves an issue back to ready+elevate after a failed run", () => {
       const picked = selectEligibleReady(
         [issue(62, { labels: ["fleet:ready", "fleet:elevate"] })],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "failed", autoElevated: true }) }),
+        opts({ getRecord: () => makeRecord({ status: "failed", autoElevated: true }) }),
       );
       expect(picked.map((i) => i.number)).toEqual([62]);
     });
@@ -178,7 +163,7 @@ describe("selectEligibleReady", () => {
       // see the record guard's prUrl check above.
       const picked = selectEligibleReady(
         [issue(62)],
-        opts({ getRecord: () => record({ issueNumber: 62, status: "restarting", prUrl: undefined }) }),
+        opts({ getRecord: () => makeRecord({ status: "restarting", prUrl: undefined }) }),
       );
       expect(picked.map((i) => i.number)).toEqual([62]);
     });
