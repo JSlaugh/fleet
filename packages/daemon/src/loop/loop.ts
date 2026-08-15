@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import type { BoardTicket, ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig } from "@fleet/shared";
+import type { BoardTicket, BudgetStatus, ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { cleanupFinished, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
+import { budgetStatus } from "./budget.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
@@ -111,6 +112,10 @@ export class FleetLoop {
 
   getPausedProjects(): string[] {
     return pausedProjectNames(this.ctx);
+  }
+
+  getBudgetStatus(): BudgetStatus | undefined {
+    return budgetStatus(this.ctx);
   }
 
   async drain(): Promise<void> {

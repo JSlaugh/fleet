@@ -229,6 +229,9 @@ describe("FleetConfigSchema", () => {
     expect(parsed.limitResumeSlackMinutes).toBe(5);
     expect(parsed.limitDefaultBackoffMinutes).toBe(300);
     expect(parsed.dataDir).toBe(".fleet");
+    expect(parsed.windowBudgetUsd).toBeUndefined();
+    expect(parsed.usageWindowHours).toBe(5);
+    expect(parsed.budgetLightThreshold).toBe(0.85);
   });
 
   it("requires worktreeRoot to be non-empty", () => {
@@ -249,6 +252,8 @@ describe("FleetConfigSchema", () => {
       ["replyWaitMinutes", 0],
       ["limitResumeSlackMinutes", -1],
       ["limitDefaultBackoffMinutes", 0],
+      ["windowBudgetUsd", -1],
+      ["usageWindowHours", 0],
     ];
     for (const [field, belowMin] of cases) {
       const result = FleetConfigSchema.safeParse({ ...minimalFleetConfig, [field]: belowMin });
@@ -258,6 +263,17 @@ describe("FleetConfigSchema", () => {
 
   it("allows limitResumeSlackMinutes of 0 (its min is 0, unlike the other duration fields)", () => {
     expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, limitResumeSlackMinutes: 0 }).success).toBe(true);
+  });
+
+  it("keeps budgetLightThreshold within [0, 1]", () => {
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, budgetLightThreshold: -0.1 }).success).toBe(false);
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, budgetLightThreshold: 1.1 }).success).toBe(false);
+    expect(FleetConfigSchema.safeParse({ ...minimalFleetConfig, budgetLightThreshold: 1 }).success).toBe(true);
+  });
+
+  it("accepts an explicit windowBudgetUsd, enabling the budget gate", () => {
+    const parsed = FleetConfigSchema.parse({ ...minimalFleetConfig, windowBudgetUsd: 8 });
+    expect(parsed.windowBudgetUsd).toBe(8);
   });
 
   it("rejects non-integer values for integer fields", () => {

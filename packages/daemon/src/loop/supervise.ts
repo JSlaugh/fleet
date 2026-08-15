@@ -5,6 +5,7 @@ import { upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { extendPause, handlePlanLimit } from "./pause.ts";
+import { recordSpend } from "./budget.ts";
 import {
   buildMachineReviewFixPrompt,
   buildMachineReviewPrompt,
@@ -31,9 +32,11 @@ export async function supervise(
 ): Promise<void> {
   for (;;) {
     const turn = await session.nextResult(ctx.config.ticketTimeoutMinutes * 60_000);
+    const newCostUsd = base.costUsd + session.costUsd;
+    recordSpend(ctx, project.name, issue.number, newCostUsd);
     ctx.state.update(project.name, issue.number, {
       sessionId: session.sessionId,
-      costUsd: base.costUsd + session.costUsd,
+      costUsd: newCostUsd,
       model: session.model,
       modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
     });
@@ -168,8 +171,10 @@ export async function machineReviewGate(
   // carries it; the immediate update makes it visible on the dashboard now.
   base.costUsd += outcome.costUsd;
   base.modelUsage = mergeModelUsage(base.modelUsage, outcome.modelUsage);
+  const reviewedCostUsd = (ctx.state.get(project.name, issue.number)?.costUsd ?? 0) + outcome.costUsd;
+  recordSpend(ctx, project.name, issue.number, reviewedCostUsd);
   ctx.state.update(project.name, issue.number, {
-    costUsd: (ctx.state.get(project.name, issue.number)?.costUsd ?? 0) + outcome.costUsd,
+    costUsd: reviewedCostUsd,
     modelUsage: base.modelUsage,
   });
 

@@ -128,4 +128,16 @@ export interface FleetState {
   paused?: boolean;
   /** Project names an operator has individually paused: survives a restart, cleared only by an explicit resume. A name no longer in config is harmlessly ignored. */
   pausedProjects?: string[];
+  /**
+   * Daemon-wide rolling spend ledger backing the `windowBudgetUsd` claim gate:
+   * one entry per recorded cost delta (never a running total), timestamped so
+   * the window sum can be recomputed and stale entries pruned. Absent/empty
+   * when the budget feature is unused.
+   */
+  spendLedger?: SpendLedgerEntry[];
+}
+
+export interface SpendLedgerEntry {
+  at: string;
+  usd: number;
 }

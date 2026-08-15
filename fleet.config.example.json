@@ -8,6 +8,9 @@
   "replyWaitMinutes": 60,
   "limitResumeSlackMinutes": 5,
   "limitDefaultBackoffMinutes": 300,
+  "windowBudgetUsd": 8,
+  "usageWindowHours": 5,
+  "budgetLightThreshold": 0.85,
   "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
   "dataDir": ".fleet",
   "projects": [

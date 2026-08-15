@@ -231,6 +231,73 @@ describe("StateStore", () => {
       expect(readFileSync(join(dataDir, "state.json"), "utf8")).toBe(before);
     });
   });
+
+  describe("spend ledger", () => {
+    it("appendSpend adds an entry and getWindowSpend sums entries within the window", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendSpend(1.5, 5);
+      store.appendSpend(2.5, 5);
+      expect(store.getWindowSpend(5)).toBeCloseTo(4);
+    });
+
+    it("is a no-op for a zero or negative delta", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendSpend(0, 5);
+      store.appendSpend(-1, 5);
+      expect(store.getWindowSpend(5)).toBe(0);
+    });
+
+    it("prunes entries older than the window when read", () => {
+      const dataDir = tempDataDir();
+      writeFileSync(
+        join(dataDir, "state.json"),
+        JSON.stringify({
+          tickets: [],
+          spendLedger: [
+            { at: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(), usd: 10 },
+            { at: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(), usd: 2 },
+          ],
+        }),
+      );
+      const store = new StateStore(dataDir);
+      expect(store.getWindowSpend(5)).toBe(2);
+    });
+
+    it("persists the pruned ledger back to disk on read, so it stays tiny", () => {
+      const dataDir = tempDataDir();
+      writeFileSync(
+        join(dataDir, "state.json"),
+        JSON.stringify({
+          tickets: [],
+          spendLedger: [{ at: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(), usd: 10 }],
+        }),
+      );
+      const store = new StateStore(dataDir);
+      store.getWindowSpend(5);
+      const onDisk = JSON.parse(readFileSync(join(dataDir, "state.json"), "utf8")) as { spendLedger?: unknown[] };
+      expect(onDisk.spendLedger).toEqual([]);
+    });
+
+    it("prunes stale entries on append too", () => {
+      const dataDir = tempDataDir();
+      writeFileSync(
+        join(dataDir, "state.json"),
+        JSON.stringify({
+          tickets: [],
+          spendLedger: [{ at: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(), usd: 10 }],
+        }),
+      );
+      const store = new StateStore(dataDir);
+      store.appendSpend(1, 5);
+      expect(store.getWindowSpend(5)).toBe(1);
+    });
+
+    it("persists across instances reading the same data dir", () => {
+      const dataDir = tempDataDir();
+      new StateStore(dataDir).appendSpend(3, 5);
+      expect(new StateStore(dataDir).getWindowSpend(5)).toBe(3);
+    });
+  });
 });
 
 describe("HistoryStore", () => {

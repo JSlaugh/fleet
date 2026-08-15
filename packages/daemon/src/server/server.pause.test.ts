@@ -34,6 +34,8 @@ function makeApp(projects: ProjectConfig[] = [project]) {
     replyWaitMinutes: 60,
     limitResumeSlackMinutes: 5,
     limitDefaultBackoffMinutes: 300,
+    usageWindowHours: 5,
+    budgetLightThreshold: 0.85,
     dataDir,
     projects,
   };

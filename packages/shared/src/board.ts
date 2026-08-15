@@ -46,6 +46,16 @@ export interface HistoryResponse {
   aggregates: HistoryAggregates;
 }
 
+export type BudgetGateLevel = "none" | "light-only" | "blocked";
+
+/** Rolling-window spend gate status for the board payload — present only when `windowBudgetUsd` is configured. */
+export interface BudgetStatus {
+  spentUsd: number;
+  budgetUsd: number;
+  windowHours: number;
+  gate: BudgetGateLevel;
+}
+
 export interface BoardTicket {
   project: string;
   issueNumber: number;

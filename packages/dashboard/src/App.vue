@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { BOARD_COLUMNS, type BoardStatus, type BoardTicket, type PendingApproval } from "@fleet/shared";
+import { BOARD_COLUMNS, type BoardStatus, type BoardTicket, type BudgetStatus, type PendingApproval } from "@fleet/shared";
 import {
   connectBoardSocket,
   fetchApprovals,
@@ -25,6 +25,7 @@ const pausedUntil = ref<string>();
 const paused = ref(false);
 const pausedProjects = ref<string[]>([]);
 const runningCount = ref(0);
+const budget = ref<BudgetStatus>();
 const pauseToggling = ref(false);
 const projectPauseToggling = ref<string>();
 const error = ref<string>();
@@ -52,6 +53,7 @@ async function load() {
     paused.value = board.paused;
     pausedProjects.value = board.pausedProjects;
     runningCount.value = board.runningCount;
+    budget.value = board.budget;
     error.value = undefined;
     if (selected.value) {
       selected.value = board.tickets.find(
@@ -150,6 +152,17 @@ async function toggleProjectPaused(project: string) {
   }
 }
 
+const budgetClass = computed(() => {
+  switch (budget.value?.gate) {
+    case "blocked":
+      return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200";
+    case "light-only":
+      return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200";
+    default:
+      return "text-neutral-500";
+  }
+});
+
 function isSelected(ticket: BoardTicket): boolean {
   return selected.value?.project === ticket.project && selected.value?.issueNumber === ticket.issueNumber;
 }
@@ -228,6 +241,14 @@ onUnmounted(() => {
       >
         {{ view === "board" ? "History" : "Board" }}
       </button>
+      <span
+        v-if="budget"
+        class="rounded-full px-2.5 py-1 text-xs font-medium"
+        :class="budgetClass"
+        :title="`Self-estimated spend over the trailing ${budget.windowHours}h vs configured budget`"
+      >
+        ${{ budget.spentUsd.toFixed(2) }} / ${{ budget.budgetUsd.toFixed(2) }} ({{ budget.windowHours }}h)
+      </span>
       <button
         type="button"
         class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
