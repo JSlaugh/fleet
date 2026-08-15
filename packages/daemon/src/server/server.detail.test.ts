@@ -1,67 +1,35 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ClosedTicketRecord, FleetConfig, ProjectConfig, TicketDetail, TicketRecord } from "@fleet/shared";
-import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import type { ClosedTicketRecord, TicketDetail, TicketRecord } from "@fleet/shared";
+import { describe, expect, it } from "vitest";
+import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
-import { HistoryStore, StateStore } from "../store/state.ts";
+import { HistoryStore } from "../store/state.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
 function closedRecord(patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
-  const record: TicketRecord = {
-    project: "alpha",
+  const record = makeRecord({
     issueNumber: 9,
     issueTitle: "Archived ticket",
     branch: "fleet/9",
     worktreePath: "/tmp/wt/9",
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
     lastActivityAt: "2026-01-01T01:00:00.000Z",
     costUsd: 4.5,
     prUrl: "https://github.com/acme/alpha/pull/9",
     lastSummary: "Did the thing.",
-  };
+  });
   return { ...record, closedAt: "2026-01-02T00:00:00.000Z", prState: "MERGED", ...patch };
 }
 
 /** Wires a real `FleetLoop` + `StateStore` over a throwaway data dir, with optional live/archived records seeded in. */
 function makeApp(opts: { seedHistory?: ClosedTicketRecord; seedState?: TicketRecord } = {}) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-detail-"));
+  const { dataDir, state } = makeTempState("fleet-server-detail-");
   if (opts.seedHistory) new HistoryStore(dataDir).add(opts.seedHistory);
-  const state = new StateStore(dataDir);
   if (opts.seedState) state.upsert(opts.seedState);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const approvals = makeApprovals();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   return createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build") });
 }
@@ -83,17 +51,15 @@ describe("GET /api/tickets/:project/:issue", () => {
   it("prefers the live state record over an archived one for the same ticket", async () => {
     const app = makeApp({
       seedHistory: closedRecord({ costUsd: 99 }),
-      seedState: {
-        project: "alpha",
+      seedState: makeRecord({
         issueNumber: 9,
         issueTitle: "Archived ticket",
         branch: "fleet/9",
         worktreePath: "/tmp/wt/9",
         status: "running",
-        startedAt: "2026-01-01T00:00:00.000Z",
         lastActivityAt: "2026-01-01T01:00:00.000Z",
         costUsd: 1,
-      },
+      }),
     });
     const res = await app.request("/api/tickets/alpha/9");
     const body = (await res.json()) as TicketDetail;
@@ -127,18 +93,16 @@ describe("GET /api/tickets/:project/:issue", () => {
     // old hardcoded status list got wrong: `review` wasn't in RESTARTABLE and
     // wasn't in the reply gate, even though the server would accept both.
     const app = makeApp({
-      seedState: {
-        project: "alpha",
+      seedState: makeRecord({
         issueNumber: 9,
         issueTitle: "In review",
         branch: "fleet/9",
         worktreePath: "/tmp/wt/9",
         status: "review",
         sessionId: "sess-9",
-        startedAt: "2026-01-01T00:00:00.000Z",
         lastActivityAt: "2026-01-01T01:00:00.000Z",
         costUsd: 1,
-      },
+      }),
     });
     const res = await app.request("/api/tickets/alpha/9");
     const body = (await res.json()) as TicketDetail;
@@ -158,17 +122,15 @@ describe("GET /api/tickets/:project/:issue", () => {
 
   it("withholds reply for a ticket with no recorded session", async () => {
     const app = makeApp({
-      seedState: {
-        project: "alpha",
+      seedState: makeRecord({
         issueNumber: 9,
         issueTitle: "Fresh",
         branch: "fleet/9",
         worktreePath: "/tmp/wt/9",
         status: "running",
-        startedAt: "2026-01-01T00:00:00.000Z",
         lastActivityAt: "2026-01-01T01:00:00.000Z",
         costUsd: 0,
-      },
+      }),
     });
     const res = await app.request("/api/tickets/alpha/9");
     const body = (await res.json()) as TicketDetail;

@@ -1,14 +1,9 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeCtx, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { pausedProjectNames } from "./board.ts";
 import { FleetLoop } from "./loop.ts";
 import { isProjectPaused } from "./pause.ts";
-import type { LoopContext } from "./context.ts";
-import { StateStore } from "../store/state.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
@@ -21,61 +16,20 @@ vi.mock("../github/github.ts", async (importActual) => ({
 
 const github = await import("../github/github.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
-const beta: ProjectConfig = { ...project, name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" };
+const beta = makeProject({ name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" });
 
 /** `dryRun: true` so cycleProject only logs what it would do — no real `gh`/git calls, no worktree/session mocking needed. */
 function makeLoop(projects: ProjectConfig[] = [project]) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-pause-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects,
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, true);
+  const { dataDir, state } = makeTempState("fleet-pause-");
+  const config = makeFleetConfig({ dataDir, projects });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), true);
   return { loop, state, config };
 }
 
 function stalledRecord(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
-    issueNumber: 62,
-    issueTitle: "issue 62",
-    branch: "fleet/62",
-    worktreePath: "/tmp/wt/62",
-    sessionId: "sess-62",
-    status: "stalled",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    costUsd: 0,
-    ...patch,
-  };
+  return makeRecord({ sessionId: "sess-62", status: "stalled", ...patch });
 }
 
 describe("FleetLoop.cycle with an operator pause", () => {
@@ -180,7 +134,7 @@ describe("FleetLoop.cycle with a per-project pause", () => {
   it("global pause overrides and covers every project regardless of per-project state", () => {
     const { loop, state } = makeLoop([project, beta]);
     loop.setPaused(true);
-    const ctx = { state, config: { projects: [project, beta] } } as unknown as LoopContext;
+    const ctx = makeCtx({ state, config: makeFleetConfig({ projects: [project, beta] }) });
     expect(isProjectPaused(ctx, "alpha")).toBe(true);
     expect(isProjectPaused(ctx, "beta")).toBe(true);
   });
@@ -189,7 +143,7 @@ describe("FleetLoop.cycle with a per-project pause", () => {
     const { state, config } = makeLoop([project, beta]);
     state.setProjectPaused("alpha", true);
     state.setProjectPaused("gamma", true); // stale — not in this config, must be filtered out
-    const ctx = { state, config } as unknown as LoopContext;
+    const ctx = makeCtx({ state, config });
 
     expect(pausedProjectNames(ctx)).toEqual(["alpha"]);
   });

@@ -1,48 +1,16 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
 import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeFleetConfig, makeProject, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
 import { createApp } from "./server.ts";
-import { StateStore } from "../store/state.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
 function makeApp() {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-daemonrestart-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects: [project],
-  };
-  const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
+  const { dataDir, state } = makeTempState("fleet-server-daemonrestart-");
+  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const approvals = makeApprovals();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const exit = vi.fn();
   const app = createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build"), exit });

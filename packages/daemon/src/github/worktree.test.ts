@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectConfig } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { makeProject } from "../test-support.ts";
 import {
   collectBranchDiff,
   collectBranchSummary,
@@ -55,20 +56,7 @@ function setupProject(): ProjectConfig {
   git(repoPath, ["remote", "add", "origin", originDir]);
   git(repoPath, ["push", "-q", "origin", "main"]);
 
-  return {
-    name: "alpha",
-    repoPath,
-    githubRepo: "acme/alpha",
-    defaultBranch: "main",
-    maxConcurrent: 1,
-    maxInReview: 3,
-    planChildrenReady: false,
-    autoElevateOnFailure: true,
-    autoAddressReviews: true,
-    machineReview: false,
-    autoMerge: false,
-    mergeMethod: "squash",
-  };
+  return makeProject({ repoPath });
 }
 
 afterEach(() => {

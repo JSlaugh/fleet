@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { JournalEntry, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { JournalEntry, TicketRecord } from "@fleet/shared";
 import { describe, expect, it, vi } from "vitest";
+import { makeProject, makeRecord } from "../test-support.ts";
 import { buildFailurePostMortem, gatherFailurePostMortem, type PostMortemInput } from "./postmortem.ts";
 
 vi.mock("../github/worktree.ts", () => ({
@@ -11,35 +12,19 @@ vi.mock("../github/worktree.ts", () => ({
 
 const worktreeMod = await import("../github/worktree.ts");
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
+/** This file's ticket is issue 7 throughout; keep a local wrapper with those defaults over the shared factory. */
 function record(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber: 7,
     issueTitle: "issue 7",
     branch: "fleet/7",
     worktreePath: "/tmp/wt/7",
     sessionId: "sess-7",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 3.5,
     ...patch,
-  };
+  });
 }
 
 const baseOpts = {

@@ -3,20 +3,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClosedTicketRecord, TicketRecord } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { HistoryStore, StateStore, trimHistory } from "./state.ts";
 
 function closed(issueNumber: number, closedAt: string, patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
-  const record: TicketRecord = {
-    project: "alpha",
+  const record = makeRecord({
     issueNumber,
     issueTitle: `issue ${issueNumber}`,
     branch: `fleet/${issueNumber}`,
     worktreePath: `/tmp/wt/${issueNumber}`,
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 1,
-  };
+  });
   return { ...record, closedAt, prState: "MERGED", ...patch };
 }
 
@@ -61,18 +59,14 @@ describe("trimHistory", () => {
 });
 
 function ticket(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
+  return makeRecord({
     issueNumber,
     issueTitle: `issue ${issueNumber}`,
     branch: `fleet/${issueNumber}`,
     worktreePath: `/tmp/wt/${issueNumber}`,
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
     costUsd: 1,
     ...patch,
-  };
+  });
 }
 
 const dataDirs: string[] = [];

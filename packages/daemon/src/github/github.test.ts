@@ -1,5 +1,5 @@
-import type { ProjectConfig } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeProject } from "../test-support.ts";
 
 vi.mock("./exec.ts", async (importActual) => ({
   ...(await importActual<typeof import("./exec.ts")>()),
@@ -22,20 +22,7 @@ const {
   readyLabelArgs,
 } = await import("./github.ts");
 
-const project = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-} satisfies ProjectConfig;
+const project = makeProject();
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -58,20 +45,7 @@ describe("priorityRank", () => {
 });
 
 describe("readyLabelArgs", () => {
-  const project = {
-    name: "alpha",
-    repoPath: "/repo/alpha",
-    githubRepo: "acme/alpha",
-    defaultBranch: "main",
-    maxConcurrent: 1,
-    maxInReview: 3,
-    planChildrenReady: false,
-    autoElevateOnFailure: true,
-    autoAddressReviews: true,
-    machineReview: false,
-    autoMerge: false,
-    mergeMethod: "squash",
-  } satisfies ProjectConfig;
+  const project = makeProject();
 
   it("removes every other fleet state label and adds fleet:ready", () => {
     expect(readyLabelArgs(project, 7)).toEqual([
@@ -90,20 +64,7 @@ describe("readyLabelArgs", () => {
 });
 
 describe("escalateLabelArgs", () => {
-  const project = {
-    name: "alpha",
-    repoPath: "/repo/alpha",
-    githubRepo: "acme/alpha",
-    defaultBranch: "main",
-    maxConcurrent: 1,
-    maxInReview: 3,
-    planChildrenReady: false,
-    autoElevateOnFailure: true,
-    autoAddressReviews: true,
-    machineReview: false,
-    autoMerge: false,
-    mergeMethod: "squash",
-  } satisfies ProjectConfig;
+  const project = makeProject();
 
   it("swaps in-progress for elevate + ready", () => {
     expect(escalateLabelArgs(project, 7)).toEqual([

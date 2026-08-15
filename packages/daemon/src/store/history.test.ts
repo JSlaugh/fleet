@@ -1,19 +1,18 @@
-import type { ClosedTicketRecord, TicketRecord } from "@fleet/shared";
+import type { ClosedTicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
+import { makeRecord } from "../test-support.ts";
 import { computeHistoryAggregates, queryHistory } from "./history.ts";
 
 function closedRecord(patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
-  const record: TicketRecord = {
-    project: "alpha",
+  const record = makeRecord({
     issueNumber: 1,
     issueTitle: "A ticket",
     branch: "fleet/1",
     worktreePath: "/tmp/wt/1",
     status: "review",
-    startedAt: "2026-01-01T00:00:00.000Z",
     lastActivityAt: "2026-01-01T00:30:00.000Z",
     costUsd: 1,
-  };
+  });
   return { ...record, closedAt: "2026-01-01T01:00:00.000Z", prState: "MERGED", ...patch };
 }
 
