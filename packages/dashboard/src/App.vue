@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { BOARD_COLUMNS, type BoardStatus, type BoardTicket, type BudgetStatus, type PendingApproval } from "@fleet/shared";
+import {
+  BOARD_COLUMNS,
+  type BoardStatus,
+  type BoardTicket,
+  type BudgetStatus,
+  type PendingApproval,
+  type WorkHoursReserveStatus,
+} from "@fleet/shared";
 import {
   connectBoardSocket,
   fetchApprovals,
@@ -26,6 +33,7 @@ const paused = ref(false);
 const pausedProjects = ref<string[]>([]);
 const runningCount = ref(0);
 const budget = ref<BudgetStatus>();
+const workHoursReserve = ref<WorkHoursReserveStatus>();
 const pauseToggling = ref(false);
 const projectPauseToggling = ref<string>();
 const error = ref<string>();
@@ -54,6 +62,7 @@ async function load() {
     pausedProjects.value = board.pausedProjects;
     runningCount.value = board.runningCount;
     budget.value = board.budget;
+    workHoursReserve.value = board.workHoursReserve;
     error.value = undefined;
     if (selected.value) {
       selected.value = board.tickets.find(
@@ -289,6 +298,13 @@ onUnmounted(() => {
       class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
     >
       Plan limit reached — paused until {{ new Date(pausedUntil).toLocaleString() }}
+    </div>
+    <div
+      v-if="workHoursReserve?.active"
+      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+    >
+      Work-hours reserve — claims held until
+      {{ workHoursReserve.releaseAt ? new Date(workHoursReserve.releaseAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "" }}
     </div>
 
     <div class="flex min-h-0 flex-1">

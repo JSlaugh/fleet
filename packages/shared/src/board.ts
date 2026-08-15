@@ -56,6 +56,13 @@ export interface BudgetStatus {
   gate: BudgetGateLevel;
 }
 
+/** Work-hours reserve status for the board payload — present only when `workHoursReserve` is configured. */
+export interface WorkHoursReserveStatus {
+  active: boolean;
+  /** ISO timestamp claims resume at — set only while `active`. */
+  releaseAt?: string;
+}
+
 export interface BoardTicket {
   project: string;
   issueNumber: number;

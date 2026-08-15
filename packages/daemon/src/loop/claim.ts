@@ -12,6 +12,7 @@ import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { isProjectPaused } from "./pause.ts";
+import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
 import {
   dependencyStatus,
   getIssueComments,
@@ -179,6 +180,15 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     project.maxInReview - inReview,
   );
   if (capacity <= 0) return;
+
+  const reserve = computeWorkHoursReserveGate(ctx);
+  if (reserve.active) {
+    log(
+      "loop",
+      `${project.name}: work-hours reserve active — holding claims until ${reserve.releaseAt?.toLocaleTimeString()}`,
+    );
+    return;
+  }
 
   let ready = selectEligibleReady(issues, {
     openIssueNumbers,

@@ -1,5 +1,13 @@
 import { EventEmitter } from "node:events";
-import type { BoardTicket, BudgetStatus, ClosedTicketRecord, FleetConfig, HistoryResponse, ProjectConfig } from "@fleet/shared";
+import type {
+  BoardTicket,
+  BudgetStatus,
+  ClosedTicketRecord,
+  FleetConfig,
+  HistoryResponse,
+  ProjectConfig,
+  WorkHoursReserveStatus,
+} from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { cleanupFinished, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
 import { budgetStatus } from "./budget.ts";
@@ -13,6 +21,7 @@ import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilitie
 import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseState } from "./pause.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
+import { workHoursReserveStatus } from "./workHoursReserve.ts";
 import { HistoryStore, StateStore } from "../store/state.ts";
 import { machineReviewGate } from "./supervise.ts";
 import { TrailingThrottle } from "../throttle.ts";
@@ -116,6 +125,10 @@ export class FleetLoop {
 
   getBudgetStatus(): BudgetStatus | undefined {
     return budgetStatus(this.ctx);
+  }
+
+  getWorkHoursReserveStatus(): WorkHoursReserveStatus | undefined {
+    return workHoursReserveStatus(this.ctx);
   }
 
   async drain(): Promise<void> {
