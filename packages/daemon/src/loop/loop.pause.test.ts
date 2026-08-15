@@ -19,6 +19,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   listIssueStates: vi.fn(async () => ({ open: new Set([7, 8]), all: new Set([7, 8]) })),
   toBoardTicket: vi.fn(() => null),
   getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
+  getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
 }));
 
 const github = await import("../github/github.ts");

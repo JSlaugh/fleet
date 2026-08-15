@@ -8,6 +8,7 @@ import { createApp } from "./server.ts";
 vi.mock("../github/github.ts", () => ({
   markReady: vi.fn(async () => {}),
   upsertStatusComment: vi.fn(async () => {}),
+  clearAssignees: vi.fn(async () => {}),
 }));
 
 const github = await import("../github/github.ts");

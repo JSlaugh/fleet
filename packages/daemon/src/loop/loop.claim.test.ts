@@ -14,6 +14,12 @@ vi.mock("../github/github.ts", async (importActual) => ({
   // `makeIssue`'s default author is "collab-author" — this keeps existing
   // claim-flow tests passing the contributor floor without opting in per test.
   getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
+  getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
+  addAssignee: vi.fn(async () => {}),
+  removeAssignee: vi.fn(async () => {}),
+  // Sole assignee by default — every existing claim-flow test wins its CAS
+  // without opting in, same as the collaborator floor default above.
+  getIssueAssignees: vi.fn(async () => ["daemon-user"]),
 }));
 
 vi.mock("../github/worktree.ts", () => ({
@@ -25,6 +31,7 @@ vi.mock("./runner.ts", () => ({
 }));
 
 const github = await import("../github/github.ts");
+const worktree = await import("../github/worktree.ts");
 
 const issue = makeIssue;
 const project = makeProject({ maxConcurrent: 5, maxInReview: 2 });
@@ -117,6 +124,17 @@ describe("cycleProject with maxInReview backpressure", () => {
     await loop.cycle();
 
     expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
+  });
+
+  it("performs no assignee mutations under --dry-run, even for an otherwise-claimable ready issue", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+    expect(github.addAssignee).not.toHaveBeenCalled();
+    expect(github.removeAssignee).not.toHaveBeenCalled();
   });
 });
 
@@ -432,13 +450,75 @@ describe("healStaleReadyLabels", () => {
 });
 
 describe("processTicket", () => {
+  beforeEach(() => {
+    vi.mocked(github.swapLabel).mockClear();
+    vi.mocked(github.addAssignee).mockClear();
+    vi.mocked(github.removeAssignee).mockClear();
+    vi.mocked(github.getIssueAssignees).mockReset().mockResolvedValue(["daemon-user"]);
+    vi.mocked(worktree.createWorktree).mockClear();
+  });
+
+  /** The CAS delay is real `setTimeout` — fake timers so tests don't actually wait ~2.5s. */
+  async function runProcessTicket(ctx: Parameters<typeof processTicket>[0], proj = project, iss = issue(62, ["fleet:ready"])) {
+    vi.useFakeTimers();
+    try {
+      const result = processTicket(ctx, proj, iss);
+      await vi.advanceTimersByTimeAsync(3_000);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   it("sets the initial comment watermark to the claim moment, so pre-claim comments (already in the first prompt) are never re-injected", async () => {
     const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
 
-    await processTicket(ctx, project, issue(62, ["fleet:ready"]));
+    await runProcessTicket(ctx);
 
     const record = ctx.state.get("alpha", 62);
     expect(record?.lastCommentHandledAt).toBeDefined();
     expect(record?.lastCommentHandledAt).toBe(record?.startedAt);
+  });
+
+  it("self-assigns before verifying the claim", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx);
+
+    expect(github.addAssignee).toHaveBeenCalledWith(project, 62, "daemon-user");
+  });
+
+  it("proceeds to claim normally when it's the sole assignee after the verify delay", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx);
+
+    expect(ctx.state.get("alpha", 62)?.status).toBe("running");
+    expect(github.removeAssignee).not.toHaveBeenCalled();
+  });
+
+  it("abandons the claim, unassigns itself, and never creates a worktree when it loses the collision tiebreak", async () => {
+    vi.mocked(github.getIssueAssignees).mockResolvedValue(["daemon-user", "alice"]);
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx);
+
+    expect(github.removeAssignee).toHaveBeenCalledWith(project, 62, "daemon-user");
+    expect(worktree.createWorktree).not.toHaveBeenCalled();
+    // Abandoned before any state record was ever written for this ticket.
+    expect(ctx.state.get("alpha", 62)).toBeUndefined();
+    // The loser must not touch the label — the winner (running the same
+    // check) owns fleet:in-progress from here.
+    expect(github.swapLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it("wins the collision tiebreak and proceeds when its login sorts lowest", async () => {
+    vi.mocked(github.getIssueAssignees).mockResolvedValue(["daemon-user", "zeta"]);
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx);
+
+    expect(github.removeAssignee).not.toHaveBeenCalled();
+    expect(ctx.state.get("alpha", 62)?.status).toBe("running");
   });
 });

@@ -1,6 +1,6 @@
 import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
-import { closeIssue, markReady, upsertStatusComment } from "../github/github.ts";
+import { clearAssignees, closeIssue, markReady, upsertStatusComment } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { resumeTicket } from "./runner.ts";
@@ -196,6 +196,11 @@ export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfi
     lastActivityAt: new Date().toISOString(),
     lastActivityNote: undefined,
   });
+  // Unassign before the label goes back to ready, so the routing rule in
+  // `selectEligibleReady` never sees a "ready" issue still assigned to
+  // whoever last claimed it — otherwise it would look permanently routed to
+  // that daemon instead of back in the shared pool.
+  await clearAssignees(project, issueNumber);
   // Label last: from here the ticket is claimable, so nothing after this may
   // write to the state record.
   await markReady(project, issueNumber);

@@ -67,6 +67,7 @@ export function makeIssue(
     body: "",
     labels,
     author: "collab-author",
+    assignees: [],
     url: `https://github.com/acme/alpha/issues/${number}`,
     ...patch,
   };

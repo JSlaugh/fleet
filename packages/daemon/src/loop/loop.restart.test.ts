@@ -15,6 +15,7 @@ vi.mock("../github/github.ts", () => ({
   swapLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
+  clearAssignees: vi.fn(async () => {}),
 }));
 
 const github = await import("../github/github.ts");
@@ -70,6 +71,13 @@ describe("restartTicket with no live session", () => {
     await loop.restartTicket("alpha", 7);
 
     expect(github.markReady).toHaveBeenCalledWith(project, 7);
+    // Unassigns before the label goes back to ready, so the fresh claim's
+    // routing rule sees the issue as unassigned rather than still routed to
+    // whoever last claimed it.
+    expect(github.clearAssignees).toHaveBeenCalledWith(project, 7);
+    const clearOrder = vi.mocked(github.clearAssignees).mock.invocationCallOrder[0] ?? Infinity;
+    const readyOrder = vi.mocked(github.markReady).mock.invocationCallOrder[0] ?? -Infinity;
+    expect(clearOrder).toBeLessThan(readyOrder);
     const updated = state.get("alpha", 7);
     expect(updated?.sessionId).toBeUndefined();
     expect(updated?.sessionLive).toBe(false);

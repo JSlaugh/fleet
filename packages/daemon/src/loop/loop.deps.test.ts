@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeRecord } from "../test-support.ts";
-import { selectEligibleReady } from "./claim.ts";
+import { resolveClaimCollision, selectEligibleReady } from "./claim.ts";
 import type { ReadyIssue } from "../github/github.ts";
 
 function issue(number: number, patch: Partial<ReadyIssue> = {}): ReadyIssue {
@@ -10,6 +10,7 @@ function issue(number: number, patch: Partial<ReadyIssue> = {}): ReadyIssue {
     body: "",
     labels: ["fleet:ready"],
     author: "collab-author",
+    assignees: [],
     ...patch,
   };
 }
@@ -25,6 +26,7 @@ function opts(patch: Partial<Parameters<typeof selectEligibleReady>[1]> = {}) {
     isRunning: notRunning,
     getRecord: noRecord,
     projectName: "alpha",
+    myLogin: "daemon-user",
     ...patch,
   };
 }
@@ -168,5 +170,68 @@ describe("selectEligibleReady", () => {
       );
       expect(picked.map((i) => i.number)).toEqual([62]);
     });
+  });
+
+  describe("assignee routing", () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    it("claims an unassigned issue", () => {
+      const picked = selectEligibleReady([issue(1, { assignees: [] })], opts());
+      expect(picked.map((i) => i.number)).toEqual([1]);
+    });
+
+    it("claims an issue assigned to this daemon", () => {
+      const picked = selectEligibleReady([issue(1, { assignees: ["daemon-user"] })], opts({ myLogin: "daemon-user" }));
+      expect(picked.map((i) => i.number)).toEqual([1]);
+    });
+
+    it("never claims an issue assigned to someone else, and logs why", () => {
+      const picked = selectEligibleReady(
+        [issue(62, { assignees: ["someone-else"] })],
+        opts({ myLogin: "daemon-user" }),
+      );
+      expect(picked).toEqual([]);
+      const lines = logSpy.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((l) => l.includes("alpha#62") && l.includes("someone-else"))).toBe(true);
+    });
+
+    it("treats an issue missing assignees data (e.g. a synthetic resume issue) as unassigned", () => {
+      const picked = selectEligibleReady([issue(1, { assignees: undefined })], opts());
+      expect(picked.map((i) => i.number)).toEqual([1]);
+    });
+  });
+});
+
+describe("resolveClaimCollision", () => {
+  it("wins when it's the sole assignee", () => {
+    expect(resolveClaimCollision("alice", ["alice"])).toBe("won");
+  });
+
+  it("wins when the assignee list is empty (nothing to collide with)", () => {
+    expect(resolveClaimCollision("alice", [])).toBe("won");
+  });
+
+  it("wins on a collision when its login sorts lowest", () => {
+    expect(resolveClaimCollision("alice", ["bob", "alice"])).toBe("won");
+  });
+
+  it("loses on a collision when its login doesn't sort lowest", () => {
+    expect(resolveClaimCollision("bob", ["bob", "alice"])).toBe("lost");
+  });
+
+  it("is order-independent", () => {
+    expect(resolveClaimCollision("bob", ["alice", "bob"])).toBe("lost");
+  });
+
+  it("dedupes a repeated login before deciding", () => {
+    expect(resolveClaimCollision("alice", ["alice", "alice"])).toBe("won");
   });
 });

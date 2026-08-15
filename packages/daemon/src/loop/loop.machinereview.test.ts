@@ -16,6 +16,7 @@ vi.mock("../github/github.ts", () => ({
   swapLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
+  clearAssignees: vi.fn(async () => {}),
 }));
 
 vi.mock("../github/worktree.ts", () => ({

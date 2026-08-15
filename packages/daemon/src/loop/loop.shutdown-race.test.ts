@@ -29,7 +29,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
 	getPrState: vi.fn(),
 	getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
 	listFleetIssues: vi.fn(async () => [
-		{ number: 7, title: "issue 7", body: "", labels: ["fleet:ready"], author: "collab-author" },
+		{ number: 7, title: "issue 7", body: "", labels: ["fleet:ready"], author: "collab-author", assignees: [] },
 	]),
 	listIssueStates: vi.fn(async () => ({
 		open: new Set([7]),
@@ -39,6 +39,10 @@ vi.mock("../github/github.ts", async (importActual) => ({
 	swapLabel: vi.fn(async () => {}),
 	toBoardTicket: vi.fn(() => null),
 	upsertStatusComment: vi.fn(async () => {}),
+	getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
+	addAssignee: vi.fn(async () => {}),
+	removeAssignee: vi.fn(async () => {}),
+	getIssueAssignees: vi.fn(async () => ["daemon-user"]),
 }));
 
 // `processTicket`/`resumeTicket` reaching `createWorktree`/`WorkerSession` for
@@ -90,8 +94,18 @@ beforeEach(() => {
 describe("cycleProject claiming vs. a live shutdown", () => {
 	it("tracks a fresh claim when not shutting down", async () => {
 		const { ctx } = makeCtx(false);
-		await cycleProject(ctx, project);
-		expect(ctx.running.has("alpha#7")).toBe(true);
+		vi.useFakeTimers();
+		try {
+			await cycleProject(ctx, project);
+			expect(ctx.running.has("alpha#7")).toBe(true);
+			// Let the CAS verify delay elapse and the tracked claim settle (it
+			// fails fast via the worktree mock throwing) so the background run
+			// can't leak a mock call into a later test.
+			await vi.advanceTimersByTimeAsync(3_000);
+			await ctx.running.get("alpha#7")?.catch(() => {});
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("does not claim once isShuttingDown() is true, even though `paused` is still false", async () => {
