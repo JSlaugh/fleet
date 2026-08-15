@@ -3,6 +3,7 @@ import { key, type LoopContext } from "./context.ts";
 import { upsertStatusComment } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { ReadyIssue } from "../github/github.ts";
+import { issueUrl, notify } from "../notify.ts";
 
 /**
  * True while claims and resumes should be skipped: either an operator-initiated
@@ -55,8 +56,14 @@ export function updatePauseState(ctx: LoopContext): void {
   }
 }
 
-/** Extends the daemon-wide plan-limit pause (never shortens an existing one). Returns the effective pause end. */
-export function extendPause(ctx: LoopContext, scope: string, limitResetAt: string | undefined): Date {
+/**
+ * Extends the daemon-wide plan-limit pause (never shortens an existing one).
+ * Returns the effective pause end. Notifies only when the pause is newly set
+ * or actually pushed later — the "already covers it" branch is a repeat hit
+ * on an unchanged pause, not a fresh event worth pinging about.
+ */
+export function extendPause(ctx: LoopContext, project: ProjectConfig, issue: Pick<ReadyIssue, "number" | "title">, limitResetAt: string | undefined): Date {
+  const scope = key(project.name, issue.number);
   const resetAt = limitResetAt ? new Date(limitResetAt) : new Date(Date.now() + ctx.config.limitDefaultBackoffMinutes * 60_000);
   const pausedUntil = new Date(resetAt.getTime() + ctx.config.limitResumeSlackMinutes * 60_000);
 
@@ -64,6 +71,12 @@ export function extendPause(ctx: LoopContext, scope: string, limitResetAt: strin
   if (!existing || pausedUntil.getTime() > Date.parse(existing)) {
     ctx.state.setPausedUntil(pausedUntil.toISOString());
     log("loop", `${scope}: plan usage limit hit — pausing daemon until ${pausedUntil.toISOString()}`);
+    void notify(ctx, "paused", project, {
+      issueNumber: issue.number,
+      title: issue.title,
+      detail: `plan usage limit hit — daemon paused until ${pausedUntil.toISOString()}`,
+      url: issueUrl(project, issue.number),
+    });
   } else {
     log("loop", `${scope}: plan usage limit hit again — existing pause until ${existing} already covers it`);
   }
@@ -84,7 +97,7 @@ export async function handlePlanLimit(
   limitResetAt: string | undefined,
 ): Promise<void> {
   const scope = key(project.name, issue.number);
-  const pausedUntil = extendPause(ctx, scope, limitResetAt);
+  const pausedUntil = extendPause(ctx, project, issue, limitResetAt);
 
   ctx.state.update(project.name, issue.number, {
     status: "stalled",

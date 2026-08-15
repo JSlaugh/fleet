@@ -1,5 +1,5 @@
-import type { ProjectConfig, TicketRecord } from "@fleet/shared";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "./loop.ts";
 
@@ -35,10 +35,10 @@ function record(patch: Partial<TicketRecord> = {}): TicketRecord {
   });
 }
 
-function makeLoop(seed?: TicketRecord) {
+function makeLoop(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
   const { dataDir, state } = makeTempState("fleet-planlimit-");
   if (seed) state.upsert(seed);
-  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
   const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const internals = loop as unknown as {
     handlePlanLimit: (p: ProjectConfig, issue: { number: number; title: string }, limitResetAt: string | undefined) => Promise<void>;
@@ -118,6 +118,39 @@ describe("handlePlanLimit", () => {
     const second = state.getPausedUntil();
 
     expect(second).toBe(first);
+  });
+
+  describe("Discord notifications", () => {
+    const notifications = { discordUrl: "https://discord.example/webhook" };
+
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts a paused notification the first time a limit hit sets the pause", async () => {
+      const { internals } = makeLoop(record(), { notifications });
+
+      await internals.handlePlanLimit(project, { number: 7, title: "issue 7" }, "2026-01-01T00:00:00.000Z");
+
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { content: string };
+      expect(body.content).toContain("Paused");
+    });
+
+    it("does not re-notify when a later hit is already covered by the existing pause", async () => {
+      const { internals } = makeLoop(record(), { notifications });
+
+      await internals.handlePlanLimit(project, { number: 7, title: "issue 7" }, "2026-01-02T00:00:00.000Z");
+      vi.mocked(fetch).mockClear();
+      await internals.handlePlanLimit(project, { number: 7, title: "issue 7" }, "2026-01-01T00:00:00.000Z");
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });
 

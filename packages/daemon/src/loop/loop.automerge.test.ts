@@ -1,5 +1,5 @@
-import type { TicketRecord } from "@fleet/shared";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FleetConfig, TicketRecord } from "@fleet/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { LoopContext } from "./context.ts";
 import {
@@ -41,10 +41,10 @@ function record(patch: Partial<TicketRecord> = {}): TicketRecord {
   });
 }
 
-function makeCtx(seed?: TicketRecord): { ctx: LoopContext; state: StateStore } {
+function makeCtx(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}): { ctx: LoopContext; state: StateStore } {
   const { dataDir, state } = makeTempState("fleet-automerge-");
   if (seed) state.upsert(seed);
-  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
   const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const ctx = (loop as unknown as { ctx: LoopContext }).ctx;
   return { ctx, state };
@@ -262,5 +262,36 @@ describe("autoMergeReady", () => {
     await expect(autoMergeReady(ctx, project, openIssues)).resolves.toBeUndefined();
 
     expect(github.mergePullRequest).not.toHaveBeenCalled();
+  });
+
+  describe("Discord notifications", () => {
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+      vi.mocked(github.mergePullRequest).mockResolvedValue(undefined);
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts an auto-merged notification once the merge succeeds", async () => {
+      const { ctx } = makeCtx(record(), { notifications: { discordUrl: "https://discord.example/webhook" } });
+
+      await autoMergeReady(ctx, project, openIssues);
+
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { content: string };
+      expect(body.content).toContain("Auto-merged");
+      expect(body.content).toContain("https://github.com/acme/alpha/pull/7");
+    });
+
+    it("does not notify without notifications configured", async () => {
+      const { ctx } = makeCtx(record());
+
+      await autoMergeReady(ctx, project, openIssues);
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });

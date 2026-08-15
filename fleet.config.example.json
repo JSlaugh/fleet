@@ -19,6 +19,10 @@
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "reserveHours": 2
   },
+  "notifications": {
+    "discordUrl": "https://discord.com/api/webhooks/000000000000000000/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "events": ["needs-input", "pr-opened", "failed", "paused", "auto-merged", "stale-released"]
+  },
   "projects": [
     {
       "name": "example",

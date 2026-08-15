@@ -12,6 +12,7 @@ import {
   type PrApprovalReview as PrReview,
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
+import { notify } from "../notify.ts";
 
 /**
  * Ticket records eligible for auto-merge evaluation this cycle: sitting in
@@ -141,5 +142,11 @@ export async function autoMergeReady(
       logError("loop", `${scope}: could not post the merged status comment`, err);
     }
     log("loop", `${scope}: auto-merged ${prUrl} (${project.mergeMethod ?? "squash"})`);
+    await notify(ctx, "auto-merged", project, {
+      issueNumber: record.issueNumber,
+      title: record.issueTitle,
+      detail: `merged (${project.mergeMethod ?? "squash"}), approved by @${approver?.author ?? "unknown"}`,
+      url: prUrl,
+    });
   }
 }

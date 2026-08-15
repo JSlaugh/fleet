@@ -1,0 +1,127 @@
+import type { NotificationsConfig } from "@fleet/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeProject } from "./test-support.ts";
+import { buildNotificationMessage, issueUrl, notify, shouldNotify, type NotifyDetail } from "./notify.ts";
+
+const project = makeProject();
+
+const detail: NotifyDetail = {
+  issueNumber: 7,
+  title: "Fix the thing",
+  detail: "need the API key",
+  url: "https://github.com/acme/alpha/issues/7",
+};
+
+describe("shouldNotify", () => {
+  it("is false with no config", () => {
+    expect(shouldNotify(undefined, "pr-opened")).toBe(false);
+  });
+
+  it("is true for every event when events is unset", () => {
+    const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook" };
+    expect(shouldNotify(config, "failed")).toBe(true);
+    expect(shouldNotify(config, "auto-merged")).toBe(true);
+  });
+
+  it("filters to only the configured events", () => {
+    const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook", events: ["failed"] };
+    expect(shouldNotify(config, "failed")).toBe(true);
+    expect(shouldNotify(config, "pr-opened")).toBe(false);
+  });
+});
+
+describe("buildNotificationMessage", () => {
+  it("includes the event label, project#issue, title, detail, and link", () => {
+    const message = buildNotificationMessage("needs-input", project, detail);
+
+    expect(message).toContain("Needs input");
+    expect(message).toContain("alpha#7 Fix the thing");
+    expect(message).toContain("need the API key");
+    expect(message).toContain("https://github.com/acme/alpha/issues/7");
+  });
+
+  it("omits an empty detail line", () => {
+    const message = buildNotificationMessage("pr-opened", project, { ...detail, detail: "" });
+
+    expect(message.split("\n")).toHaveLength(2);
+  });
+
+  it("labels every event distinctly", () => {
+    const events = ["needs-input", "pr-opened", "failed", "paused", "auto-merged", "stale-released"] as const;
+    const labels = events.map((event) => buildNotificationMessage(event, project, detail).split("\n")[0]);
+    expect(new Set(labels).size).toBe(events.length);
+  });
+});
+
+describe("issueUrl", () => {
+  it("builds a github issue link from githubRepo", () => {
+    expect(issueUrl(project, 7)).toBe("https://github.com/acme/alpha/issues/7");
+  });
+});
+
+describe("notify", () => {
+  const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook" };
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing without notifications configured", async () => {
+    await notify({ config: {}, dryRun: false, once: false }, "needs-input", project, detail);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing under --dry-run", async () => {
+    await notify({ config: { notifications: config }, dryRun: true, once: false }, "needs-input", project, detail);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing under --once", async () => {
+    await notify({ config: { notifications: config }, dryRun: false, once: true }, "needs-input", project, detail);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the event is filtered out by events", async () => {
+    const filtered: NotificationsConfig = { ...config, events: ["failed"] };
+    await notify({ config: { notifications: filtered }, dryRun: false, once: false }, "needs-input", project, detail);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("posts the built message to the webhook", async () => {
+    await notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail);
+
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/webhook", expect.objectContaining({ method: "POST" }));
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("Needs input");
+  });
+
+  it("logs once and resolves cleanly when fetch rejects — never affects the ticket path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail)).resolves.toBeUndefined();
+
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+
+  it("logs once and resolves cleanly on a non-2xx response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 500 })));
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail)).resolves.toBeUndefined();
+
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+});
