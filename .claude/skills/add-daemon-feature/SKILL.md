@@ -45,6 +45,6 @@ Each file tests one exported function, imported from its real module (not `loop.
 
 ## Adding a new test
 
-Match the existing function to a module above; if it's genuinely new behavior in that module, add cases to that module's existing `loop.*.test.ts` file rather than creating a new one. Only create a new `loop.<name>.test.ts` for a new exported function with no natural home above. There's no shared context-builder helper — each test file constructs its own minimal `LoopContext`/`StateStore`/`FleetConfig` fixture inline; copy the pattern from the test file closest to your change.
+Match the existing function to a module above; if it's genuinely new behavior in that module, add cases to that module's existing `loop.*.test.ts` file rather than creating a new one. Only create a new `loop.<name>.test.ts` for a new exported function with no natural home above. Build fixtures from the shared factories in `src/test-support.ts` (`makeProject`/`makeFleetConfig`/`makeRecord`/`makeIssue`/`makeCtx`/`makeTempState`) — never hand-roll full config/record/context literals; [[write-tests]] has the conventions.
 
 Run `pnpm test` and, since daemon logic is exactly what unit tests mock around, [[verify]]'s `pnpm daemon -- --dry-run --once` step before calling it done.

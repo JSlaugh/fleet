@@ -1,14 +1,8 @@
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import type { FleetConfig, ProjectConfig, TicketRecord, WorkHoursReserveConfig } from "@fleet/shared";
+import type { FleetConfig, ProjectConfig, WorkHoursReserveConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import { makeApprovals, makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { healStaleReadyLabels, processTicket } from "./claim.ts";
 import { FleetLoop } from "./loop.ts";
-import type { LoopContext } from "./context.ts";
-import { StateStore } from "../store/state.ts";
-import type { ReadyIssue } from "../github/github.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
@@ -29,47 +23,18 @@ vi.mock("./runner.ts", () => ({
 
 const github = await import("../github/github.ts");
 
-function issue(number: number, labels: string[]): ReadyIssue & { url: string } {
-  return { number, title: `issue ${number}`, body: "", labels, url: `https://github.com/acme/alpha/issues/${number}` };
-}
-
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 5,
-  maxInReview: 2,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const issue = makeIssue;
+const project = makeProject({ maxConcurrent: 5, maxInReview: 2 });
 
 /** `dryRun: true` so cycleProject only logs what it would do — no real `gh`/git calls, no worktree/session mocking needed. */
 function makeLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverrides: Partial<FleetConfig> = {}) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-claim-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
+  const { dataDir, state } = makeTempState("fleet-claim-");
+  const config = makeFleetConfig({
     dataDir,
     projects: [{ ...project, ...projectOverrides }],
     ...configOverrides,
-  };
-  const approvals = { request: vi.fn() } as unknown as ApprovalManager;
-  const loop = new FleetLoop(config, state, dataDir, approvals, true);
+  });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), true);
   return { loop, state };
 }
 
@@ -280,20 +245,7 @@ describe("cycleProject work-hours reserve", () => {
   });
 });
 
-function ticketRecord(patch: Partial<TicketRecord> = {}): TicketRecord {
-  return {
-    project: "alpha",
-    issueNumber: 62,
-    issueTitle: "issue 62",
-    branch: "fleet/62",
-    worktreePath: "/tmp/wt/62",
-    status: "running",
-    startedAt: "2026-01-01T00:00:00.000Z",
-    lastActivityAt: "2026-01-01T00:00:00.000Z",
-    costUsd: 0,
-    ...patch,
-  };
-}
+const reviewRecord = () => makeRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" });
 
 describe("healStaleReadyLabels", () => {
   beforeEach(() => {
@@ -301,55 +253,28 @@ describe("healStaleReadyLabels", () => {
   });
 
   it("removes a stale fleet:ready label when the record already shows review with a PR", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
-    const state = new StateStore(dataDir);
-    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
-    const ctx = { state } as unknown as LoopContext;
+    const ctx = makeCtx();
+    ctx.state.upsert(reviewRecord());
 
     await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
 
     expect(github.swapLabel).toHaveBeenCalledWith(project, 62, "fleet:ready", "fleet:review");
   });
 
-  it("does nothing when the issue isn't labeled fleet:ready", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
-    const state = new StateStore(dataDir);
-    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
-    const ctx = { state } as unknown as LoopContext;
+  it.each([
+    { name: "the issue isn't labeled fleet:ready", record: reviewRecord(), labels: ["fleet:review"] },
+    { name: "the record has no prUrl yet", record: makeRecord({ status: "review" }), labels: ["fleet:ready"] },
+    {
+      name: "the labels themselves already carry the conflict (left for the label-consistency log instead)",
+      record: reviewRecord(),
+      labels: ["fleet:ready", "fleet:review"],
+    },
+    { name: "there's no record for the issue", record: undefined, labels: ["fleet:ready"] },
+  ])("does nothing when $name", async ({ record, labels }) => {
+    const ctx = makeCtx();
+    if (record) ctx.state.upsert(record);
 
-    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:review"])]);
-
-    expect(github.swapLabel).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when the record has no prUrl yet", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
-    const state = new StateStore(dataDir);
-    state.upsert(ticketRecord({ status: "review" }));
-    const ctx = { state } as unknown as LoopContext;
-
-    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
-
-    expect(github.swapLabel).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when the labels themselves already carry the conflict (left for the label-consistency log instead)", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
-    const state = new StateStore(dataDir);
-    state.upsert(ticketRecord({ status: "review", prUrl: "https://github.com/acme/alpha/pull/72" }));
-    const ctx = { state } as unknown as LoopContext;
-
-    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready", "fleet:review"])]);
-
-    expect(github.swapLabel).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when there's no record for the issue", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-heal-"));
-    const state = new StateStore(dataDir);
-    const ctx = { state } as unknown as LoopContext;
-
-    await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
+    await healStaleReadyLabels(ctx, project, [issue(62, labels)]);
 
     expect(github.swapLabel).not.toHaveBeenCalled();
   });
@@ -357,44 +282,11 @@ describe("healStaleReadyLabels", () => {
 
 describe("processTicket", () => {
   it("sets the initial comment watermark to the claim moment, so pre-claim comments (already in the first prompt) are never re-injected", async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), "fleet-claim-watermark-"));
-    const state = new StateStore(dataDir);
-    const ctx: LoopContext = {
-      config: {
-        pollIntervalSeconds: 60,
-        dashboardPort: 4400,
-        worktreeRoot: "/tmp/wt",
-        stalledAfterMinutes: 10,
-        ticketTimeoutMinutes: 30,
-        approvalTimeoutMinutes: 10,
-        replyWaitMinutes: 60,
-        limitResumeSlackMinutes: 5,
-        limitDefaultBackoffMinutes: 300,
-        usageWindowHours: 5,
-        budgetLightThreshold: 0.85,
-        dataDir,
-        projects: [project],
-      },
-      state,
-      history: undefined as never,
-      dataDirPath: dataDir,
-      approvals: { request: vi.fn() } as unknown as ApprovalManager,
-      dryRun: false,
-      once: false,
-      running: new Map(),
-      live: new Map(),
-      restarting: new Set(),
-      stopping: new Set(),
-      replyWaiters: new Map(),
-      boardCache: new Map(),
-      emitBoard: () => {},
-      getProject: (name) => (name === "alpha" ? project : undefined),
-      isShuttingDown: () => false,
-    };
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
 
     await processTicket(ctx, project, issue(62, ["fleet:ready"]));
 
-    const record = state.get("alpha", 62);
+    const record = ctx.state.get("alpha", 62);
     expect(record?.lastCommentHandledAt).toBeDefined();
     expect(record?.lastCommentHandledAt).toBe(record?.startedAt);
   });

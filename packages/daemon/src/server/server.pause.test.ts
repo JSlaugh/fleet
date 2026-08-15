@@ -1,47 +1,16 @@
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FleetConfig, ProjectConfig } from "@fleet/shared";
-import { describe, expect, it, vi } from "vitest";
-import type { ApprovalManager } from "../session/approvals.ts";
+import type { ProjectConfig } from "@fleet/shared";
+import { describe, expect, it } from "vitest";
+import { makeApprovals, makeFleetConfig, makeProject, makeTempState, postJson } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
-import { StateStore } from "../store/state.ts";
 
-const project: ProjectConfig = {
-  name: "alpha",
-  repoPath: "/repo/alpha",
-  githubRepo: "acme/alpha",
-  defaultBranch: "main",
-  maxConcurrent: 1,
-  maxInReview: 3,
-  planChildrenReady: false,
-  autoElevateOnFailure: true,
-  autoAddressReviews: true,
-  machineReview: false,
-  autoMerge: false,
-  mergeMethod: "squash",
-};
+const project = makeProject();
 
 function makeApp(projects: ProjectConfig[] = [project]) {
-  const dataDir = mkdtempSync(join(tmpdir(), "fleet-server-pause-"));
-  const state = new StateStore(dataDir);
-  const config: FleetConfig = {
-    pollIntervalSeconds: 60,
-    dashboardPort: 4400,
-    worktreeRoot: "/tmp/wt",
-    stalledAfterMinutes: 10,
-    ticketTimeoutMinutes: 30,
-    approvalTimeoutMinutes: 10,
-    replyWaitMinutes: 60,
-    limitResumeSlackMinutes: 5,
-    limitDefaultBackoffMinutes: 300,
-    usageWindowHours: 5,
-    budgetLightThreshold: 0.85,
-    dataDir,
-    projects,
-  };
-  const approvals = { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
+  const { dataDir, state } = makeTempState("fleet-server-pause-");
+  const config = makeFleetConfig({ dataDir, projects });
+  const approvals = makeApprovals();
   const loop = new FleetLoop(config, state, dataDir, approvals, false);
   const app = createApp({ loop, state, approvals, dataDir, dashboardDist: join(dataDir, "no-dashboard-build") });
   return { app, state };
@@ -51,11 +20,7 @@ describe("POST /api/daemon/pause", () => {
   it("pauses the daemon and is reflected on GET /api/board", async () => {
     const { app, state } = makeApp();
 
-    const res = await app.request("/api/daemon/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: true }),
-    });
+    const res = await postJson(app, "/api/daemon/pause", { paused: true });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, paused: true });
@@ -69,11 +34,7 @@ describe("POST /api/daemon/pause", () => {
     const { app, state } = makeApp();
     state.setPaused(true);
 
-    const res = await app.request("/api/daemon/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: false }),
-    });
+    const res = await postJson(app, "/api/daemon/pause", { paused: false });
 
     expect(res.status).toBe(200);
     expect(state.getPaused()).toBe(false);
@@ -82,11 +43,7 @@ describe("POST /api/daemon/pause", () => {
   it("rejects a non-boolean paused value", async () => {
     const { app } = makeApp();
 
-    const res = await app.request("/api/daemon/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: "yes" }),
-    });
+    const res = await postJson(app, "/api/daemon/pause", { paused: "yes" });
 
     expect(res.status).toBe(400);
   });
@@ -111,16 +68,12 @@ describe("GET /api/board", () => {
 });
 
 describe("POST /api/projects/:name/pause", () => {
-  const beta: ProjectConfig = { ...project, name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" };
+  const beta = makeProject({ name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" });
 
   it("pauses one project and is reflected on GET /api/board without affecting the other", async () => {
     const { app, state } = makeApp([project, beta]);
 
-    const res = await app.request("/api/projects/alpha/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: true }),
-    });
+    const res = await postJson(app, "/api/projects/alpha/pause", { paused: true });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, paused: true });
@@ -135,11 +88,7 @@ describe("POST /api/projects/:name/pause", () => {
     const { app, state } = makeApp();
     state.setProjectPaused("alpha", true);
 
-    const res = await app.request("/api/projects/alpha/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: false }),
-    });
+    const res = await postJson(app, "/api/projects/alpha/pause", { paused: false });
 
     expect(res.status).toBe(200);
     expect(state.isProjectPaused("alpha")).toBe(false);
@@ -148,11 +97,7 @@ describe("POST /api/projects/:name/pause", () => {
   it("rejects a non-boolean paused value", async () => {
     const { app } = makeApp();
 
-    const res = await app.request("/api/projects/alpha/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: "yes" }),
-    });
+    const res = await postJson(app, "/api/projects/alpha/pause", { paused: "yes" });
 
     expect(res.status).toBe(400);
   });
@@ -160,11 +105,7 @@ describe("POST /api/projects/:name/pause", () => {
   it("404s for an unknown project", async () => {
     const { app } = makeApp();
 
-    const res = await app.request("/api/projects/nope/pause", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paused: true }),
-    });
+    const res = await postJson(app, "/api/projects/nope/pause", { paused: true });
 
     expect(res.status).toBe(404);
   });
