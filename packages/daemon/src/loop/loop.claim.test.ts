@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { healStaleReadyLabels } from "./claim.ts";
+import { healStaleReadyLabels, processTicket } from "./claim.ts";
 import { FleetLoop } from "./loop.ts";
 import type { LoopContext } from "./context.ts";
 import { StateStore } from "../store/state.ts";
@@ -16,6 +16,15 @@ vi.mock("../github/github.ts", async (importActual) => ({
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   toBoardTicket: vi.fn(() => null),
   swapLabel: vi.fn(async () => {}),
+  getIssueComments: vi.fn(async () => []),
+}));
+
+vi.mock("../github/worktree.ts", () => ({
+  createWorktree: vi.fn(async () => ({ path: "/tmp/wt/62", branch: "fleet/62" })),
+}));
+
+vi.mock("./runner.ts", () => ({
+  runSession: vi.fn(async () => {}),
 }));
 
 const github = await import("../github/github.ts");
@@ -210,5 +219,48 @@ describe("healStaleReadyLabels", () => {
     await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
 
     expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+});
+
+describe("processTicket", () => {
+  it("sets the initial comment watermark to the claim moment, so pre-claim comments (already in the first prompt) are never re-injected", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "fleet-claim-watermark-"));
+    const state = new StateStore(dataDir);
+    const ctx: LoopContext = {
+      config: {
+        pollIntervalSeconds: 60,
+        dashboardPort: 4400,
+        worktreeRoot: "/tmp/wt",
+        stalledAfterMinutes: 10,
+        ticketTimeoutMinutes: 30,
+        approvalTimeoutMinutes: 10,
+        replyWaitMinutes: 60,
+        limitResumeSlackMinutes: 5,
+        limitDefaultBackoffMinutes: 300,
+        dataDir,
+        projects: [project],
+      },
+      state,
+      history: undefined as never,
+      dataDirPath: dataDir,
+      approvals: { request: vi.fn() } as unknown as ApprovalManager,
+      dryRun: false,
+      once: false,
+      running: new Map(),
+      live: new Map(),
+      restarting: new Set(),
+      stopping: new Set(),
+      replyWaiters: new Map(),
+      boardCache: new Map(),
+      emitBoard: () => {},
+      getProject: (name) => (name === "alpha" ? project : undefined),
+      isShuttingDown: () => false,
+    };
+
+    await processTicket(ctx, project, issue(62, ["fleet:ready"]));
+
+    const record = state.get("alpha", 62);
+    expect(record?.lastCommentHandledAt).toBeDefined();
+    expect(record?.lastCommentHandledAt).toBe(record?.startedAt);
   });
 });

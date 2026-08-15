@@ -40,6 +40,7 @@ interface RestComment {
   id: number;
   body: string;
   user: { login: string };
+  created_at: string;
 }
 
 function listComments(project: ProjectConfig, issueNumber: number): Promise<RestComment[]> {
@@ -185,6 +186,55 @@ export async function getIssueComments(project: ProjectConfig, issueNumber: numb
   return comments
     .filter((c) => !c.body.startsWith(STATUS_MARKER))
     .map((c) => `@${c.user.login}: ${c.body}`);
+}
+
+export interface TimestampedComment {
+  author: string;
+  body: string;
+  createdAt: string;
+  isStatusComment: boolean;
+}
+
+/**
+ * Every comment on the issue with its author and timestamp — unlike
+ * `getIssueComments`, the fleet status marker is flagged rather than dropped,
+ * so a watermark-based caller can still advance past it instead of it being
+ * silently invisible to `isNewerThan` comparisons.
+ */
+export async function getTimestampedIssueComments(project: ProjectConfig, issueNumber: number): Promise<TimestampedComment[]> {
+  const comments = await listComments(project, issueNumber);
+  return comments.map((c) => ({
+    author: c.user.login,
+    body: c.body,
+    createdAt: c.created_at,
+    isStatusComment: c.body.startsWith(STATUS_MARKER),
+  }));
+}
+
+interface GhCollaborator {
+  login: string;
+  permissions?: { push?: boolean };
+}
+
+/** Per-repo cache of push-access logins, for the daemon process's whole lifetime — avoids a `gh api` call per commenter per cycle. */
+const pushCollaboratorsCache = new Map<string, Promise<Set<string>>>();
+
+/**
+ * Logins with push access to the repo — the set allowed to steer a running
+ * ticket via issue comments. Cached per repo for the daemon's lifetime; a
+ * failed fetch evicts itself so the next call retries rather than caching the
+ * failure forever.
+ */
+export function getPushCollaborators(project: ProjectConfig): Promise<Set<string>> {
+  const cached = pushCollaboratorsCache.get(project.githubRepo);
+  if (cached) return cached;
+  const promise = runJson<GhCollaborator[]>("gh", [
+    "api", `repos/${project.githubRepo}/collaborators`,
+    "--paginate",
+  ]).then((collaborators) => new Set(collaborators.filter((c) => c.permissions?.push).map((c) => c.login)));
+  promise.catch(() => pushCollaboratorsCache.delete(project.githubRepo));
+  pushCollaboratorsCache.set(project.githubRepo, promise);
+  return promise;
 }
 
 /**
@@ -354,7 +404,7 @@ export interface PrFeedback {
   latestAt: string | undefined;
 }
 
-function isNewerThan(ts: string, since: string | undefined): boolean {
+export function isNewerThan(ts: string, since: string | undefined): boolean {
   return since === undefined || Date.parse(ts) > Date.parse(since);
 }
 
