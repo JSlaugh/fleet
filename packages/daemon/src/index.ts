@@ -8,16 +8,19 @@ import { log, logError } from "./log.ts";
 import { startServer } from "./server/server.ts";
 import { StateStore } from "./store/state.ts";
 import { syncTemplates } from "./sync-templates.ts";
+import { parseUpdateArgs, performUpdate } from "./update.ts";
 
 const USAGE = `Usage:
   fleet-daemon [--config <path>] [--once] [--dry-run]   run the polling loop
   fleet-daemon init-labels [--config <path>]            create fleet:* labels in every configured repo
   fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + .mcp.json into every configured repo
+  fleet-daemon update [--config <path>] [--drain]        pull latest, install, restart the running daemon
 
 Options:
   --config <path>   path to fleet.config.json (default: ./fleet.config.json)
   --once            run a single polling cycle, wait for workers, then exit
   --dry-run         poll and report what would be claimed, but change nothing
+  --drain           (update only) request a drain-mode restart instead of stopping now
 `;
 
 async function main(): Promise<void> {
@@ -44,6 +47,13 @@ async function main(): Promise<void> {
 
   if (args[0] === "sync-templates") {
     await syncTemplates(config.projects);
+    return;
+  }
+
+  if (args[0] === "update") {
+    const { drain } = parseUpdateArgs(args.slice(1));
+    const exitCode = await performUpdate(configDir, config.dashboardPort, drain);
+    process.exitCode = exitCode;
     return;
   }
 
