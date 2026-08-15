@@ -4,6 +4,7 @@ import { run } from "../github/exec.ts";
 import { getPrState } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { deleteRemoteBranch, removeWorktree } from "../github/worktree.ts";
+import { copyTicketTranscripts } from "../store/transcripts.ts";
 
 /** GitHub issue URL for a ticket record, or "" if its project isn't in the current config (e.g. removed since it closed). */
 export function issueUrl(
@@ -87,6 +88,7 @@ export async function cleanupFinished(
 
     const reason = record.prUrl ? `PR ${prState.toLowerCase()} and issue closed` : "plan epic issue closed";
     log("loop", `${scope}: ${reason} — cleaning up worktree + branch ${record.branch}`);
+    copyTicketTranscripts(ctx.dataDirPath, record);
     await removeWorktree(project, record.worktreePath);
     await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
     await deleteRemoteBranch(project, record.branch);

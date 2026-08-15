@@ -28,9 +28,14 @@ vi.mock("../github/exec.ts", () => ({
   run: vi.fn(async () => ({ stdout: "" })),
 }));
 
+vi.mock("../store/transcripts.ts", () => ({
+  copyTicketTranscripts: vi.fn(),
+}));
+
 const github = await import("../github/github.ts");
 const worktreeMod = await import("../github/worktree.ts");
 const execMod = await import("../github/exec.ts");
+const transcriptsMod = await import("../store/transcripts.ts");
 
 const project: ProjectConfig = {
   name: "alpha",
@@ -100,6 +105,10 @@ describe("cleanupFinished", () => {
     expect(worktreeMod.removeWorktree).toHaveBeenCalledWith(project, "/tmp/wt/7");
     expect(execMod.run).toHaveBeenCalledWith("git", ["-C", project.repoPath, "branch", "-D", "fleet/7"], { allowFailure: true });
     expect(worktreeMod.deleteRemoteBranch).toHaveBeenCalledWith(project, "fleet/7");
+    expect(transcriptsMod.copyTicketTranscripts).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ project: "alpha", issueNumber: 7, worktreePath: "/tmp/wt/7" }),
+    );
     expect(state.get("alpha", 7)).toBeUndefined();
   });
 
