@@ -120,6 +120,7 @@ export async function addressReviews(
         ? "PR reports a merge conflict"
         : "PR review feedback arrived";
     log("loop", `${scope}: ${reason} — resuming session ${record.sessionId}`);
-    track(ctx, project.name, record.issueNumber, resumeTicket(ctx, project, record, prompt));
+    const resumeReason = hasFeedback && isConflicting ? "review-feedback+conflict" : isConflicting ? "conflict" : "review-feedback";
+    track(ctx, project.name, record.issueNumber, resumeTicket(ctx, project, record, prompt, resumeReason));
   }
 }

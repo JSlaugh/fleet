@@ -188,8 +188,9 @@ describe("addressComments — cold resume", () => {
     await addressComments(ctx, project, openIssues);
 
     expect(runner.resumeTicket).toHaveBeenCalledOnce();
-    const message = vi.mocked(runner.resumeTicket).mock.calls[0]?.[3] as string;
-    expect(message).toContain("@alice: please also handle the edge case");
+    const call = vi.mocked(runner.resumeTicket).mock.calls[0];
+    expect(call?.[3] as string).toContain("@alice: please also handle the edge case");
+    expect(call?.[4]).toBe("comment-injected");
     expect(state.get("alpha", 7)?.lastCommentHandledAt).toBe("2026-01-02T00:00:00.000Z");
   });
 

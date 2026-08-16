@@ -77,7 +77,17 @@ export interface BoardTicket {
   record?: TicketRecord | ClosedTicketRecord;
 }
 
+/** Per-message token usage carried on an assistant entry — undefined fields mean the SDK message didn't report that count. */
+export interface JournalMessageUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
+
 export interface JournalEntry {
+  /** Schema version; absent on entries written before this field existed (treat as 1). */
+  v?: number;
   ts: string;
   type: string;
   subtype?: string;
@@ -87,8 +97,10 @@ export interface JournalEntry {
   event?: string;
   /** Set to "machine-review" on entries from the one-shot reviewer sub-session, which shares this journal file but is not the ticket's own worker turn. */
   session?: string;
+  usage?: JournalMessageUsage;
   toolCalls?: { id: string; name: string }[];
-  toolResults?: { id: string; isError?: boolean }[];
+  /** `durationMs`/`outputSize`/`error` are set when the matching `tool_use` was seen earlier in the same session, only present since `v: 2`. */
+  toolResults?: { id: string; isError?: boolean; durationMs?: number; outputSize?: number; error?: string }[];
   numTurns?: number;
   durationMs?: number;
   [key: string]: unknown;

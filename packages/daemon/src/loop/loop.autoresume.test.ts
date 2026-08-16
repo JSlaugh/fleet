@@ -1,7 +1,8 @@
 import type { TicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
-import { makeRecord } from "../test-support.ts";
-import { pickAutoResumable } from "./recovery.ts";
+import { makeCtx, makeRecord } from "../test-support.ts";
+import { readJournalTail } from "../store/journal.ts";
+import { flagStalled, pickAutoResumable } from "./recovery.ts";
 
 function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
   return makeRecord({
@@ -58,5 +59,29 @@ describe("pickAutoResumable", () => {
 
   it("returns nothing when the project is at capacity", () => {
     expect(pickAutoResumable([record(1)], { name: "alpha", maxConcurrent: 1 }, ["alpha#9"])).toEqual([]);
+  });
+});
+
+describe("flagStalled", () => {
+  it("journals a stalled fleet event alongside the status flip", () => {
+    const ctx = makeCtx();
+    const stale = new Date(Date.now() - 60 * 60_000).toISOString();
+    ctx.state.upsert(record(1, { status: "running", lastActivityAt: stale }));
+
+    flagStalled(ctx);
+
+    expect(ctx.state.get("alpha", 1)?.status).toBe("stalled");
+    const entries = readJournalTail(ctx.dataDirPath, "alpha", 1, 10);
+    expect(entries).toContainEqual(expect.objectContaining({ type: "fleet", event: "stalled", lastActivityAt: stale }));
+  });
+
+  it("does not flag or journal a ticket with recent activity", () => {
+    const ctx = makeCtx();
+    ctx.state.upsert(record(1, { status: "running", lastActivityAt: new Date().toISOString() }));
+
+    flagStalled(ctx);
+
+    expect(ctx.state.get("alpha", 1)?.status).toBe("running");
+    expect(readJournalTail(ctx.dataDirPath, "alpha", 1, 10)).toEqual([]);
   });
 });

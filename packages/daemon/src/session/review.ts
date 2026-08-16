@@ -7,7 +7,7 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { findLimitText, parseLimitReset, summarize, summarizeModelUsage } from "./worker.ts";
+import { findLimitText, parseLimitReset, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -127,6 +127,7 @@ export async function runMachineReview(opts: {
   const timeoutMs = opts.timeoutMs ?? MACHINE_REVIEW_TIMEOUT_MS;
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), timeoutMs);
+  const toolTimings: ToolTimings = new Map();
   try {
     const q = query({
       prompt: opts.prompt,
@@ -147,7 +148,7 @@ export async function runMachineReview(opts: {
       },
     });
     for await (const message of q) {
-      opts.journal.append({ ...summarize(message), session: "machine-review" });
+      opts.journal.append({ ...summarize(message, { toolTimings }), session: "machine-review" });
       if (message.type === "system" && message.subtype === "init") {
         outcome.sessionId = message.session_id;
         log("review", `${opts.scope}: machine review session ${message.session_id} started (${message.model})`);

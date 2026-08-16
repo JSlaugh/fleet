@@ -29,11 +29,12 @@ export function selectModel(
  * dashboard — except in `--once` mode, where no dashboard exists to answer, so
  * requests deny immediately instead of waiting out `approvalTimeoutMinutes`.
  */
-export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNumber: number): CanUseTool {
+export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNumber: number, journal: Journal): CanUseTool {
   return async (toolName, input, { signal }) => {
     const kind = toolName === "AskUserQuestion" ? "question" : "permission";
     if (ctx.once) {
       log("approvals", `${project.name}#${issueNumber}: ${toolName} auto-denied (--once mode has no dashboard to answer approvals)`);
+      journal.append({ type: "fleet", event: "approval-decided", toolName, kind, outcome: "auto-denied", waitMs: 0 });
       if (kind === "question") {
         return {
           behavior: "deny",
@@ -45,6 +46,7 @@ export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNu
         message: `Approvals aren't available in --once mode (no dashboard is running to answer them). Find another way, or finish with status "blocked" explaining what you need.`,
       };
     }
+    const requestedAt = Date.now();
     const outcome = await ctx.approvals.request({
       project: project.name,
       issueNumber,
@@ -53,6 +55,14 @@ export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNu
       input,
       timeoutMs: ctx.config.approvalTimeoutMinutes * 60_000,
       signal,
+    });
+    journal.append({
+      type: "fleet",
+      event: "approval-decided",
+      toolName,
+      kind,
+      outcome: outcome.reason ?? (outcome.allowed ? "allowed" : "denied"),
+      waitMs: Date.now() - requestedAt,
     });
     if (kind === "question") {
       if (outcome.message) {
@@ -117,7 +127,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
       });
       ctx.emitBoard();
     },
-    canUseTool: makeCanUseTool(ctx, project, issue.number),
+    canUseTool: makeCanUseTool(ctx, project, issue.number, journal),
     claudeExecutable: ctx.config.claudeExecutable,
     resumeSessionId: opts.resumeSessionId,
   });
@@ -151,6 +161,7 @@ export async function resumeTicket(
   project: ProjectConfig,
   record: TicketRecord,
   message: string,
+  reason?: string,
 ): Promise<void> {
   const issue: ReadyIssue = { number: record.issueNumber, title: record.issueTitle, body: "", labels: [], author: "" };
   const scope = key(project.name, record.issueNumber);
@@ -170,7 +181,7 @@ export async function resumeTicket(
     ctx.state.update(project.name, record.issueNumber, { elevated, light, isPlan });
     await markWorking(ctx, project, record.issueNumber);
     const journal = new Journal(ctx.dataDirPath, project.name, record.issueNumber);
-    journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, light, isPlan });
+    journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, light, isPlan, reason });
     await runSession(ctx, {
       project,
       issue,

@@ -22,6 +22,36 @@ describe("summarize", () => {
     ]);
   });
 
+  it("captures per-message token usage on an assistant entry", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "hi" }],
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_read_input_tokens: 5,
+          cache_creation_input_tokens: 3,
+        },
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.usage).toEqual({ inputTokens: 100, outputTokens: 20, cacheReadTokens: 5, cacheCreationTokens: 3 });
+  });
+
+  it("omits usage when the assistant message carries none", () => {
+    const message = {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "hi" }] },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("usage");
+  });
+
   it("omits toolCalls when the assistant message has no tool_use blocks", () => {
     const message = {
       type: "assistant",
@@ -39,7 +69,7 @@ describe("summarize", () => {
       type: "user",
       message: {
         content: [
-          { type: "tool_result", tool_use_id: "toolu_1", is_error: true },
+          { type: "tool_result", tool_use_id: "toolu_1", is_error: true, content: "boom" },
           { type: "tool_result", tool_use_id: "toolu_2" },
         ],
       },
@@ -48,9 +78,73 @@ describe("summarize", () => {
     const result = summarize(message);
 
     expect(result.toolResults).toEqual([
-      { id: "toolu_1", isError: true },
-      { id: "toolu_2", isError: false },
+      { id: "toolu_1", isError: true, outputSize: 4, error: "boom" },
+      { id: "toolu_2", isError: false, outputSize: 0 },
     ]);
+  });
+
+  it("caps a captured error at 500 characters", () => {
+    const message = {
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "toolu_1", is_error: true, content: "x".repeat(600) }],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect((result.toolResults as { error: string }[])[0]?.error).toHaveLength(500);
+  });
+
+  it("extracts tool_result text from an array of text blocks for size and error capture", () => {
+    const message = {
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            is_error: true,
+            content: [{ type: "text", text: "line one" }, { type: "text", text: "line two" }],
+          },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.toolResults).toEqual([
+      { id: "toolu_1", isError: true, outputSize: Buffer.byteLength("line one\nline two", "utf8"), error: "line one\nline two" },
+    ]);
+  });
+
+  it("attaches a tool result's duration when the matching tool_use was timed earlier", () => {
+    const toolTimings = new Map<string, number>();
+    const useMessage = {
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: {} }] },
+    } as unknown as SDKMessage;
+    summarize(useMessage, { toolTimings, now: 1000 });
+
+    const resultMessage = {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_1" }] },
+    } as unknown as SDKMessage;
+    const result = summarize(resultMessage, { toolTimings, now: 1750 });
+
+    expect(result.toolResults).toEqual([{ id: "toolu_1", isError: false, outputSize: 0, durationMs: 750 }]);
+    expect(toolTimings.has("toolu_1")).toBe(false);
+  });
+
+  it("omits duration when no matching tool_use was timed", () => {
+    const message = {
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_unknown" }] },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message, { toolTimings: new Map() });
+
+    expect(result.toolResults).toEqual([{ id: "toolu_unknown", isError: false, outputSize: 0 }]);
   });
 
   it("omits toolResults when the user message has no tool_result blocks", () => {

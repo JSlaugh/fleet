@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { Journal } from "../store/journal.ts";
 import {
   FORBIDDEN_BASH_REASON,
   FORBIDDEN_COMMIT_REASON,
@@ -8,7 +9,12 @@ import {
   denyForbiddenPlanBash,
   isForbiddenBashCommand,
   isForbiddenPlanBashCommand,
+  makeJournaledBashGuard,
 } from "./worker.ts";
+
+function fakeJournal() {
+  return { append: vi.fn() } as unknown as Journal;
+}
 
 const hookOptions = { signal: new AbortController().signal };
 
@@ -145,6 +151,43 @@ describe("denyForbiddenPlanBash", () => {
   it("leaves ordinary read-only Bash commands alone", async () => {
     const out = await denyForbiddenPlanBash(preToolUse("Bash", { command: "git log" }), "tu_1", hookOptions);
     expect(out).toEqual({ continue: true });
+  });
+});
+
+describe("makeJournaledBashGuard", () => {
+  it("journals a fleet event when the wrapped guard denies", async () => {
+    const journal = fakeJournal();
+    const guarded = makeJournaledBashGuard(denyForbiddenBash, journal);
+
+    await guarded(preToolUse("Bash", { command: "git push" }), "tu_1", hookOptions);
+
+    expect(journal.append).toHaveBeenCalledWith({
+      type: "fleet",
+      event: "bash-denied",
+      command: "git push",
+      reason: FORBIDDEN_BASH_REASON,
+    });
+  });
+
+  it("does not journal when the wrapped guard allows", async () => {
+    const journal = fakeJournal();
+    const guarded = makeJournaledBashGuard(denyForbiddenBash, journal);
+
+    const out = await guarded(preToolUse("Bash", { command: "pnpm test" }), "tu_1", hookOptions);
+
+    expect(out).toEqual({ continue: true });
+    expect(journal.append).not.toHaveBeenCalled();
+  });
+
+  it("passes the underlying result through unchanged either way", async () => {
+    const journal = fakeJournal();
+    const guarded = makeJournaledBashGuard(denyForbiddenBash, journal);
+
+    const out = await guarded(preToolUse("Bash", { command: "git push" }), "tu_1", hookOptions);
+
+    expect(out).toMatchObject({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: FORBIDDEN_BASH_REASON },
+    });
   });
 });
 

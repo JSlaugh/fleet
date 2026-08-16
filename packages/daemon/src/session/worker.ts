@@ -123,6 +123,32 @@ export const denyForbiddenPlanBash: HookCallback = async (input) => {
   };
 };
 
+/**
+ * Wraps `denyForbiddenBash`/`denyForbiddenPlanBash` so a denial also lands a
+ * `type: "fleet"` journal event — a worker reaching for `git push`/`gh pr` is a
+ * strong off-contract signal, and the pure guards above have no journal to
+ * write to. Kept as a wrapper (rather than folding logging into the guards
+ * themselves) so `worker.guard.test.ts` keeps testing the guards as plain,
+ * journal-free functions.
+ */
+export function makeJournaledBashGuard(guard: HookCallback, journal: Journal): HookCallback {
+  return async (input, toolUseId, options) => {
+    const result = await guard(input, toolUseId, options);
+    const hookSpecificOutput = (result as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } })
+      .hookSpecificOutput;
+    if (hookSpecificOutput?.permissionDecision === "deny") {
+      const command = (input as { tool_input?: { command?: unknown } }).tool_input?.command;
+      journal.append({
+        type: "fleet",
+        event: "bash-denied",
+        command: typeof command === "string" ? command.slice(0, 500) : undefined,
+        reason: hookSpecificOutput.permissionDecisionReason,
+      });
+    }
+    return result;
+  };
+}
+
 export interface CodeTurnResult {
   kind: "code";
   result?: WorkerResult;
@@ -200,6 +226,7 @@ export class WorkerSession {
   private readonly input = new MessageQueue<SDKUserMessage>();
   private readonly iterator: AsyncIterator<SDKMessage>;
   private readonly kind: SessionKind;
+  private readonly toolTimings: ToolTimings = new Map();
   sessionId?: string;
   costUsd = 0;
   model?: string;
@@ -231,7 +258,12 @@ export class WorkerSession {
         permissionMode: "acceptEdits",
         allowedTools: opts.project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
         canUseTool: opts.canUseTool,
-        hooks: { PreToolUse: [{ matcher: "Bash", hooks: [this.kind === "plan" ? denyForbiddenPlanBash : denyForbiddenBash] }] },
+        hooks: {
+          PreToolUse: [{
+            matcher: "Bash",
+            hooks: [makeJournaledBashGuard(this.kind === "plan" ? denyForbiddenPlanBash : denyForbiddenBash, opts.journal)],
+          }],
+        },
         settingSources: ["project"],
         systemPrompt: {
           type: "preset",
@@ -263,7 +295,7 @@ export class WorkerSession {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
         if (done || !message) return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
-        const entry = summarize(message);
+        const entry = summarize(message, { toolTimings: this.toolTimings });
         this.opts.onActivity(activityNote(entry));
         this.opts.journal.append(entry);
         if (message.type === "system" && message.subtype === "init") {
@@ -378,11 +410,46 @@ function normalizePlanResult(result: PlanResult): PlanResult {
   };
 }
 
-export function summarize(message: SDKMessage): Record<string, unknown> {
+/** The first ~500 chars of a tool result's error text, capped so a runaway stack trace can't blow up the journal. */
+const TOOL_ERROR_CHAR_LIMIT = 500;
+
+function extractToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block): block is { type: "text"; text: string } =>
+        typeof block === "object" && block !== null && (block as { type?: string }).type === "text")
+      .map((block) => block.text)
+      .join("\n");
+  }
+  return "";
+}
+
+/**
+ * Mutable per-session state `summarize` uses to attach a tool result's
+ * wall-clock duration: the timestamp of its matching `tool_use` block, keyed
+ * by tool_use id, recorded when that block is summarized and consumed (and
+ * removed) when the matching `tool_result` arrives. Owned by the caller
+ * (`WorkerSession`/`runMachineReview`) so it spans the whole message stream;
+ * `summarize` itself stays a pure function of its arguments.
+ */
+export type ToolTimings = Map<string, number>;
+
+export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings; now?: number } = {}): Record<string, unknown> {
+  const now = opts.now ?? Date.now();
   const base: Record<string, unknown> = { type: message.type };
   if ("subtype" in message) base.subtype = message.subtype;
   if (message.type === "assistant") {
     const content = message.message.content;
+    const usage = (message.message as { usage?: Record<string, unknown> }).usage;
+    if (usage) {
+      base.usage = {
+        inputTokens: usage.input_tokens as number | undefined,
+        outputTokens: usage.output_tokens as number | undefined,
+        cacheReadTokens: usage.cache_read_input_tokens as number | undefined,
+        cacheCreationTokens: usage.cache_creation_input_tokens as number | undefined,
+      };
+    }
     if (Array.isArray(content)) {
       base.text = content
         .filter((block): block is { type: "text"; text: string } =>
@@ -401,6 +468,9 @@ export function summarize(message: SDKMessage): Record<string, unknown> {
           name: block.name,
           input: JSON.stringify(block.input).slice(0, 200),
         }));
+        if (opts.toolTimings) {
+          for (const block of toolUseBlocks) opts.toolTimings.set(block.id, now);
+        }
       }
     }
   }
@@ -408,14 +478,26 @@ export function summarize(message: SDKMessage): Record<string, unknown> {
     const content = message.message.content;
     if (Array.isArray(content)) {
       const toolResultBlocks = content.filter(
-        (block): block is { type: "tool_result"; tool_use_id: string; is_error?: boolean } =>
+        (block): block is { type: "tool_result"; tool_use_id: string; is_error?: boolean; content?: unknown } =>
           typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_result",
       );
       if (toolResultBlocks.length > 0) {
-        base.toolResults = toolResultBlocks.map((block) => ({
-          id: block.tool_use_id,
-          isError: block.is_error ?? false,
-        }));
+        base.toolResults = toolResultBlocks.map((block) => {
+          const text = extractToolResultText(block.content);
+          const isError = block.is_error ?? false;
+          const result: Record<string, unknown> = {
+            id: block.tool_use_id,
+            isError,
+            outputSize: Buffer.byteLength(text, "utf8"),
+          };
+          const startedAt = opts.toolTimings?.get(block.tool_use_id);
+          if (startedAt !== undefined) {
+            result.durationMs = now - startedAt;
+            opts.toolTimings?.delete(block.tool_use_id);
+          }
+          if (isError) result.error = text.slice(0, TOOL_ERROR_CHAR_LIMIT);
+          return result;
+        });
       }
     }
   }

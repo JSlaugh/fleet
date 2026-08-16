@@ -2,6 +2,7 @@ import type { TicketRecord } from "@fleet/shared";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { log } from "../log.ts";
 import { isProjectPaused } from "./pause.ts";
+import { Journal } from "../store/journal.ts";
 import { resumeTicket } from "./runner.ts";
 
 const STALL_NUDGE = [
@@ -43,6 +44,11 @@ export function flagStalled(ctx: LoopContext): void {
     if (ticket.status === "running" && Date.parse(ticket.lastActivityAt) < cutoff) {
       ctx.state.update(ticket.project, ticket.issueNumber, { status: "stalled" });
       log("loop", `${key(ticket.project, ticket.issueNumber)}: STALLED (no activity since ${ticket.lastActivityAt})`);
+      new Journal(ctx.dataDirPath, ticket.project, ticket.issueNumber).append({
+        type: "fleet",
+        event: "stalled",
+        lastActivityAt: ticket.lastActivityAt,
+      });
     }
   }
 }
@@ -69,7 +75,7 @@ export function recoverStalled(ctx: LoopContext): void {
       if (ctx.isShuttingDown()) return;
       log("loop", `${scope}: stalled — auto-resuming session ${record.sessionId} (once)`);
       const updated = ctx.state.update(record.project, record.issueNumber, { autoResumed: true }) ?? record;
-      track(ctx, record.project, record.issueNumber, resumeTicket(ctx, project, updated, STALL_NUDGE));
+      track(ctx, record.project, record.issueNumber, resumeTicket(ctx, project, updated, STALL_NUDGE, "stall"));
     }
   }
 }

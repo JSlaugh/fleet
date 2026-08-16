@@ -12,6 +12,7 @@ import {
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { issueUrl, notify } from "../notify.ts";
+import { Journal } from "../store/journal.ts";
 
 /** `TicketRecord` statuses this daemon should keep a fresh heartbeat on, once per cycle, while it's the one actually working the ticket. */
 const IN_FLIGHT_STATUSES = new Set(["running", "needs-input"]);
@@ -122,6 +123,11 @@ export async function releaseStaleClaims(
       );
       for (const login of others) await removeAssignee(project, issue.number, login);
       await markReady(project, issue.number);
+      new Journal(ctx.dataDirPath, project.name, issue.number).append({
+        type: "fleet",
+        event: "stale-claim-released",
+        owners: others,
+      });
       await notify(ctx, "stale-released", project, {
         issueNumber: issue.number,
         title: issue.title,

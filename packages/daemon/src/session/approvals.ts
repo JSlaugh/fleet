@@ -5,6 +5,8 @@ import { log } from "../log.ts";
 export interface ApprovalOutcome {
   allowed: boolean;
   message?: string;
+  /** How the request settled — set by `ApprovalManager`, not the caller; used for journaling. */
+  reason?: "allowed" | "denied" | "answered" | "timed out" | "session aborted";
 }
 
 interface PendingInternal {
@@ -61,14 +63,14 @@ export class ApprovalManager {
     return this.settle(id, outcome, reason);
   }
 
-  private settle(id: string, outcome: ApprovalOutcome, reason: string): boolean {
+  private settle(id: string, outcome: ApprovalOutcome, reason: ApprovalOutcome["reason"]): boolean {
     const entry = this.pending.get(id);
     if (!entry) return false;
     this.pending.delete(id);
     clearTimeout(entry.timer);
     if (entry.onAbort) entry.signal?.removeEventListener("abort", entry.onAbort);
     log("approvals", `${entry.approval.project}#${entry.approval.issueNumber}: ${entry.approval.toolName} ${reason} (${id})`);
-    entry.resolve(outcome);
+    entry.resolve({ ...outcome, reason });
     this.events.emit("approvals");
     return true;
   }
