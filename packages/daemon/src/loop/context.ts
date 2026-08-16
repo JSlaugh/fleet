@@ -47,6 +47,8 @@ export interface LoopContext {
   readonly boardCache: Map<string, BoardTicket[]>;
   /** `project#issue` keys already logged as skipped for a non-collaborator author — logged once per issue, not once per cycle. */
   readonly contributorFloorSkipsLogged: Set<string>;
+  /** Project names currently notified about a budget-gate `blocked` hold — cleared once the gate lifts, so only the first hold of a spell notifies, not every poll while it persists. */
+  readonly budgetBlockedNotified: Set<string>;
   emitBoard(): void;
   getProject(name: string): ProjectConfig | undefined;
 }

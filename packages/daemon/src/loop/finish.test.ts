@@ -1,5 +1,5 @@
-import type { ProjectConfig, TicketRecord } from "@fleet/shared";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { PostCompletionError } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
@@ -45,10 +45,10 @@ function record(patch: Partial<TicketRecord> = {}): TicketRecord {
 
 const issue = { number: 7, title: "issue 7", body: "body", labels: [] };
 
-function makeLoop(seed?: TicketRecord) {
+function makeLoop(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
   const { dataDir, state } = makeTempState("fleet-finish-");
   if (seed) state.upsert(seed);
-  const config = makeFleetConfig({ dataDir, projects: [project] });
+  const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
   const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
   const internals = loop as unknown as {
     finishCompleted: (
@@ -60,6 +60,7 @@ function makeLoop(seed?: TicketRecord) {
       result: { prTitle?: string; prBody?: string; filesChanged: string[]; confidence: string },
     ) => Promise<void>;
     finishBlocked: (p: ProjectConfig, i: typeof issue, reason: string, summary?: string) => Promise<void>;
+    finishFailed: (p: ProjectConfig, i: typeof issue, error: string, opts?: { postCompletion?: boolean }) => Promise<void>;
   };
   return { loop, state, internals };
 }
@@ -140,5 +141,89 @@ describe("finishBlocked — status comment error policy", () => {
 
     expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("needs-input");
+  });
+});
+
+describe("Discord notifications", () => {
+  const notifications = { discordUrl: "https://discord.example/webhook" };
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts a needs-input notification when a ticket blocks", async () => {
+    const { internals } = makeLoop(record(), { notifications });
+
+    await internals.finishBlocked(project, issue, "need the API key", "summary");
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("Needs input");
+    expect(body.content).toContain("need the API key");
+  });
+
+  it("posts a pr-opened notification once the PR is created", async () => {
+    const { internals } = makeLoop(record(), { notifications });
+
+    await internals.finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("PR opened");
+    expect(body.content).toContain("https://github.com/acme/alpha/pull/7");
+  });
+
+  it("posts a needs-input notification for a post-completion pipeline failure", async () => {
+    const { internals } = makeLoop(record(), { notifications });
+
+    await internals.finishFailed(project, issue, "push rejected", { postCompletion: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("Needs input");
+  });
+
+  it("posts a failed notification for a terminal run failure (no elevated model to retry on)", async () => {
+    const { internals } = makeLoop(record(), { notifications });
+
+    await internals.finishFailed(project, issue, "the model gave up");
+
+    expect(fetch).toHaveBeenCalledOnce();
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("Failed");
+  });
+
+  it("does not notify without notifications configured", async () => {
+    const { internals } = makeLoop(record());
+
+    await internals.finishBlocked(project, issue, "need the API key", "summary");
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("a rejecting webhook never affects the needs-input ticket path", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { state, internals } = makeLoop(record(), { notifications });
+
+    await internals.finishBlocked(project, issue, "need the API key", "summary");
+
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(state.get("alpha", 7)?.status).toBe("needs-input");
+    expect(errSpy).toHaveBeenCalled();
+    errSpy.mockRestore();
   });
 });

@@ -181,7 +181,7 @@ export async function machineReviewGate(
   if (outcome.errorSubtype || !outcome.result) {
     journal.append({ type: "fleet", event: "machine-review-error", errorSubtype: outcome.errorSubtype });
     log("loop", `${scope}: machine review failed (${outcome.errorSubtype}) — proceeding to human review`);
-    if (outcome.errorSubtype === "plan_limit") extendPause(ctx, scope, outcome.limitResetAt);
+    if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
     ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
     return { action: "proceed" };
   }

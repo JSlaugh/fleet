@@ -48,6 +48,25 @@ function makeLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverrides
   return { loop, state };
 }
 
+/**
+ * `dryRun: false` variant for tests that need cycleProject's real (not
+ * dry-run-logged) side effects — with no seeded state and an empty issue
+ * list, every gh-shelling helper it calls (releaseStaleClaims,
+ * addressComments, addressReviews, autoMergeReady, cleanupFinished,
+ * healStaleReadyLabels) is a no-op before it ever reaches `gh`, so this stays
+ * safe under the same github.ts mocks as the dry-run tests above.
+ */
+function makeLiveLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverrides: Partial<FleetConfig> = {}) {
+  const { dataDir, state } = makeTempState("fleet-claim-live-");
+  const config = makeFleetConfig({
+    dataDir,
+    projects: [{ ...project, ...projectOverrides }],
+    ...configOverrides,
+  });
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+  return { loop, state };
+}
+
 describe("cycleProject with maxInReview backpressure", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -196,6 +215,41 @@ describe("cycleProject budget gate", () => {
 
     expect(loggedLines().some((l) => l.includes("would claim"))).toBe(false);
     expect(loggedLines().some((l) => l.includes("holding all claims"))).toBe(true);
+  });
+
+  describe("Discord notifications", () => {
+    beforeEach(() => {
+      vi.mocked(github.listFleetIssues).mockResolvedValue([]);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts a paused notification the first time the budget gate blocks a cycle", async () => {
+      const { loop, state } = makeLiveLoop({}, { windowBudgetUsd: 10, notifications: { discordUrl: "https://discord.example/webhook" } });
+      state.appendSpend(10, 5);
+
+      await loop.cycle();
+
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { content: string };
+      expect(body.content).toContain("Paused");
+      expect(body.content).toContain("holding all claims");
+    });
+
+    it("does not re-notify on a later cycle while the same block persists", async () => {
+      const { loop, state } = makeLiveLoop({}, { windowBudgetUsd: 10, notifications: { discordUrl: "https://discord.example/webhook" } });
+      state.appendSpend(10, 5);
+
+      await loop.cycle();
+      vi.mocked(fetch).mockClear();
+      await loop.cycle();
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });
 

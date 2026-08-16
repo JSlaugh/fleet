@@ -36,6 +36,23 @@ export const WorkHoursReserveSchema = z.object({
 });
 export type WorkHoursReserveConfig = z.infer<typeof WorkHoursReserveSchema>;
 
+export const NOTIFICATION_EVENTS = [
+  "needs-input",
+  "pr-opened",
+  "failed",
+  "paused",
+  "auto-merged",
+  "stale-released",
+] as const;
+export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
+
+export const NotificationsConfigSchema = z.object({
+  discordUrl: z.string().url(),
+  /** Which events to post; unset (default) posts every event above. */
+  events: z.array(z.enum(NOTIFICATION_EVENTS)).optional(),
+});
+export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
+
 export const FleetConfigSchema = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),
   dashboardPort: z.number().int().min(1).default(4400),
@@ -77,6 +94,8 @@ export const FleetConfigSchema = z.object({
    * resumes and already-live sessions are never held back either way.
    */
   workHoursReserve: WorkHoursReserveSchema.optional(),
+  /** Opt-in Discord webhook event pings. Unset (default) disables the feature entirely — no network calls. */
+  notifications: NotificationsConfigSchema.optional(),
   projects: z.array(ProjectConfigSchema).min(1),
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;

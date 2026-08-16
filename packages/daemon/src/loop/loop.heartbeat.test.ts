@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { makeCtx, makeIssue, makeProject, makeRecord } from "../test-support.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord } from "../test-support.ts";
 import { heartbeatRefreshAgeMs, isClaimStale, releaseStaleClaims, refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { StatusCommentInfo } from "../github/github.ts";
 
@@ -146,6 +146,34 @@ describe("releaseStaleClaims", () => {
     expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("could not finish releasing"))).toBe(true);
 
     errorSpy.mockRestore();
+  });
+
+  describe("Discord notifications", () => {
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+      vi.mocked(github.getStatusCommentInfo).mockResolvedValue({ createdAt: "2020-01-01T00:00:00.000Z" });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts a stale-released notification once the release succeeds", async () => {
+      const config = makeFleetConfig({ projects: [project], notifications: { discordUrl: "https://discord.example/webhook" } });
+
+      await releaseStaleClaims(makeCtx({ config }), project, [issue(1, ["fleet:in-progress"], { assignees: ["someone-else"] })], "daemon-a");
+
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { content: string };
+      expect(body.content).toContain("Stale claim released");
+    });
+
+    it("does not notify without notifications configured", async () => {
+      await releaseStaleClaims(makeCtx(), project, [issue(1, ["fleet:in-progress"], { assignees: ["someone-else"] })], "daemon-a");
+
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 });
 

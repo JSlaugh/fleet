@@ -11,6 +11,7 @@ import {
   type StatusCommentInfo,
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
+import { issueUrl, notify } from "../notify.ts";
 
 /** `TicketRecord` statuses this daemon should keep a fresh heartbeat on, once per cycle, while it's the one actually working the ticket. */
 const IN_FLIGHT_STATUSES = new Set(["running", "needs-input"]);
@@ -121,6 +122,12 @@ export async function releaseStaleClaims(
       );
       for (const login of others) await removeAssignee(project, issue.number, login);
       await markReady(project, issue.number);
+      await notify(ctx, "stale-released", project, {
+        issueNumber: issue.number,
+        title: issue.title,
+        detail: `stale claim from @${ownerList} released back to the pool`,
+        url: issueUrl(project, issue.number),
+      });
     } catch (err) {
       logError("loop", `${scope}: could not finish releasing the stale claim`, err);
     }
