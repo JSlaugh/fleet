@@ -14,6 +14,8 @@ The daemon polls registered repos for open issues labeled `fleet:ready`, claims 
 
 ## Setup
 
+Requires Node >=24 — the daemon persists state via `node:sqlite`, verified to need no `--experimental-sqlite` flag on that version.
+
 ```bash
 pnpm install
 gh auth login        # the daemon shells out to gh for all GitHub access
@@ -57,7 +59,7 @@ Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via tu
 
 For dashboard development, `pnpm dashboard:dev` runs Vite on :4401 proxying to the daemon.
 
-The dashboard header has a **Pause/Resume** toggle (drain mode): while paused, the daemon claims nothing new and resumes nothing — no `fleet:ready` pickups, no review-feedback resumes, no stall recovery — but sessions already running are left to finish, and board polling plus merged-ticket cleanup keep going. The pause is persisted in `.fleet/state.json`, so it survives a daemon restart and is cleared only by an explicit resume. It's the same gate the plan usage-limit pause uses, so the two can't fight each other.
+The dashboard header has a **Pause/Resume** toggle (drain mode): while paused, the daemon claims nothing new and resumes nothing — no `fleet:ready` pickups, no review-feedback resumes, no stall recovery — but sessions already running are left to finish, and board polling plus merged-ticket cleanup keep going. The pause is persisted in `.fleet/fleet.db`, so it survives a daemon restart and is cleared only by an explicit resume. It's the same gate the plan usage-limit pause uses, so the two can't fight each other.
 
 Ticket detail has a **Restart** button for stuck, stalled, or failed tickets: it force-closes the session and puts the issue back in `fleet:ready`, so the next cycle re-runs it from scratch. The fresh claim recreates the branch and worktree from `origin/<defaultBranch>`, which **discards the previous session's commits** — the dashboard confirms before firing.
 
@@ -65,7 +67,7 @@ Stopping the long-running daemon (`--once` runs need none of this) has two modes
 - **Drain** (`POST /api/daemon/shutdown` with `{ "mode": "drain" }`) enables the same pause as the dashboard's Pause toggle, then exits once every running ticket reaches a normal terminal state (review/needs-input/failed) — nothing is interrupted.
 - **Stop now** (`{ "mode": "now" }`, and Ctrl+C / SIGTERM) aborts every live session immediately and leaves each interrupted ticket `stalled` with its session id intact and `autoResumed` cleared, so the next `pnpm daemon` boot auto-resumes every one of them exactly once instead of burning that budget recovering from an unclean stop.
 
-Operational state lives in `.fleet/` (ticket records in `state.json`, closed-ticket archive in `history.json`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
+Operational state lives in `.fleet/` (ticket records and closed-ticket archive in the SQLite database `fleet.db`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
 
 ## Filing tickets from inside a project
 
@@ -109,7 +111,7 @@ Fleet supports several people each running their own daemon against the same rep
 - **Contributor floor.** Only issues authored by a repo collaborator with push access are claimed. Anyone can open an issue, but `fleet:ready` alone isn't enough to get a worker with Bash access running against it unless the author has push access — this is who can effectively file work for the fleet to pick up.
 - **Stale claims.** Every status-comment update stamps a hidden heartbeat (daemon login + timestamp) from whoever is actively working a ticket, refreshed once it's more than half of `staleClaimMinutes` old. Each cycle, every daemon checks open `fleet:in-progress`/`fleet:needs-input` issues assigned to someone else; once the heartbeat (or the comment's creation time, if there's no heartbeat yet) is older than `staleClaimMinutes` (default 45), it unassigns the dead claim, posts a "released" status update, and returns the issue to `fleet:ready` for anyone to pick up. `fleet:review` tickets are exempt — the PR already exists there, so releasing the claim would only strand review-feedback automation, not any at-risk work.
 - **Refinement + ownership.** The person who readies or assigns a ticket is its natural owner going forward. Teammates steer a ticket someone else's daemon is running the same way anyone refines a ticket — via issue comments, picked up fresh at claim time and injected mid-session if added later; see [Refining tickets](#refining-tickets).
-- **What's shared vs. local.** Labels, assignees, issues, PRs, and status comments (heartbeat included) are shared coordination state on GitHub — every daemon reads and writes them. Everything else is per-daemon and local: worktrees, `.fleet/state.json`, journals, and the dashboard. In particular, approvals and blocked-ticket replies only exist on the dashboard of the daemon actually running that session — a ticket another daemon owns has nothing waiting in your approvals inbox or reply box, even though it still shows up on your board (board data comes from the shared GitHub issues, not local state).
+- **What's shared vs. local.** Labels, assignees, issues, PRs, and status comments (heartbeat included) are shared coordination state on GitHub — every daemon reads and writes them. Everything else is per-daemon and local: worktrees, `.fleet/fleet.db`, journals, and the dashboard. In particular, approvals and blocked-ticket replies only exist on the dashboard of the daemon actually running that session — a ticket another daemon owns has nothing waiting in your approvals inbox or reply box, even though it still shows up on your board (board data comes from the shared GitHub issues, not local state).
 
 ## Config
 

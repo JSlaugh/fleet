@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeCtx, makeFleetConfig, makeRecord } from "../test-support.ts";
 import { budgetStatus, computeBudgetGate, recordSpend } from "./budget.ts";
 import type { LoopContext } from "./context.ts";
+import { closeAllDatabases } from "../store/db.ts";
 import { StateStore } from "../store/state.ts";
 
 const dataDirs: string[] = [];
@@ -17,6 +18,9 @@ function tempDataDir(): string {
 }
 
 afterEach(() => {
+  // An open sqlite handle blocks directory deletion on Windows, so close every
+  // cached connection before rm'ing the temp dirs those connections live in.
+  closeAllDatabases();
   for (const dir of dataDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
