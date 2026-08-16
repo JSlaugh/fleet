@@ -6,7 +6,7 @@ The daemon polls registered repos for open issues labeled `fleet:ready`, claims 
 
 ## How a ticket flows
 
-1. You label an open issue `fleet:ready` (optionally `fleet:p1`/`p2`/`p3` for priority; `Depends-on: #12` in the body holds it until #12 closes).
+1. You file an issue — preferably via the "Fleet task" issue form (`sync-templates` stamps it into each repo's New Issue chooser; it prompts for problem/acceptance-criteria/verification and a `Depends on` field, parsed the same as a hand-typed `Depends-on: #12` line) — then label it `fleet:ready` (optionally `fleet:p1`/`p2`/`p3` for priority).
 2. The daemon claims it (`fleet:in-progress`), creates a worktree + `fleet/<issue>` branch, and spawns a worker session with the issue text as its prompt. A `fleet:plan` issue instead spawns a read-only planning session that decomposes the epic into child tickets — see [Epic decomposition](#epic-decomposition-fleetplan) below.
 3. The worker commits incrementally and finishes with a structured result.
 4. Completed → branch pushed, PR opened, issue labeled `fleet:review`. Blocked → issue labeled `fleet:needs-input` with the worker's question in the status comment.
@@ -19,10 +19,10 @@ pnpm install
 gh auth login        # the daemon shells out to gh for all GitHub access
 cp fleet.config.example.json fleet.config.json   # then edit
 pnpm daemon init-labels                          # creates fleet:* labels in each repo
-pnpm daemon sync-templates                       # stamps the fleet skill + .mcp.json into each repo
+pnpm daemon sync-templates                       # stamps the fleet skill, issue forms, + .mcp.json into each repo
 ```
 
-`templates/` in this repo (the fleet-backlog skill and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file as-is and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates that touch the templates.
+`templates/` in this repo (the fleet-backlog skill, the `templates/issue-forms/` issue forms, and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file and issue forms as-is (issue forms land in `.github/ISSUE_TEMPLATE/`) and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates that touch the templates.
 
 ## Deploying updates
 

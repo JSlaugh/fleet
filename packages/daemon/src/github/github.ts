@@ -102,15 +102,18 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blocked
 }
 
 /**
- * Reads a `Depends-on: #12, #14` line anywhere in the issue body (case-insensitive
- * key, `#`-prefixed numbers, comma/space separated). Entries that aren't a bare
- * `#<digits>` token are ignored rather than rejecting the whole line, so a stray
+ * Reads dependencies from two possible spots in an issue body, unioning both: a
+ * `Depends-on: #12, #14` line typed anywhere (case-insensitive key, comma/space
+ * separated), and the `### Depends on\n\n#12 #14` section GitHub renders for the
+ * `depends-on` field of the fleet-task issue form. Entries that aren't a bare
+ * `#<digits>` token are ignored rather than rejecting the whole match, so a stray
  * typo in the list doesn't drop every other dependency.
  */
 export function parseDependsOn(body: string): number[] {
-  const match = /^\s*depends-on\s*:\s*(.+)$/im.exec(body);
-  if (!match) return [];
-  const numbers = (match[1] ?? "")
+  const lineMatch = /^\s*depends-on\s*:\s*(.+)$/im.exec(body);
+  const sectionMatch = /^###\s*depends on\s*\r?\n+([^\n]*)/im.exec(body);
+  const raw = [lineMatch?.[1], sectionMatch?.[1]].filter((s): s is string => s !== undefined).join(" ");
+  const numbers = raw
     .split(/[\s,]+/)
     .map((token) => /^#(\d+)$/.exec(token.trim()))
     .filter((m): m is RegExpExecArray => m !== null)

@@ -131,6 +131,26 @@ describe("parseDependsOn", () => {
   it("dedupes repeated references", () => {
     expect(parseDependsOn("Depends-on: #4, #4")).toEqual([4]);
   });
+
+  it("parses the issue-form-rendered section", () => {
+    const body = ["### Depends on", "", "#12 #14", "", "### Priority", "", "P2 - default"].join("\n");
+    expect(parseDependsOn(body)).toEqual([12, 14]);
+  });
+
+  it("is case-insensitive on the section heading", () => {
+    const body = ["### depends on", "", "#5"].join("\n");
+    expect(parseDependsOn(body)).toEqual([5]);
+  });
+
+  it("returns [] for an unfilled optional section", () => {
+    const body = ["### Depends on", "", "_No response_", "", "### Priority", "", "P2 - default"].join("\n");
+    expect(parseDependsOn(body)).toEqual([]);
+  });
+
+  it("unions dependencies from the line and section forms when both are present", () => {
+    const body = ["Depends-on: #1", "", "### Depends on", "", "#2"].join("\n");
+    expect(parseDependsOn(body)).toEqual([1, 2]);
+  });
 });
 
 describe("dependencyStatus", () => {
