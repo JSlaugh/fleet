@@ -578,6 +578,33 @@ describe("processTicket", () => {
     expect(ctx.state.get("alpha", 62)?.status).toBe("running");
   });
 
+  describe("ticket type", () => {
+    beforeEach(() => {
+      vi.mocked(runner.runSession).mockClear();
+    });
+
+    it("leaves ticketType undefined when createWorktree resolves no type", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+      await runProcessTicket(ctx);
+
+      expect(ctx.state.get("alpha", 62)?.ticketType).toBeUndefined();
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { ticketType?: string } | undefined;
+      expect(call?.ticketType).toBeUndefined();
+    });
+
+    it("records the matched type on the TicketRecord and passes it through to runSession", async () => {
+      vi.mocked(worktree.createWorktree).mockResolvedValueOnce({ path: "/tmp/wt/62", branch: "fleet/62", type: "backend" });
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+      await runProcessTicket(ctx);
+
+      expect(ctx.state.get("alpha", 62)?.ticketType).toBe("backend");
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { ticketType?: string } | undefined;
+      expect(call?.ticketType).toBe("backend");
+    });
+  });
+
   describe("epic linkage", () => {
     beforeEach(() => {
       vi.mocked(github.getIssue).mockReset().mockResolvedValue(undefined);

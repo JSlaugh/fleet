@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeProject } from "../test-support.ts";
-import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock } from "./worker.ts";
+import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock, buildSystemPromptAppend } from "./worker.ts";
 
 const project = makeProject();
 const issue = { number: 42, title: "the ticket", body: "the body" };
@@ -96,5 +96,25 @@ describe("buildEpicContextBlock", () => {
   it("caps the body excerpt so a huge epic body can't dominate the prompt", () => {
     const block = buildEpicContextBlock({ ...epic, body: "x".repeat(2000) });
     expect(block.length).toBeLessThan(700);
+  });
+});
+
+describe("buildSystemPromptAppend", () => {
+  it("a code session with no type contract is byte-for-byte the plain worker contract", () => {
+    expect(buildSystemPromptAppend("code")).toContain("You are a fleet worker");
+    expect(buildSystemPromptAppend("code")).toBe(buildSystemPromptAppend("code", undefined));
+  });
+
+  it("a code session with a type contract appends it after the worker contract", () => {
+    const appendix = buildSystemPromptAppend("code", "Run the backend test suite before declaring done.");
+    expect(appendix.startsWith("You are a fleet worker")).toBe(true);
+    expect(appendix).toContain("Run the backend test suite before declaring done.");
+    expect(appendix.indexOf("You are a fleet worker")).toBeLessThan(appendix.indexOf("Run the backend test suite"));
+  });
+
+  it("a plan session ignores any type contract entirely — untyped and typed planners are byte-for-byte identical", () => {
+    const plain = buildSystemPromptAppend("plan");
+    expect(plain).toContain("You are a fleet planning agent");
+    expect(buildSystemPromptAppend("plan", "some type contract")).toBe(plain);
   });
 });

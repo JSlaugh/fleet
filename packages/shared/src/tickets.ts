@@ -32,6 +32,15 @@ export interface TicketRecord {
   autoElevated?: boolean;
   /** The epic issue number this ticket was filed under, parsed from its `Part-of: #<epic>` body line at claim time. */
   epicNumber?: number;
+  /**
+   * The `fleet:type:<name>` this ticket's `fleet.yaml` setup profile actually
+   * matched at claim time — undefined for an untyped ticket, an unmatched
+   * type label, or a repo with no profile map at all. Drives which type's
+   * `contract:` appendix (if any) gets added to the worker's system prompt,
+   * re-resolved from `fleet.yaml` on every session open rather than cached
+   * here, so a later edit to the repo's contract text takes effect on resume.
+   */
+  ticketType?: string;
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
   /**

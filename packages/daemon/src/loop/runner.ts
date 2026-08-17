@@ -1,10 +1,11 @@
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import { ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord } from "@fleet/shared";
+import { contractForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
+import { readBuildSpec } from "../github/buildspec.ts";
 import { getIssueLabels, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
-import { log } from "../log.ts";
+import { log, logError } from "../log.ts";
 import { supervise } from "./supervise.ts";
 import { WorkerSession, type SessionKind } from "../session/worker.ts";
 import type { Worktree } from "../github/worktree.ts";
@@ -92,6 +93,28 @@ export interface RunSessionOptions {
   elevated: boolean;
   light: boolean;
   kind: SessionKind;
+  /** `TicketRecord.ticketType` — which of the repo's `fleet.yaml` profiles (if any) this ticket's contract appendix comes from. */
+  ticketType?: string;
+}
+
+/**
+ * Re-reads `fleet.yaml` fresh (rather than trusting anything cached from
+ * claim time) to find `ticketType`'s declared `contract:` markdown, so a
+ * resumed session picks up a since-edited contract same as a fresh claim
+ * would. Best-effort: a missing/malformed spec at session-open time (e.g. a
+ * resume after the worktree's fleet.yaml was hand-edited into something
+ * invalid) fails open to no appendix rather than blocking the session — the
+ * same fail-open posture the machine review gate uses.
+ */
+export function resolveTypeContract(scope: string, worktreePath: string, ticketType: string | undefined): string | undefined {
+  if (!ticketType) return undefined;
+  try {
+    const spec = readBuildSpec(worktreePath);
+    return spec ? contractForType(spec, ticketType) : undefined;
+  } catch (err) {
+    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its contract appendix`, err);
+    return undefined;
+  }
 }
 
 /** Opens one worker session, supervises it to a terminal state, and tears it down. */
@@ -111,6 +134,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   } else if (!elevated && light && project.lightModel) {
     log("loop", `${scope}: running light on ${project.lightModel}`);
   }
+  const contract = resolveTypeContract(scope, worktree.path, opts.ticketType);
   const session = new WorkerSession({
     project,
     scope,
@@ -118,6 +142,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     journal,
     model,
     kind: opts.kind,
+    contract,
     onActivity: (note) => {
       const record = ctx.state.get(project.name, issue.number);
       ctx.state.update(project.name, issue.number, {
@@ -192,6 +217,7 @@ export async function resumeTicket(
       elevated,
       light,
       kind: isPlan ? "plan" : "code",
+      ticketType: record.ticketType,
     });
   } catch (err) {
     await reportRunFailure(ctx, project, issue, "resume failed", err);
