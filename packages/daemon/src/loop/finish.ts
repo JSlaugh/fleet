@@ -15,6 +15,7 @@ import {
   upsertStatusComment,
   type ReadyIssue,
 } from "../github/github.ts";
+import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { hasCommits, pushBranch } from "../github/worktree.ts";
 import { gatherFailurePostMortem } from "./postmortem.ts";
@@ -274,6 +275,13 @@ export async function finishFailed(
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error, autoElevated: true });
     ctx.emitBoard();
     log("loop", `${scope}: failed — auto-escalating to ${project.elevatedModel} (once)`);
+    new Journal(ctx.dataDirPath, project.name, issue.number).append({
+      type: "fleet",
+      event: "auto-elevated",
+      fromModel: record?.model,
+      toModel: project.elevatedModel,
+      error,
+    });
     return;
   }
 

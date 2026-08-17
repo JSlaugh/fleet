@@ -12,7 +12,7 @@ export class Journal {
   }
 
   append(entry: Record<string, unknown>): void {
-    appendFileSync(this.filePath, `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);
+    appendFileSync(this.filePath, `${JSON.stringify({ v: 2, ts: new Date().toISOString(), ...entry })}\n`);
   }
 }
 

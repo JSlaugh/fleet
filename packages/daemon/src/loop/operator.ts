@@ -62,6 +62,7 @@ export async function reply(
   projectName: string,
   issueNumber: number,
   message: string,
+  reason: string = "operator-reply",
 ): Promise<"steered" | "resumed"> {
   const scope = key(projectName, issueNumber);
   // A human-driven session earns a fresh auto-recovery if it stalls.
@@ -70,6 +71,7 @@ export async function reply(
   const waiter = ctx.replyWaiters.get(scope);
   if (waiter) {
     waiter(message);
+    new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "parked", reason });
     return "steered";
   }
 
@@ -77,6 +79,7 @@ export async function reply(
   if (liveSession) {
     liveSession.send(message);
     log("loop", `${scope}: reply queued into running session`);
+    new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "live", reason });
     return "steered";
   }
 
@@ -87,7 +90,7 @@ export async function reply(
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
   if (ctx.isShuttingDown()) throw new Error(`daemon is shutting down; reply again once it's back up`);
 
-  track(ctx, projectName, issueNumber, resumeTicket(ctx, project, record, message));
+  track(ctx, projectName, issueNumber, resumeTicket(ctx, project, record, message, reason));
   return "resumed";
 }
 

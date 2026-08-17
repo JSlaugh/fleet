@@ -113,7 +113,7 @@ export async function addressComments(
     if (eligible.length === 0) continue;
 
     try {
-      const outcome = await reply(ctx, project.name, record.issueNumber, buildCommentPrompt(eligible));
+      const outcome = await reply(ctx, project.name, record.issueNumber, buildCommentPrompt(eligible), "comment-injected");
       log("loop", `${scope}: ${eligible.length} new comment(s) ${outcome} into the session`);
     } catch (err) {
       logError("loop", `${scope}: could not route new comments into the session`, err);

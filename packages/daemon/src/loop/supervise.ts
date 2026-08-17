@@ -194,7 +194,14 @@ export async function machineReviewGate(
   }
 
   const findings = outcome.result.findings;
-  journal.append({ type: "fleet", event: "machine-review-findings", count: findings.length, findings });
+  journal.append({
+    type: "fleet",
+    event: "machine-review-findings",
+    count: findings.length,
+    severities: findings.map((f) => f.severity).filter((s): s is NonNullable<typeof s> => s !== undefined),
+    files: findings.map((f) => f.file),
+    findings,
+  });
   log("loop", `${scope}: machine review found ${findings.length} issue(s) — sending the worker back for one fix round`);
   ctx.state.update(project.name, issue.number, {
     machineReviewOutcome: "findings",

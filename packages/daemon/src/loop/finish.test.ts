@@ -1,6 +1,7 @@
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { readJournalTail } from "../store/journal.ts";
 import { PostCompletionError } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 
@@ -141,6 +142,32 @@ describe("finishBlocked — status comment error policy", () => {
 
     expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("needs-input");
+  });
+});
+
+describe("finishFailed — auto-elevation", () => {
+  it("journals an auto-elevated fleet event when escalating", async () => {
+    const elevatingProject = makeProject({ elevatedModel: "claude-opus-5" });
+    const { dataDir, state } = makeTempState("fleet-finish-elevate-");
+    state.upsert(record({ model: "claude-sonnet-5" }));
+    const config = makeFleetConfig({ dataDir, projects: [elevatingProject] });
+    const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+    const internals = loop as unknown as {
+      finishFailed: (p: ProjectConfig, i: typeof issue, error: string) => Promise<void>;
+    };
+
+    await internals.finishFailed(elevatingProject, issue, "the model gave up");
+
+    const entries = readJournalTail(dataDir, "alpha", 7, 10);
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        type: "fleet",
+        event: "auto-elevated",
+        fromModel: "claude-sonnet-5",
+        toModel: "claude-opus-5",
+        error: "the model gave up",
+      }),
+    );
   });
 });
 

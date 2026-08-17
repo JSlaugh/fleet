@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord } from "../test-support.ts";
+import { readJournalTail } from "../store/journal.ts";
 import { heartbeatRefreshAgeMs, isClaimStale, releaseStaleClaims, refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { StatusCommentInfo } from "../github/github.ts";
 
@@ -111,6 +112,21 @@ describe("releaseStaleClaims", () => {
     expect(github.upsertStatusComment).toHaveBeenCalledWith(project, 1, expect.stringContaining("someone-else"));
     expect(github.removeAssignee).toHaveBeenCalledWith(project, 1, "someone-else");
     expect(github.markReady).toHaveBeenCalledWith(project, 1);
+  });
+
+  it("journals a stale-claim-released fleet event", async () => {
+    vi.mocked(github.getStatusCommentInfo).mockResolvedValue({
+      createdAt: "2020-01-01T00:00:00.000Z",
+      heartbeat: { timestamp: "2020-01-01T00:00:00.000Z", owner: "someone-else" },
+    });
+    const ctx = makeCtx();
+
+    await releaseStaleClaims(ctx, project, [issue(1, ["fleet:in-progress"], { assignees: ["someone-else"] })], "daemon-a");
+
+    const entries = readJournalTail(ctx.dataDirPath, project.name, 1, 10);
+    expect(entries).toContainEqual(
+      expect.objectContaining({ type: "fleet", event: "stale-claim-released", owners: ["someone-else"] }),
+    );
   });
 
   it("removes every non-self assignee left over from a wedged claim, not just the first", async () => {

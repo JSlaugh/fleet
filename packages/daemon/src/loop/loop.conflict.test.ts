@@ -68,9 +68,10 @@ describe("addressReviews — conflict detection", () => {
 
     expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:review", "fleet:in-progress");
     expect(runner.resumeTicket).toHaveBeenCalledOnce();
-    const prompt = vi.mocked(runner.resumeTicket).mock.calls[0]?.[3] as string;
-    expect(prompt).toContain("Merge conflict");
-    expect(prompt).toContain("origin/main");
+    const call = vi.mocked(runner.resumeTicket).mock.calls[0];
+    expect(call?.[3] as string).toContain("Merge conflict");
+    expect(call?.[3] as string).toContain("origin/main");
+    expect(call?.[4]).toBe("conflict");
     expect(state.get("alpha", 7)?.conflictHandled).toBe(true);
   });
 
@@ -111,9 +112,10 @@ describe("addressReviews — conflict detection", () => {
     await addressReviews(ctx, project, openIssues);
 
     expect(runner.resumeTicket).toHaveBeenCalledOnce();
-    const prompt = vi.mocked(runner.resumeTicket).mock.calls[0]?.[3] as string;
-    expect(prompt).toContain("fix this");
-    expect(prompt).toContain("Merge conflict");
+    const call = vi.mocked(runner.resumeTicket).mock.calls[0];
+    expect(call?.[3] as string).toContain("fix this");
+    expect(call?.[3] as string).toContain("Merge conflict");
+    expect(call?.[4]).toBe("review-feedback+conflict");
     expect(state.get("alpha", 7)?.lastReviewHandledAt).toBe("2026-01-02T00:00:00.000Z");
     expect(state.get("alpha", 7)?.conflictHandled).toBe(true);
   });
@@ -126,9 +128,10 @@ describe("addressReviews — conflict detection", () => {
     await addressReviews(ctx, project, openIssues);
 
     expect(runner.resumeTicket).toHaveBeenCalledOnce();
-    const prompt = vi.mocked(runner.resumeTicket).mock.calls[0]?.[3] as string;
-    expect(prompt).toContain("fix this");
-    expect(prompt).not.toContain("Merge conflict");
+    const call = vi.mocked(runner.resumeTicket).mock.calls[0];
+    expect(call?.[3] as string).toContain("fix this");
+    expect(call?.[3] as string).not.toContain("Merge conflict");
+    expect(call?.[4]).toBe("review-feedback");
   });
 
   it("does nothing when there is neither feedback nor a conflict", async () => {

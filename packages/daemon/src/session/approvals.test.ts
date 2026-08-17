@@ -26,7 +26,7 @@ describe("ApprovalManager", () => {
     const id = mgr.list()[0]!.id;
 
     expect(mgr.resolve(id, { allowed: true })).toBe(true);
-    await expect(promise).resolves.toEqual({ allowed: true });
+    await expect(promise).resolves.toEqual({ allowed: true, reason: "allowed" });
     expect(mgr.list()).toHaveLength(0);
   });
 
@@ -35,7 +35,7 @@ describe("ApprovalManager", () => {
     const promise = baseReq(mgr);
     const id = mgr.list()[0]!.id;
     mgr.resolve(id, { allowed: false });
-    await expect(promise).resolves.toEqual({ allowed: false });
+    await expect(promise).resolves.toEqual({ allowed: false, reason: "denied" });
   });
 
   it("settles an answer (message) outcome", async () => {
@@ -43,7 +43,7 @@ describe("ApprovalManager", () => {
     const promise = baseReq(mgr, { kind: "question" });
     const id = mgr.list()[0]!.id;
     mgr.resolve(id, { allowed: true, message: "use option A" });
-    await expect(promise).resolves.toEqual({ allowed: true, message: "use option A" });
+    await expect(promise).resolves.toEqual({ allowed: true, message: "use option A", reason: "answered" });
     expect(mgr.list()).toHaveLength(0);
   });
 
@@ -52,7 +52,7 @@ describe("ApprovalManager", () => {
     const mgr = new ApprovalManager();
     const promise = baseReq(mgr, { timeoutMs: 1000 });
     vi.advanceTimersByTime(1000);
-    await expect(promise).resolves.toEqual({ allowed: false });
+    await expect(promise).resolves.toEqual({ allowed: false, reason: "timed out" });
     expect(mgr.list()).toHaveLength(0);
   });
 
@@ -61,7 +61,7 @@ describe("ApprovalManager", () => {
     const controller = new AbortController();
     const promise = baseReq(mgr, { signal: controller.signal });
     controller.abort();
-    await expect(promise).resolves.toEqual({ allowed: false });
+    await expect(promise).resolves.toEqual({ allowed: false, reason: "session aborted" });
     expect(mgr.list()).toHaveLength(0);
   });
 
@@ -93,7 +93,7 @@ describe("ApprovalManager", () => {
     const id = mgr.list()[0]!.id;
     expect(mgr.resolve(id, { allowed: true })).toBe(true);
     expect(mgr.resolve(id, { allowed: false })).toBe(false);
-    await expect(promise).resolves.toEqual({ allowed: true });
+    await expect(promise).resolves.toEqual({ allowed: true, reason: "allowed" });
   });
 
   it("emits events on request and on settle", async () => {

@@ -60,7 +60,7 @@ describe("POST /api/approvals/:id", () => {
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    await expect(outcome).resolves.toEqual({ allowed: true, message: undefined });
+    await expect(outcome).resolves.toEqual({ allowed: true, message: undefined, reason: "allowed" });
   });
 
   it("denies a pending approval", async () => {
@@ -78,7 +78,7 @@ describe("POST /api/approvals/:id", () => {
     const res = await postJson(app, `/api/approvals/${id}`, { decision: "deny" });
 
     expect(res.status).toBe(200);
-    await expect(outcome).resolves.toEqual({ allowed: false, message: undefined });
+    await expect(outcome).resolves.toEqual({ allowed: false, message: undefined, reason: "denied" });
   });
 
   it("answers a pending question with a message", async () => {
@@ -98,7 +98,7 @@ describe("POST /api/approvals/:id", () => {
     expect(res.status).toBe(200);
     // The route only sets `allowed: true` for `decision === "allow"` — an
     // "answer" carries its message but resolves `allowed: false`.
-    await expect(outcome).resolves.toEqual({ allowed: false, message: "use option A" });
+    await expect(outcome).resolves.toEqual({ allowed: false, message: "use option A", reason: "answered" });
   });
 
   it("400s on an invalid decision", async () => {
