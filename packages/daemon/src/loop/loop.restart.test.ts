@@ -154,6 +154,26 @@ describe("restartTicket with a live session", () => {
     expect(state.get("alpha", 7)?.sessionId).toBeUndefined();
   });
 
+  it("preserves the real prior summary in priorAttemptSummary even though restarting a live session overwrites lastSummary with boilerplate first", async () => {
+    const { loop, state, internals } = makeLoop(
+      record({ status: "needs-input", lastSummary: "Blocked on: which auth provider to use?" }),
+    );
+    const abortController = new AbortController();
+    internals.live.set("alpha#7", { abortController, sessionId: "sess-7" });
+    internals.running.set(
+      "alpha#7",
+      new Promise<void>((resolve) => {
+        abortController.signal.addEventListener("abort", () => resolve());
+      }),
+    );
+
+    await loop.restartTicket("alpha", 7);
+
+    const updated = state.get("alpha", 7);
+    expect(updated?.priorAttemptSummary).toBe("Blocked on: which auth provider to use?");
+    expect(updated?.lastSummary).not.toBe("Blocked on: which auth provider to use?");
+  });
+
   it("releases a session parked awaiting a reply so it does not wait out replyWaitMinutes", async () => {
     const { loop, internals } = makeLoop(record({ status: "needs-input" }));
     const abortController = new AbortController();

@@ -117,6 +117,13 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
   // leave GitHub and the worktree disagreeing. Same guard as `reply`.
   if (!session && inFlight) throw new Error(`${scope} is mid-transition; try again shortly`);
 
+  // Captured before the live-session branch below overwrites `lastSummary`
+  // with restart boilerplate, so the real prior summary/failure reason still
+  // reaches `resetForFreshClaim` — the common case for restarting a stuck
+  // running/needs-input ticket has a live session, and would otherwise
+  // clobber it before `resetForFreshClaim` ever gets to read it.
+  const priorSummary = ctx.state.get(projectName, issueNumber)?.lastSummary;
+
   if (session) {
     // The flag must be set before the abort: aborting surfaces to `supervise`
     // as an errored turn, and `finishFailed` has to know not to report it.
@@ -144,7 +151,7 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
     }
   }
 
-  await resetForFreshClaim(ctx, project, issueNumber);
+  await resetForFreshClaim(ctx, project, issueNumber, priorSummary);
 }
 
 /**
@@ -177,10 +184,23 @@ export async function acceptPlan(ctx: LoopContext, projectName: string, issueNum
  * the recorded session id, the live flag, and the once-only auto-resume budget.
  * The journal file is kept — only an entry is appended — so the restarted
  * ticket's history stays readable in the dashboard.
+ *
+ * `priorSummary` is the real prior summary/failure reason to preserve into
+ * `priorAttemptSummary` so the next claim's prompt can still surface it
+ * (`buildPriorAttemptBlock`) once `lastSummary` below is overwritten with
+ * restart boilerplate. `restartTicket` captures it itself, before its
+ * live-session branch does that overwrite early; a caller that doesn't pass
+ * one (e.g. a direct call with no live session in play) falls back to
+ * whatever `lastSummary` still holds right now.
  */
-export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfig, issueNumber: number): Promise<void> {
+export async function resetForFreshClaim(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issueNumber: number,
+  priorSummary?: string,
+): Promise<void> {
   const scope = key(project.name, issueNumber);
-  const existing = ctx.state.get(project.name, issueNumber);
+  const preservedSummary = priorSummary ?? ctx.state.get(project.name, issueNumber)?.lastSummary;
   new Journal(ctx.dataDirPath, project.name, issueNumber).append({
     type: "fleet",
     event: "restarted-by-operator",
@@ -197,10 +217,7 @@ export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfi
     // treat this ticket as permanently past ready.
     prUrl: undefined,
     lastSummary: RESTART_SUMMARY,
-    // The real prior summary/failure reason is about to be overwritten by the
-    // line above — preserve it so the next claim's prompt can still surface
-    // it (`buildPriorAttemptBlock`).
-    priorAttemptSummary: existing?.lastSummary,
+    priorAttemptSummary: preservedSummary,
     lastActivityAt: new Date().toISOString(),
     lastActivityNote: undefined,
   });
