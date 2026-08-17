@@ -169,6 +169,23 @@ describe("GET /api/tickets/:project/:issue/report", () => {
     expect(body.cacheCreationTokens).toBe(20);
   });
 
+  it("excludes the plan-review sub-session's own usage from cache token totals", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 12, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "assistant", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheCreationTokens: 20 } },
+      { ts: "t2", type: "result", subtype: "success", costUsd: 0.1 },
+      { ts: "t3", type: "fleet", event: "plan-review-started" },
+      { ts: "t4", type: "assistant", usage: { cacheReadTokens: 999, cacheCreationTokens: 999 }, session: "plan-review" },
+      { ts: "t5", type: "result", subtype: "success", session: "plan-review" },
+    ]);
+
+    const { body } = await fetchReport(app, 12);
+
+    expect(body.cacheReadTokens).toBe(100);
+    expect(body.cacheCreationTokens).toBe(20);
+  });
+
   it("reports a passed machine review", async () => {
     const { app, dataDir } = makeApp();
     writeJournal(dataDir, 8, [

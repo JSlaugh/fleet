@@ -19,7 +19,7 @@ import { bodyWithDependsOn, createIssue, setPriority } from "../github/github.ts
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
-import { readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
+import { isReviewSessionEntry, readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
 import type { StateStore } from "../store/state.ts";
 import { readTicketTranscript } from "../store/transcripts.ts";
 
@@ -364,8 +364,8 @@ export function startServer(opts: {
  * through the next `result` entry. Every enrichment field (`toolCalls`,
  * `toolResults`, `numTurns`, `durationMs`) is optional on `JournalEntry`, so
  * older journals just fall back to zeroed/null values rather than throwing.
- * Entries from the one-shot machine-review sub-session (`session:
- * "machine-review"`, see review.ts) share this same journal file but aren't
+ * Entries from the one-shot machine-review/plan-review sub-session (see
+ * `isReviewSessionEntry`, review.ts) share this same journal file but aren't
  * the ticket's own worker turn, so they're excluded entirely.
  */
 function buildTicketReport(journal: JournalEntry[]): TicketReport {
@@ -377,7 +377,7 @@ function buildTicketReport(journal: JournalEntry[]): TicketReport {
   let segmentOpen = false;
 
   for (const entry of journal) {
-    if (entry.session === "machine-review") continue;
+    if (isReviewSessionEntry(entry)) continue;
 
     if (entry.type === "fleet" && (entry.event === "claimed" || entry.event === "resumed")) {
       segmentOpen = true;

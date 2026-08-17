@@ -23,6 +23,20 @@ export function readJournalTail(dataDir: string, project: string, issueNumber: n
   return journalEntriesTail(openDatabase(dataDir), project, issueNumber, limit);
 }
 
+/** The `session` tag review.ts's `runReviewSession` stamps onto every message of a one-shot reviewer sub-session — see `isReviewSessionEntry`. */
+const REVIEW_SESSION_TAGS = new Set(["machine-review", "plan-review"]);
+
+/**
+ * Whether a journal entry belongs to the one-shot machine-review or
+ * plan-review reviewer sub-session rather than the ticket's own worker turn —
+ * both share the ticket's journal file (see review.ts's `runReviewSession`),
+ * so anything rolling up "the worker's own session" (tool counts, cache
+ * tokens, segments) needs to exclude both tags, not just one.
+ */
+export function isReviewSessionEntry(entry: JournalEntry): boolean {
+  return typeof entry.session === "string" && REVIEW_SESSION_TAGS.has(entry.session);
+}
+
 export interface JournalEventSummary {
   bashDeniedCount: number;
   approvalLatency: ApprovalLatencyStats;
@@ -40,8 +54,8 @@ export interface JournalEventSummary {
  * bash-denied/approval-latency pieces onto the archived `ClosedTicketRecord` so
  * cross-ticket history aggregates never need to re-scan a journal.
  *
- * Skips the machine-review sub-session's own entries (`session:
- * "machine-review"`) the same way `buildTicketReport` does — those are a
+ * Skips the machine-review/plan-review sub-session's own entries (see
+ * `isReviewSessionEntry`) the same way `buildTicketReport` does — those are a
  * separate one-shot reviewer turn, not the ticket's own worker session.
  */
 export function summarizeJournalEvents(journal: JournalEntry[]): JournalEventSummary {
@@ -56,7 +70,7 @@ export function summarizeJournalEvents(journal: JournalEntry[]): JournalEventSum
   let reviewErrorSubtype: string | undefined;
 
   for (const entry of journal) {
-    if (entry.session === "machine-review") continue;
+    if (isReviewSessionEntry(entry)) continue;
 
     if (entry.type === "fleet" && entry.event === "bash-denied") {
       bashDeniedCount += 1;
