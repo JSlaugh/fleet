@@ -19,6 +19,7 @@ import {
   setProjectPaused,
   setTicketPriority,
 } from "./lib/api.ts";
+import { groupByEpic } from "./lib/board.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
 import DigestPanel from "./components/DigestPanel.vue";
@@ -88,18 +89,6 @@ const totalCost = computed(() => {
 const visibleTickets = computed(() =>
   projectFilter.value ? tickets.value.filter((t) => t.project === projectFilter.value) : tickets.value,
 );
-
-/** Clusters tickets sharing an `epicNumber` together, preserving each cluster's first-appearance position — the "modest" half of epic↔child board grouping (no drag/drop, just adjacency). */
-function groupByEpic(list: BoardTicket[]): BoardTicket[] {
-  const buckets = new Map<string, BoardTicket[]>();
-  for (const ticket of list) {
-    const bucketKey = ticket.epicNumber !== undefined ? `epic:${ticket.project}#${ticket.epicNumber}` : `solo:${ticket.project}#${ticket.issueNumber}`;
-    const bucket = buckets.get(bucketKey);
-    if (bucket) bucket.push(ticket);
-    else buckets.set(bucketKey, [ticket]);
-  }
-  return [...buckets.values()].flat();
-}
 
 const byStatus = computed(() => {
   const groups = new Map<BoardStatus, BoardTicket[]>(BOARD_COLUMNS.map((c) => [c.status, []]));
