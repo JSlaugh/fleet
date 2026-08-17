@@ -12,6 +12,7 @@ import {
   type JournalEntry,
   type TicketDetail,
   type TicketReport,
+  type TicketTranscript,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { bodyWithDependsOn, createIssue, setPriority } from "../github/github.ts";
@@ -20,6 +21,7 @@ import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
 import { readJournalTail } from "../store/journal.ts";
 import type { StateStore } from "../store/state.ts";
+import { readTicketTranscript } from "../store/transcripts.ts";
 
 /**
  * `ready: false` files a plain issue carrying only the priority label, so a
@@ -174,6 +176,17 @@ export function createApp(opts: {
     }
     const journal = readJournalTail(dataDir, projectName, issueNumber, Number.MAX_SAFE_INTEGER);
     return c.json(buildTicketReport(journal));
+  });
+
+  app.get("/api/tickets/:project/:issue/transcript", (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const files = readTicketTranscript(dataDir, projectName, issueNumber);
+    if (!files) return c.json({ error: "no archived transcript for this ticket" }, 404);
+    return c.json({ files } satisfies TicketTranscript);
   });
 
   app.post("/api/tickets/:project/:issue/priority", async (c) => {

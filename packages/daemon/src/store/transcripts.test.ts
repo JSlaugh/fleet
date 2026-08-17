@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeRecord } from "../test-support.ts";
-import { copyTicketTranscripts, sanitizeCwd } from "./transcripts.ts";
+import { copyTicketTranscripts, readTicketTranscript, sanitizeCwd } from "./transcripts.ts";
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -78,5 +78,37 @@ describe("copyTicketTranscripts", () => {
 
     const destDir = join(dataDirPath, "transcripts", "alpha", "7");
     expect(readdirSync(destDir)).toEqual(["sess-1.jsonl"]);
+  });
+});
+
+describe("readTicketTranscript", () => {
+  it("returns undefined when nothing has been archived", () => {
+    const dataDirPath = tempDir("fleet-transcripts-dest-");
+    expect(readTicketTranscript(dataDirPath, "alpha", 7)).toBeUndefined();
+  });
+
+  it("returns the archived file's content", () => {
+    const dataDirPath = tempDir("fleet-transcripts-dest-");
+    const destDir = join(dataDirPath, "transcripts", "alpha", "7");
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(join(destDir, "sess-1.jsonl"), '{"type":"user"}\n');
+
+    expect(readTicketTranscript(dataDirPath, "alpha", 7)).toEqual([
+      { name: "sess-1.jsonl", content: '{"type":"user"}\n' },
+    ]);
+  });
+
+  it("orders multiple session files oldest-first by mtime", () => {
+    const dataDirPath = tempDir("fleet-transcripts-dest-");
+    const destDir = join(dataDirPath, "transcripts", "alpha", "7");
+    mkdirSync(destDir, { recursive: true });
+    writeFileSync(join(destDir, "sess-newer.jsonl"), "newer\n");
+    writeFileSync(join(destDir, "sess-older.jsonl"), "older\n");
+    const now = new Date();
+    utimesSync(join(destDir, "sess-older.jsonl"), now, new Date(now.getTime() - 60_000));
+    utimesSync(join(destDir, "sess-newer.jsonl"), now, now);
+
+    const files = readTicketTranscript(dataDirPath, "alpha", 7);
+    expect(files?.map((f) => f.name)).toEqual(["sess-older.jsonl", "sess-newer.jsonl"]);
   });
 });

@@ -6,6 +6,7 @@ import type {
   PendingApproval,
   TicketDetail,
   TicketReport,
+  TicketTranscript,
   WorkHoursReserveStatus,
 } from "@fleet/shared";
 
@@ -61,6 +62,13 @@ export function fetchDigest(hours = 24): Promise<DigestResponse> {
 export function fetchTicketReport(project: string, issueNumber: number): Promise<TicketReport> {
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/report`).then((res) =>
     json<TicketReport>(res),
+  );
+}
+
+/** 404s when no transcript has been archived for this ticket yet — callers treat that as "not available" rather than an error. */
+export function fetchTicketTranscript(project: string, issueNumber: number): Promise<TicketTranscript> {
+  return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/transcript`).then((res) =>
+    json<TicketTranscript>(res),
   );
 }
 

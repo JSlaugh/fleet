@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, ClosedTicketRecord, TicketDetail, TicketReport } from "@fleet/shared";
+import type { BoardTicket, ClosedTicketRecord, TicketDetail, TicketReport, TicketTranscript } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import {
   acceptPlan,
   fetchTicket,
   fetchTicketReport,
+  fetchTicketTranscript,
   formatCost,
   formatDuration,
   formatTime,
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 
 const detail = ref<TicketDetail>();
 const report = ref<TicketReport>();
+const transcript = ref<TicketTranscript>();
 const error = ref<string>();
 const reply = ref("");
 const sending = ref(false);
@@ -132,6 +134,11 @@ async function load() {
   } catch {
     report.value = undefined;
   }
+  try {
+    transcript.value = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
+  } catch {
+    transcript.value = undefined;
+  }
 }
 
 onMounted(() => {
@@ -231,6 +238,10 @@ onUnmounted(() => clearInterval(timer));
       </dl>
       <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
         {{ detail.record.lastSummary }}
+      </p>
+      <p v-if="detail?.record?.sessionId" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+        Resume locally:
+        <code class="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">claude --resume {{ detail.record.sessionId }}</code>
       </p>
     </header>
 
@@ -360,7 +371,7 @@ onUnmounted(() => clearInterval(timer));
       </section>
 
       <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
-        Session transcript
+        Session activity
       </h3>
       <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
       <p v-else-if="!detail || detail.journal.length === 0" class="text-xs text-neutral-400 dark:text-neutral-500">
@@ -383,6 +394,25 @@ onUnmounted(() => clearInterval(timer));
           </p>
         </li>
       </ol>
+
+      <h3 class="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+        Archived transcript
+      </h3>
+      <p v-if="!transcript?.files?.length" class="text-xs text-neutral-400 dark:text-neutral-500">
+        No archived transcript yet — transcripts are copied in once the ticket's worktree is cleaned up.
+      </p>
+      <div v-else class="space-y-2">
+        <details
+          v-for="file in transcript.files"
+          :key="file.name"
+          class="rounded bg-neutral-50 dark:bg-neutral-800"
+        >
+          <summary class="cursor-pointer px-2 py-1 text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+            {{ file.name }}
+          </summary>
+          <pre class="max-h-64 overflow-y-auto whitespace-pre-wrap break-words px-2 pb-2 font-mono text-[10px] leading-relaxed text-neutral-600 dark:text-neutral-400">{{ file.content }}</pre>
+        </details>
+      </div>
     </div>
   </aside>
 </template>
