@@ -169,6 +169,26 @@ export function bodyWithPartOf(body: string, epicNumber: number | undefined): st
   return body.trim().length > 0 ? `${body}\n\n${line}` : line;
 }
 
+/** Hard ceiling `parseTicketTimeoutMinutes` clamps to, regardless of what the body requests. */
+export const MAX_TICKET_TIMEOUT_MINUTES = 240;
+
+/**
+ * Reads a per-ticket `Timeout: 60m` line typed anywhere in the body (case-insensitive
+ * key), the same tolerant single-line style as `Depends-on`/`Part-of`. Accepts a plain
+ * number of minutes or a `m`/`h` suffix. Returns undefined if the line is absent or the
+ * value doesn't parse, so the caller falls back to the global `ticketTimeoutMinutes`
+ * rather than erroring — the clamp to `MAX_TICKET_TIMEOUT_MINUTES` is the caller's job,
+ * since only it can log with ticket scope.
+ */
+export function parseTicketTimeoutMinutes(body: string): number | undefined {
+  const match = /^\s*timeout\s*:\s*(\d+)\s*(h|m)?\b/im.exec(body);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  const unit = match[2]?.toLowerCase();
+  return unit === "h" ? value * 60 : value;
+}
+
 const CHILDREN_SECTION_HEADER = "## Children";
 
 /**

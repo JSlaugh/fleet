@@ -26,6 +26,7 @@ const {
   parseDependsOn,
   parseHeartbeat,
   parsePartOf,
+  parseTicketTimeoutMinutes,
   priorityRank,
   readyLabelArgs,
   refreshHeartbeat,
@@ -263,6 +264,41 @@ describe("bodyWithPartOf", () => {
 
   it("round-trips through parsePartOf", () => {
     expect(parsePartOf(bodyWithPartOf("details", 40))).toBe(40);
+  });
+});
+
+describe("parseTicketTimeoutMinutes", () => {
+  it("returns undefined when there is no Timeout line", () => {
+    expect(parseTicketTimeoutMinutes("Just a plain description.")).toBeUndefined();
+  });
+
+  it("parses a plain-minutes value", () => {
+    expect(parseTicketTimeoutMinutes("Timeout: 90")).toBe(90);
+  });
+
+  it("parses an m-suffixed value", () => {
+    expect(parseTicketTimeoutMinutes("Timeout: 90m")).toBe(90);
+  });
+
+  it("converts an h-suffixed value to minutes", () => {
+    expect(parseTicketTimeoutMinutes("Timeout: 2h")).toBe(120);
+  });
+
+  it("is case-insensitive on the key and unit", () => {
+    expect(parseTicketTimeoutMinutes("timeout: 3H")).toBe(180);
+  });
+
+  it("finds the line anywhere in a multi-line body", () => {
+    const body = ["## Problem", "Some description.", "", "Timeout: 45m", "", "## More"].join("\n");
+    expect(parseTicketTimeoutMinutes(body)).toBe(45);
+  });
+
+  it("ignores a zero value", () => {
+    expect(parseTicketTimeoutMinutes("Timeout: 0")).toBeUndefined();
+  });
+
+  it("ignores a non-numeric value", () => {
+    expect(parseTicketTimeoutMinutes("Timeout: soon")).toBeUndefined();
   });
 });
 

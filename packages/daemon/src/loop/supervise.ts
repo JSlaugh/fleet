@@ -1,7 +1,7 @@
 import { mergeModelUsage, type PlanResult, type ProjectConfig } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./finish.ts";
-import { upsertStatusComment, type ReadyIssue } from "../github/github.ts";
+import { MAX_TICKET_TIMEOUT_MINUTES, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { extendPause, handlePlanLimit } from "./pause.ts";
@@ -35,8 +35,9 @@ export async function supervise(
   session: WorkerSession,
   base: SessionBase,
 ): Promise<void> {
+  const timeoutMinutes = resolveTimeoutMinutes(ctx, key(project.name, issue.number), issue.body);
   for (;;) {
-    const turn = await session.nextResult(ctx.config.ticketTimeoutMinutes * 60_000);
+    const turn = await session.nextResult(timeoutMinutes * 60_000);
     const newCostUsd = base.costUsd + session.costUsd;
     recordSpend(ctx, project.name, issue.number, newCostUsd);
     ctx.state.update(project.name, issue.number, {
@@ -87,6 +88,22 @@ export async function supervise(
     await finishFailed(ctx, project, issue, turn.errorSubtype ?? "unknown error");
     return;
   }
+}
+
+/**
+ * Per-ticket `Timeout:` override for the global `ticketTimeoutMinutes`, clamped to
+ * `MAX_TICKET_TIMEOUT_MINUTES` so one runaway body value can't wedge a ticket at an
+ * unbounded turn timeout. A missing or malformed line falls back to the global value
+ * rather than erroring.
+ */
+export function resolveTimeoutMinutes(ctx: LoopContext, scope: string, body: string): number {
+  const requested = parseTicketTimeoutMinutes(body);
+  if (requested === undefined) return ctx.config.ticketTimeoutMinutes;
+  if (requested > MAX_TICKET_TIMEOUT_MINUTES) {
+    log("loop", `${scope}: requested Timeout ${requested}m exceeds the max — clamped to ${MAX_TICKET_TIMEOUT_MINUTES}m`);
+    return MAX_TICKET_TIMEOUT_MINUTES;
+  }
+  return requested;
 }
 
 /**
