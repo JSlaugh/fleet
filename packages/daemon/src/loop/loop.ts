@@ -6,6 +6,7 @@ import type {
   DigestResponse,
   FleetConfig,
   HistoryResponse,
+  PlanResult,
   ProjectConfig,
   WorkHoursReserveStatus,
 } from "@fleet/shared";
@@ -26,7 +27,7 @@ import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
 import { workHoursReserveStatus } from "./workHoursReserve.ts";
 import { HistoryStore, StateStore } from "../store/state.ts";
-import { machineReviewGate } from "./supervise.ts";
+import { machineReviewGate, planReviewGate } from "./supervise.ts";
 import { TrailingThrottle } from "../throttle.ts";
 import type { WorkerSession } from "../session/worker.ts";
 import type { Worktree } from "../github/worktree.ts";
@@ -241,6 +242,16 @@ export class FleetLoop {
     base: SessionBase,
   ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
     return machineReviewGate(this.ctx, project, issue, worktree, base);
+  }
+
+  private planReviewGate(
+    project: ProjectConfig,
+    issue: ReadyIssue,
+    worktree: Worktree,
+    base: SessionBase,
+    result: PlanResult,
+  ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
+    return planReviewGate(this.ctx, project, issue, worktree, base, result);
   }
 
   private finishCompleted(

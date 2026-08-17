@@ -1,9 +1,9 @@
-import type { ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { PlanResult, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { machineReviewLine } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
-import type { MachineReviewOutcome } from "../session/review.ts";
+import type { MachineReviewOutcome, PlanReviewOutcome } from "../session/review.ts";
 
 vi.mock("../github/github.ts", () => ({
   createPullRequest: vi.fn(),
@@ -30,6 +30,7 @@ vi.mock("../github/worktree.ts", () => ({
 vi.mock("../session/review.ts", async (importActual) => ({
   ...(await importActual<typeof import("../session/review.ts")>()),
   runMachineReview: vi.fn(),
+  runPlanReview: vi.fn(),
 }));
 
 const github = await import("../github/github.ts");
@@ -65,6 +66,13 @@ function makeLoop(seed?: TicketRecord, opts: { dryRun?: boolean } = {}) {
       w: typeof worktree,
       base: { costUsd: number; modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }> },
     ) => Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }>;
+    planReviewGate: (
+      p: ProjectConfig,
+      i: typeof issue,
+      w: typeof worktree,
+      base: { costUsd: number; modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }> },
+      result: PlanResult,
+    ) => Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }>;
     resetForFreshClaim: (p: ProjectConfig, issueNumber: number) => Promise<void>;
   };
   return { loop, state, internals };
@@ -72,6 +80,23 @@ function makeLoop(seed?: TicketRecord, opts: { dryRun?: boolean } = {}) {
 
 function reviewOutcome(patch: Partial<MachineReviewOutcome> = {}): MachineReviewOutcome {
   return { costUsd: 0.05, modelUsage: { "claude-haiku-4-5": { inputTokens: 10, outputTokens: 5, costUsd: 0.05 } }, ...patch };
+}
+
+function planReviewOutcome(patch: Partial<PlanReviewOutcome> = {}): PlanReviewOutcome {
+  return { costUsd: 0.05, modelUsage: { "claude-haiku-4-5": { inputTokens: 10, outputTokens: 5, costUsd: 0.05 } }, ...patch };
+}
+
+function planResult(patch: Partial<PlanResult> = {}): PlanResult {
+  return {
+    status: "completed",
+    summary: "Decomposed into two tickets.",
+    confidence: "high",
+    tickets: [
+      { title: "Ticket A", body: "## Problem\n\nA\n\n## Acceptance criteria\n\n- [ ] a\n\n## Verification\n\nrun a" },
+      { title: "Ticket B", body: "## Problem\n\nB\n\n## Acceptance criteria\n\n- [ ] b\n\n## Verification\n\nrun b" },
+    ],
+    ...patch,
+  };
 }
 
 beforeEach(() => {
@@ -194,6 +219,99 @@ describe("machineReviewGate", () => {
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();
     expect(state.get("alpha", 7)?.machineReviewOutcome).toBeUndefined();
+  });
+});
+
+describe("planReviewGate", () => {
+  it("proceeds on a pass verdict and records the outcome and reviewer cost", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(
+      planReviewOutcome({ result: { verdict: "pass", summary: "Good decomposition.", findings: [] } }),
+    );
+    const { state, internals } = makeLoop(record());
+    const base = { costUsd: 3 };
+
+    const gate = await internals.planReviewGate(project, issue, worktree, base, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(review.runPlanReview).toHaveBeenCalledOnce();
+    expect(vi.mocked(review.runPlanReview).mock.calls[0]?.[0]?.model).toBe("claude-haiku-4-5");
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("passed");
+    expect(base.costUsd).toBeCloseTo(3.05);
+    expect(state.get("alpha", 7)?.costUsd).toBeCloseTo(3.05);
+  });
+
+  it("returns a fix prompt on findings and posts them to the status comment", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(
+      planReviewOutcome({
+        result: {
+          verdict: "findings",
+          summary: "One ticket is too broad.",
+          findings: [{ ticketIndex: 1, severity: "major", summary: "not PR-sized", detail: "split into two tickets" }],
+        },
+      }),
+    );
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate.action).toBe("fixing");
+    if (gate.action === "fixing") expect(gate.prompt).toContain("not PR-sized");
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("findings");
+    const comment = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
+    expect(comment).toContain("Plan review found 1 issue(s)");
+    expect(comment).toContain("`ticket [1]` — not PR-sized");
+  });
+
+  it("caps at one attempt: a recorded outcome skips the reviewer entirely", async () => {
+    const { internals } = makeLoop(record({ machineReviewOutcome: "findings" }));
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(review.runPlanReview).not.toHaveBeenCalled();
+  });
+
+  it("fails open on a reviewer error, still filing the children", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(planReviewOutcome({ result: undefined, errorSubtype: "timed out after 8 minutes" }));
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
+  });
+
+  it("extends the daemon pause when the reviewer hits the plan limit, and still proceeds", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(
+      planReviewOutcome({ result: undefined, errorSubtype: "plan_limit", limitResetAt: "2026-07-27T12:00:00.000Z" }),
+    );
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
+    expect(state.getPausedUntil()).toBe(new Date(Date.parse("2026-07-27T12:00:00.000Z") + 5 * 60_000).toISOString());
+  });
+
+  it("never runs when the project opts out — shares the machineReview switch with the code-review gate", async () => {
+    const optedOut = makeProject({ model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.planReviewGate(optedOut, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(review.runPlanReview).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBeUndefined();
+  });
+
+  it("never runs in dry-run mode", async () => {
+    const { internals } = makeLoop(record(), { dryRun: true });
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(review.runPlanReview).not.toHaveBeenCalled();
   });
 });
 

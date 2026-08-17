@@ -1,4 +1,4 @@
-import { mergeModelUsage, type ProjectConfig } from "@fleet/shared";
+import { mergeModelUsage, type PlanResult, type ProjectConfig } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./finish.ts";
 import { upsertStatusComment, type ReadyIssue } from "../github/github.ts";
@@ -9,10 +9,15 @@ import { recordSpend } from "./budget.ts";
 import {
   buildMachineReviewFixPrompt,
   buildMachineReviewPrompt,
+  buildPlanReviewFixPrompt,
+  buildPlanReviewPrompt,
   isActionable,
+  isPlanActionable,
   runMachineReview,
+  runPlanReview,
   selectReviewModel,
   shouldMachineReview,
+  shouldReviewPlan,
 } from "../session/review.ts";
 import type { WorkerSession } from "../session/worker.ts";
 import { collectBranchDiff, hasCommits, type Worktree } from "../github/worktree.ts";
@@ -48,6 +53,11 @@ export async function supervise(
 
     if (turn.kind === "plan") {
       if (turn.result?.status === "completed") {
+        const gate = await planReviewGate(ctx, project, issue, worktree, base, turn.result);
+        if (gate.action === "fixing") {
+          session.send(gate.prompt);
+          continue;
+        }
         await finishPlanned(ctx, project, issue, turn.result);
         return;
       }
@@ -222,4 +232,106 @@ export async function machineReviewGate(
     logError("loop", `${scope}: could not post the machine-review status comment`, err);
   }
   return { action: "fixing", prompt: buildMachineReviewFixPrompt(outcome.result) };
+}
+
+/**
+ * Plan-review counterpart of `machineReviewGate`, run over a completed plan
+ * turn's `PlanResult.tickets[]` before `finishPlanned` files any of them as
+ * real GitHub issues — the only unguarded completion path otherwise. Shares
+ * the same one-shot read-only reviewer shape, the `machineReview` opt-out
+ * switch, the `machineReviewOutcome` once-per-ticket cap, and the fail-open
+ * contract with the code-review gate.
+ */
+export async function planReviewGate(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issue: ReadyIssue,
+  worktree: Worktree,
+  base: SessionBase,
+  result: PlanResult,
+): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
+  const scope = key(project.name, issue.number);
+  const record = ctx.state.get(project.name, issue.number);
+  if (ctx.dryRun || !shouldReviewPlan(project, record)) return { action: "proceed" };
+
+  const model = selectReviewModel(project);
+  // Persisted before the reviewer starts so a crash mid-review fails open
+  // (the resumed completion sees the field set and skips straight to filing).
+  ctx.state.update(project.name, issue.number, {
+    machineReviewOutcome: "pending",
+    lastActivityAt: new Date().toISOString(),
+    lastActivityNote: "plan review running",
+  });
+  ctx.emitBoard();
+  const journal = new Journal(ctx.dataDirPath, project.name, issue.number);
+  journal.append({ type: "fleet", event: "plan-review-started", model });
+  log("loop", `${scope}: plan review running${model ? ` on ${model}` : ""}`);
+
+  let outcome;
+  try {
+    outcome = await runPlanReview({
+      scope,
+      worktreePath: worktree.path,
+      model,
+      prompt: buildPlanReviewPrompt(issue, result),
+      claudeExecutable: ctx.config.claudeExecutable,
+      journal,
+    });
+  } catch (err) {
+    outcome = { costUsd: 0, errorSubtype: err instanceof Error ? err.message : String(err) };
+  }
+
+  base.costUsd += outcome.costUsd;
+  base.modelUsage = mergeModelUsage(base.modelUsage, outcome.modelUsage);
+  const reviewedCostUsd = (ctx.state.get(project.name, issue.number)?.costUsd ?? 0) + outcome.costUsd;
+  recordSpend(ctx, project.name, issue.number, reviewedCostUsd);
+  ctx.state.update(project.name, issue.number, {
+    costUsd: reviewedCostUsd,
+    modelUsage: base.modelUsage,
+  });
+
+  if (outcome.errorSubtype || !outcome.result) {
+    journal.append({ type: "fleet", event: "plan-review-error", errorSubtype: outcome.errorSubtype });
+    log("loop", `${scope}: plan review failed (${outcome.errorSubtype}) — proceeding to file the children`);
+    if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
+    ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
+    return { action: "proceed" };
+  }
+
+  if (!isPlanActionable(outcome.result)) {
+    journal.append({ type: "fleet", event: "plan-review-passed", summary: outcome.result.summary });
+    log("loop", `${scope}: plan review passed`);
+    ctx.state.update(project.name, issue.number, { machineReviewOutcome: "passed" });
+    return { action: "proceed" };
+  }
+
+  const findings = outcome.result.findings;
+  journal.append({
+    type: "fleet",
+    event: "plan-review-findings",
+    count: findings.length,
+    severities: findings.map((f) => f.severity).filter((s): s is NonNullable<typeof s> => s !== undefined),
+    ticketIndices: findings.map((f) => f.ticketIndex),
+    findings,
+  });
+  log("loop", `${scope}: plan review found ${findings.length} issue(s) — sending the planner back for one fix round`);
+  ctx.state.update(project.name, issue.number, {
+    machineReviewOutcome: "findings",
+    lastActivityNote: `plan review: ${findings.length} finding(s), fixing`,
+  });
+  ctx.emitBoard();
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [
+        `**Status: in progress**`,
+        `Plan review found ${findings.length} issue(s); the planner is revising the decomposition before child tickets are filed.`,
+        findings.map((f) => `- \`${f.ticketIndex !== undefined ? `ticket [${f.ticketIndex}]` : "decomposition"}\` — ${f.summary}`).join("\n"),
+      ].join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the plan-review status comment`, err);
+  }
+  return { action: "fixing", prompt: buildPlanReviewFixPrompt(outcome.result) };
 }
