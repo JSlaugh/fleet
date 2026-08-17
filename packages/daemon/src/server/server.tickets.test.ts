@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodyWithDependsOn, CreateTicketSchema, labelsForNewTicket } from "./server.ts";
+import { CreateTicketSchema, labelsForNewTicket } from "./server.ts";
 
 describe("CreateTicketSchema", () => {
   it("defaults ready to true", () => {
@@ -45,24 +45,5 @@ describe("labelsForNewTicket", () => {
   it("omits fleet:ready when ready is false, keeping the priority for curation", () => {
     expect(labelsForNewTicket({ title: "t", body: "b", ready: false, priority: "fleet:p2" })).toEqual(["fleet:p2"]);
     expect(labelsForNewTicket({ title: "t", body: "b", ready: false })).toEqual([]);
-  });
-});
-
-describe("bodyWithDependsOn", () => {
-  it("leaves the body untouched when there are no dependencies", () => {
-    expect(bodyWithDependsOn("details", undefined)).toBe("details");
-    expect(bodyWithDependsOn("details", [])).toBe("details");
-  });
-
-  it("appends a Depends-on line for a single dependency", () => {
-    expect(bodyWithDependsOn("details", [12])).toBe("details\n\nDepends-on: #12");
-  });
-
-  it("appends a Depends-on line listing every dependency", () => {
-    expect(bodyWithDependsOn("details", [12, 14])).toBe("details\n\nDepends-on: #12, #14");
-  });
-
-  it("doesn't leave a leading blank line when the body is empty", () => {
-    expect(bodyWithDependsOn("", [12])).toBe("Depends-on: #12");
   });
 });

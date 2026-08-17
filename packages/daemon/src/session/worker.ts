@@ -53,6 +53,7 @@ Contract:
 - Work only within this worktree, read-only: explore the repo (CLAUDE.md, skills, existing code) for context, but do NOT write or edit any files, and do NOT commit.
 - Each child ticket must be self-contained: its body states the problem, acceptance criteria, and how to verify it, and it must be independently implementable as its own PR-sized change.
 - Prefer several small, independent tickets over one large one; avoid tickets that depend on landing in a specific order unless the epic genuinely requires it.
+- If a child genuinely can't be implemented before another lands (e.g. "use the schema field" needs "add the schema field" first), set that child's dependsOnIndex to the 0-based index of the sibling(s) it depends on in tickets[] — sparingly, and only pointing at an earlier index (a later or self index is dropped).
 - If the epic is too ambiguous to decompose confidently, do NOT guess: finish with status "blocked" and put the specific question in blockedReason.
 - Your final structured output lists every proposed child ticket in tickets[].
 `.trim();

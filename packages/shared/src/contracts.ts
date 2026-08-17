@@ -37,6 +37,12 @@ export const PlanResultSchema = z.object({
       .describe(
         "Suggested model tier for this child ticket, judged honestly by complexity: light = mechanical/small-surface (doc tweaks, renames, simple sweeps), elevated = cross-cutting or design-heavy work, standard = everything else (default)",
       ),
+    dependsOnIndex: z
+      .array(z.number().int().nonnegative())
+      .optional()
+      .describe(
+        "Indices into this same tickets[] array (0-based) of sibling tickets that must land first. Use sparingly — most tickets should stand alone; only mark a dependency when the epic genuinely requires ordering (e.g. 'add the schema field' before 'use it in the dashboard'). Only earlier indices are honored — a forward or self reference is dropped.",
+      ),
   })).describe("Independent, PR-sized child tickets decomposed from this epic; each must be self-contained (problem, acceptance criteria, verification) and independently implementable"),
   blockedReason: z.string().optional().describe("The specific question or decision a human must answer (required when status is blocked)"),
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that this decomposition is correct and complete"),

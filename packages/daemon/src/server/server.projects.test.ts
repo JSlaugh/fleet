@@ -5,7 +5,8 @@ import { makeApprovals, makeFleetConfig, makeProject, makeTempState, postJson } 
 import { FleetLoop } from "../loop/loop.ts";
 import { createApp } from "./server.ts";
 
-vi.mock("../github/github.ts", () => ({
+vi.mock("../github/github.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../github/github.ts")>()),
   createIssue: vi.fn(async () => ({ number: 42, url: "https://github.com/acme/alpha/issues/42" })),
 }));
 

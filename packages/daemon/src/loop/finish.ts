@@ -8,6 +8,7 @@ import {
 } from "@fleet/shared";
 import { key, type LoopContext } from "./context.ts";
 import {
+  bodyWithDependsOn,
   createIssue,
   createPullRequest,
   escalateToElevated,
@@ -138,6 +139,30 @@ export async function finishCompleted(
 }
 
 /**
+ * Resolves one ticket's `dependsOnIndex` against `tickets[]`'s own indices.
+ * Only a reference to a strictly earlier index is honored — children file in
+ * array order, so a sibling at `index` or later has no issue number yet, and
+ * honoring it would either deadlock (self) or be unfileable (forward). Pure
+ * so the index math is testable without touching `createIssue`.
+ */
+export function resolveDependsOnIndex(
+  index: number,
+  dependsOnIndex: number[] | undefined,
+  totalTickets: number,
+): { valid: number[]; dropped: number[] } {
+  const valid: number[] = [];
+  const dropped: number[] = [];
+  for (const idx of dependsOnIndex ?? []) {
+    if (Number.isInteger(idx) && idx >= 0 && idx < totalTickets && idx < index) {
+      if (!valid.includes(idx)) valid.push(idx);
+    } else {
+      dropped.push(idx);
+    }
+  }
+  return { valid, dropped };
+}
+
+/**
  * A completed plan never pushes or opens a PR — it files child issues instead,
  * `fleet:ready` only when the project opts in via `planChildrenReady`, and puts
  * the epic itself straight into `fleet:review` for a human to curate.
@@ -150,14 +175,24 @@ export async function finishPlanned(
 ): Promise<void> {
   const autoReady = project.planChildrenReady;
   const created: { number: number; url: string; title: string }[] = [];
-  for (const ticket of result.tickets) {
+  const droppedNotes: string[] = [];
+  for (const [index, ticket] of result.tickets.entries()) {
     const tierLabel = ticket.tier === "light" ? LIGHT_LABEL : ticket.tier === "elevated" ? ELEVATE_LABEL : undefined;
     const labels = [
       ...(ticket.priority ? [ticket.priority] : []),
       ...(tierLabel ? [tierLabel] : []),
       ...(autoReady ? [FLEET_LABELS.ready] : []),
     ];
-    const child = await createIssue(project, { title: ticket.title, body: ticket.body, labels });
+    const { valid, dropped } = resolveDependsOnIndex(index, ticket.dependsOnIndex, result.tickets.length);
+    if (dropped.length > 0) {
+      log("loop", `${key(project.name, issue.number)}: dropping invalid dependsOnIndex ${dropped.join(", ")} on child "${ticket.title}"`);
+      droppedNotes.push(`- "${ticket.title}": dropped invalid dependsOnIndex ${dropped.join(", ")}`);
+    }
+    // `resolveDependsOnIndex` only ever returns indices strictly earlier than
+    // `index`, so each has already been filed and has a real issue number.
+    const dependsOn = valid.map((i) => created[i]!.number);
+    const body = bodyWithDependsOn(ticket.body, dependsOn);
+    const child = await createIssue(project, { title: ticket.title, body, labels });
     created.push({ ...child, title: ticket.title });
   }
   await moveToReview(ctx, project, issue.number, {
@@ -167,6 +202,7 @@ export async function finishPlanned(
       created.length > 0
         ? `Child tickets:\n${created.map((c) => `- #${c.number} ${c.title} — ${c.url}`).join("\n")}`
         : "No child tickets were proposed.",
+      droppedNotes.length > 0 ? `Dropped invalid dependencies:\n${droppedNotes.join("\n")}` : "",
       autoReady ? "" : "Label a child `fleet:ready` to start it.",
     ].filter(Boolean).join("\n\n"),
     update: { lastSummary: result.summary },
