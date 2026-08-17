@@ -65,6 +65,7 @@ The dashboard header has a **Pause/Resume** toggle (drain mode): while paused, t
 Ticket detail has a **Restart** button for stuck, stalled, or failed tickets: it force-closes the session and puts the issue back in `fleet:ready`, so the next cycle re-runs it from scratch. The fresh claim recreates the branch and worktree from `origin/<defaultBranch>`, which **discards the previous session's commits** — the dashboard confirms before firing.
 
 Stopping the long-running daemon (`--once` runs need none of this) has two modes, both guarded against firing twice:
+
 - **Drain** (`POST /api/daemon/shutdown` with `{ "mode": "drain" }`) enables the same pause as the dashboard's Pause toggle, then exits once every running ticket reaches a normal terminal state (review/needs-input/failed) — nothing is interrupted.
 - **Stop now** (`{ "mode": "now" }`, and Ctrl+C / SIGTERM) aborts every live session immediately and leaves each interrupted ticket `stalled` with its session id intact and `autoResumed` cleared, so the next `pnpm daemon` boot auto-resumes every one of them exactly once instead of burning that budget recovering from an unclean stop.
 
@@ -96,7 +97,7 @@ Labeling an issue `fleet:plan` runs it as a read-only planning session instead o
 
 A few things happen automatically without reclaiming a ticket from `fleet:ready`:
 
-- **Machine review.** When a code worker reports completed, a cheap read-only reviewer session (running on `lightModel` if set, else `model`) reviews the branch diff *before* anything is pushed or a PR is opened. It reports real defects only (no style nits, no test re-runs — those already ran in the worker session). Findings send the still-live worker back for exactly one fix round; then the ticket proceeds to `fleet:review` regardless, with the review outcome noted in the issue's status comment. A reviewer failure never blocks the ticket — it proceeds as if the review passed. Opt out per project with `machineReview: false`.
+- **Machine review.** When a code worker reports completed, a cheap read-only reviewer session (running on `lightModel` if set, else `model`) reviews the branch diff _before_ anything is pushed or a PR is opened. It reports real defects only (no style nits, no test re-runs — those already ran in the worker session). Findings send the still-live worker back for exactly one fix round; then the ticket proceeds to `fleet:review` regardless, with the review outcome noted in the issue's status comment. A reviewer failure never blocks the ticket — it proceeds as if the review passed. Opt out per project with `machineReview: false`.
 - **Review feedback.** Every cycle, tickets sitting in `fleet:review` are checked for changes-requested reviews or new inline comments on their PR. If there's fresh feedback (and the project hasn't set `autoAddressReviews: false`), the ticket's session resumes in its existing worktree/branch with the feedback as its next message; a watermark (`lastReviewHandledAt`) keeps the same feedback from being reprocessed.
 - **Auto-merge.** Opt in per project with `autoMerge: true`. Every cycle, right after review-feedback handling, each `fleet:review` ticket with a PR is checked: an approval from an `approvers`-allowlisted login (case-insensitive, latest review per reviewer) with no outstanding changes-requested review from anyone, every reported CI check passed (a PR with no checks counts as green), and the PR reports `MERGEABLE`. If all hold, fleet merges it with `mergeMethod` and posts a status comment — the PR body's `Closes #N` closes the issue, and the existing merge-cleanup path takes it from there. A merge attempt that fails (branch protection, a race with a human merge, a transient `gh` error) is logged and retried next cycle rather than failing the ticket; a PR that turns out to already be merged is treated as success.
 - **Stall recovery.** A ticket with no activity for `stalledAfterMinutes` (or orphaned by a daemon restart) is flagged `stalled` and then auto-resumed from its last session, once. A second stall on the same ticket is left for a human to look at.
@@ -121,7 +122,7 @@ See `fleet.config.example.json`. Top level: `worktreeRoot`, `pollIntervalSeconds
 
 `windowBudgetUsd` (optional, unset by default) turns on a rolling-window spend gate over new claims: fleet sums its own spend ledger (every recorded cost delta, timestamped) over the trailing `usageWindowHours` (default 5, mirroring the plan's own rolling window), and once that sum passes `budgetLightThreshold` (default `0.85`) of `windowBudgetUsd` it claims only `fleet:light`-labeled issues, and once it reaches `windowBudgetUsd` it claims nothing until spend ages out of the window. This only gates new claims — resumes and already-live sessions are never held back, and the reactive plan usage-limit pause above remains the hard backstop. It's a self-estimate, not a guarantee: interactive Claude use on the same plan is invisible to fleet, so treat it as a governor rather than a hard ceiling.
 
-`workHoursReserve` (optional, unset by default) holds all new claims for `reserveHours` immediately before `workStart` (local machine time, `HH:MM`) on each of `days` (default Mon–Fri), so the plan's usage window is back at full capacity when the human's workday begins. A window that crosses midnight (e.g. `workStart: "01:00"`, `reserveHours: 3`) is gated on the day work *starts*, not the day the window begins. Only claims are held — resumes and already-live sessions finish normally, same as the budget gate above.
+`workHoursReserve` (optional, unset by default) holds all new claims for `reserveHours` immediately before `workStart` (local machine time, `HH:MM`) on each of `days` (default Mon–Fri), so the plan's usage window is back at full capacity when the human's workday begins. A window that crosses midnight (e.g. `workStart: "01:00"`, `reserveHours: 3`) is gated on the day work _starts_, not the day the window begins. Only claims are held — resumes and already-live sessions finish normally, same as the budget gate above.
 
 `notifications` (optional, unset by default — the whole feature is a no-op with zero network calls until configured) posts a compact Discord message via `discordUrl` (a Discord webhook URL) whenever something happens that a human would want to hear about without having the dashboard open: `needs-input` (a ticket is blocked, or a post-completion step failed and needs manual resolution), `pr-opened`, `failed` (a terminal failure, not an auto-elevate retry), `paused` (a plan usage-limit pause is newly set or extended), `auto-merged`, and `stale-released` (a peer daemon's dead claim was released back to the pool). `events` (optional, default: all of the above) restricts which events post. Each message names the project, issue, ticket title, a one-line detail, and a link. A webhook failure (bad URL, non-2xx, network error) is logged once and never affects the ticket's own path. Notifications never fire under `--dry-run` or `--once`.
 
@@ -136,26 +137,26 @@ A target repo can self-describe its own setup instead of the fleet operator enco
 ```yaml
 # Simple repo — a bare step list, run in order
 setup:
-  - name: install
-    run: pnpm install
+    - name: install
+      run: pnpm install
 ```
 
 ```yaml
 # Monorepo — named profiles, selected per ticket
 setup:
-  default:
-    - name: install
-      run: pnpm install
-  frontend:
-    - name: install
-      run: pnpm install
-    - name: build-storybook
-      run: pnpm --filter web build-storybook
-  backend:
-    - name: install
-      run: pnpm install
-    - name: test-db
-      run: pnpm db:migrate:test
+    default:
+        - name: install
+          run: pnpm install
+    frontend:
+        - name: install
+          run: pnpm install
+        - name: build-storybook
+          run: pnpm --filter web build-storybook
+    backend:
+        - name: install
+          run: pnpm install
+        - name: test-db
+          run: pnpm db:migrate:test
 ```
 
 In map form a `default` profile is required; every other key becomes a selectable profile. The daemon reads `fleet.yaml` from the **fresh worktree**, after `git worktree add` and before the worker session starts — provisioning stays fully deterministic and daemon-side, with no agent or model involvement.
@@ -163,15 +164,6 @@ In map form a `default` profile is required; every other key becomes a selectabl
 **Profile selection** is driven by a `fleet:type:<name>` label on the issue: `fleet:type:frontend` selects the `frontend` profile. No type label, or one that names a profile the file doesn't declare, falls back to `default` (a warning is logged for the unknown case; the claim is never failed for it). Multiple type labels pick the first match in alphabetical order and log a warning about the ambiguity. `pnpm daemon init-labels` creates a `fleet:type:<name>` label for every profile a repo's `fleet.yaml` declares (skipping `default`) — per-repo, not part of the global `fleet:*` label set.
 
 **Precedence:** `fleet.yaml` present in the worktree wins outright — `setupCommand` is ignored for that claim. No `fleet.yaml` → `setupCommand` behaves exactly as before (including being a no-op when unset). A malformed `fleet.yaml` (bad YAML, or schema-invalid — e.g. a profile map missing `default`) fails the claim with the problem named in the status comment and daemon log; it never silently falls back to `setupCommand`, since that could mask a broken spec indefinitely. A step that fails also fails the claim, naming which step failed (e.g. `setup step "build-storybook" failed: ... (exit 1)`).
-
-## Roadmap
-
-- ~~Phase 0: walking-skeleton daemon, no UI.~~ Done — verified end-to-end (issue → worker → PR).
-- ~~Phase 1: REST/WS API, Vue dashboard (board + ticket detail).~~ Done.
-- ~~Phase 2: needs-input steering, approvals inbox, worker questions answered from the dashboard.~~ Done.
-- ~~Phase 3: model visibility, live activity notes, stall recovery, merged-worktree cleanup, cost totals.~~ Done.
-- ~~Phase 4: test suite, ticket-intake REST API + `@fleet/mcp` backlog tool, `fleet:plan` epic decomposition, PR review-feedback loop, stall auto-resume, plan usage-limit pause, Done column.~~ Done.
-- ~~Phase 5: machine review gate, operator drain mode, turborepo build pipeline, loop split into per-concern modules, broadened test coverage.~~ Done.
 
 ## Skills, agents, and models
 
