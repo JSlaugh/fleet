@@ -128,6 +128,11 @@ export async function releaseStaleClaims(
         event: "stale-claim-released",
         owners: others,
       });
+      ctx.state.appendEvent("stale-claim-released", {
+        project: project.name,
+        issueNumber: issue.number,
+        data: { title: issue.title, owners: others },
+      });
       await notify(ctx, "stale-released", project, {
         issueNumber: issue.number,
         title: issue.title,

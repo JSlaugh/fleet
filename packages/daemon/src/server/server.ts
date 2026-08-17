@@ -90,6 +90,15 @@ export function createApp(opts: {
     return c.json(loop.getHistoryPage({ project, since, until, limit, offset }));
   });
 
+  app.get("/api/digest", (c) => {
+    const hoursParam = c.req.query("hours");
+    const hours = hoursParam !== undefined ? Number(hoursParam) : 24;
+    if (!Number.isFinite(hours) || hours <= 0) {
+      return c.json({ error: "hours must be a positive number" }, 400);
+    }
+    return c.json(loop.getDigest(hours));
+  });
+
   app.post("/api/daemon/pause", async (c) => {
     const { paused } = await c.req.json<{ paused: boolean }>().catch(() => ({ paused: undefined }));
     if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);

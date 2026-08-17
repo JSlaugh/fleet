@@ -142,6 +142,11 @@ export async function autoMergeReady(
       logError("loop", `${scope}: could not post the merged status comment`, err);
     }
     log("loop", `${scope}: auto-merged ${prUrl} (${project.mergeMethod ?? "squash"})`);
+    ctx.state.appendEvent("auto-merged", {
+      project: project.name,
+      issueNumber: record.issueNumber,
+      data: { title: record.issueTitle, prUrl, costUsd: record.costUsd },
+    });
     await notify(ctx, "auto-merged", project, {
       issueNumber: record.issueNumber,
       title: record.issueTitle,

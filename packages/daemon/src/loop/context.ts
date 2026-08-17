@@ -49,6 +49,8 @@ export interface LoopContext {
   readonly contributorFloorSkipsLogged: Set<string>;
   /** Project names currently notified about a budget-gate `blocked` hold — cleared once the gate lifts, so only the first hold of a spell notifies, not every poll while it persists. */
   readonly budgetBlockedNotified: Set<string>;
+  /** Project names for which the current work-hours reserve spell has already logged a digest event — cleared once the gate lifts, same dedup shape as `budgetBlockedNotified`. */
+  readonly workHoursReserveNotified: Set<string>;
   emitBoard(): void;
   getProject(name: string): ProjectConfig | undefined;
 }

@@ -21,6 +21,7 @@ import {
 } from "./lib/api.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
+import DigestPanel from "./components/DigestPanel.vue";
 import HistoryView from "./components/HistoryView.vue";
 import TicketCard from "./components/TicketCard.vue";
 import TicketDetail from "./components/TicketDetail.vue";
@@ -28,6 +29,7 @@ import TicketDetail from "./components/TicketDetail.vue";
 const tickets = ref<BoardTicket[]>([]);
 const approvals = ref<PendingApproval[]>([]);
 const showApprovals = ref(false);
+const showDigest = ref(false);
 const view = ref<"board" | "history">("board");
 const pausedUntil = ref<string>();
 const paused = ref(false);
@@ -301,6 +303,14 @@ onUnmounted(() => {
       </button>
       <button
         type="button"
+        class="rounded-full px-2.5 py-1 text-xs font-medium"
+        :class="showDigest ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        @click="showDigest = !showDigest"
+      >
+        Digest
+      </button>
+      <button
+        type="button"
         class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
         :class="approvals.length > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
         @click="showApprovals = !showApprovals"
@@ -361,6 +371,7 @@ onUnmounted(() => {
       </main>
       <HistoryView v-else :project-filter="projectFilter" @select="selected = $event" />
       <TicketDetail v-if="selected" :ticket="selected" @close="selected = undefined" />
+      <DigestPanel v-if="showDigest" @close="showDigest = false" />
       <ApprovalsPanel
         v-if="showApprovals"
         :approvals="approvals"

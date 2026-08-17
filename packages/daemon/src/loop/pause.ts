@@ -71,6 +71,11 @@ export function extendPause(ctx: LoopContext, project: ProjectConfig, issue: Pic
   if (!existing || pausedUntil.getTime() > Date.parse(existing)) {
     ctx.state.setPausedUntil(pausedUntil.toISOString());
     log("loop", `${scope}: plan usage limit hit — pausing daemon until ${pausedUntil.toISOString()}`);
+    ctx.state.appendEvent("gate-hold-plan-limit", {
+      project: project.name,
+      issueNumber: issue.number,
+      data: { detail: `plan usage limit hit — daemon paused until ${pausedUntil.toISOString()}` },
+    });
     void notify(ctx, "paused", project, {
       issueNumber: issue.number,
       title: issue.title,
