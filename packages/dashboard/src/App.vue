@@ -19,6 +19,7 @@ import {
   setProjectPaused,
   setTicketPriority,
 } from "./lib/api.ts";
+import { groupByEpic } from "./lib/board.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
 import DigestPanel from "./components/DigestPanel.vue";
@@ -94,6 +95,7 @@ const byStatus = computed(() => {
   for (const ticket of visibleTickets.value) {
     groups.get(ticket.status)?.push(ticket);
   }
+  for (const [status, list] of groups) groups.set(status, groupByEpic(list));
   return groups;
 });
 

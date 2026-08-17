@@ -89,6 +89,8 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
 export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blockedBy: number[] = []): BoardTicket | null {
   const status = boardStatusFromLabels(issue.labels);
   if (!status) return null;
+  const epicNumber = parsePartOf(issue.body);
+  const children = parseChildTaskList(issue.body);
   return {
     project: project.name,
     issueNumber: issue.number,
@@ -98,6 +100,8 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blocked
     priority: priorityOf(issue.labels),
     isPlan: issue.labels.includes(PLAN_LABEL),
     ...(blockedBy.length > 0 ? { blockedBy } : {}),
+    ...(epicNumber !== undefined ? { epicNumber } : {}),
+    ...(children.length > 0 ? { epicProgress: { closed: children.filter((c) => c.checked).length, total: children.length } } : {}),
   };
 }
 
@@ -143,6 +147,63 @@ export function dependencyStatus(
     blockedBy: deps.filter((n) => openIssueNumbers.has(n)),
     unknown: deps.filter((n) => !allIssueNumbers.has(n)),
   };
+}
+
+/**
+ * Reads the epic an issue was filed under from a `Part-of: #12` line typed
+ * anywhere in the body (case-insensitive key) — the child-side counterpart to
+ * `parseDependsOn`. Only the first reference counts; a ticket has at most one
+ * epic.
+ */
+export function parsePartOf(body: string): number | undefined {
+  const match = /^\s*part-of\s*:\s*#(\d+)/im.exec(body);
+  if (!match) return undefined;
+  const n = Number(match[1]);
+  return Number.isNaN(n) ? undefined : n;
+}
+
+/** Appends a `Part-of: #<epic>` line `parsePartOf` will parse back out. */
+export function bodyWithPartOf(body: string, epicNumber: number | undefined): string {
+  if (epicNumber === undefined) return body;
+  const line = `Part-of: #${epicNumber}`;
+  return body.trim().length > 0 ? `${body}\n\n${line}` : line;
+}
+
+const CHILDREN_SECTION_HEADER = "## Children";
+
+/**
+ * Appends the epic-side `## Children` task list `parseChildTaskList` reads
+ * back — one `- [ ] #<n> <title>` line per child, in filing order. GitHub
+ * treats each item as a tracked reference and auto-checks it when that issue
+ * closes, which is what gives the epic native task-list progress and is what
+ * `parseChildTaskList` reads back to decide when every child is done.
+ */
+export function bodyWithChildTaskList(body: string, children: { number: number; title: string }[]): string {
+  if (children.length === 0) return body;
+  const section = [CHILDREN_SECTION_HEADER, ...children.map((c) => `- [ ] #${c.number} ${c.title}`)].join("\n");
+  return body.trim().length > 0 ? `${body}\n\n${section}` : section;
+}
+
+/**
+ * Reads the `## Children` task list back out of an epic body: one entry per
+ * `- [ ] #<n>`/`- [x] #<n>` line under the header, `checked` reflecting
+ * whichever GitHub itself last wrote there (see `bodyWithChildTaskList`).
+ * Tolerant of a missing section (returns `[]`) and stops at the first
+ * non-list-item line after the section starts, so trailing prose in the body
+ * isn't misread as more children.
+ */
+export function parseChildTaskList(body: string): { number: number; checked: boolean }[] {
+  const headerMatch = /^##\s*children\s*$/im.exec(body);
+  if (!headerMatch) return [];
+  const lines = body.slice(headerMatch.index + headerMatch[0].length).split(/\r?\n/);
+  const items: { number: number; checked: boolean }[] = [];
+  for (const line of lines) {
+    if (line.trim() === "") continue;
+    const itemMatch = /^-\s*\[([ xX])\]\s*#(\d+)/.exec(line);
+    if (!itemMatch) break;
+    items.push({ number: Number(itemMatch[2]), checked: itemMatch[1]!.toLowerCase() === "x" });
+  }
+  return items;
 }
 
 interface GhIssueStateJson {
@@ -194,6 +255,28 @@ export async function createIssue(
   const { stdout } = await run("gh", args);
   const url = stdout.trim().split("\n").pop()?.trim() ?? "";
   return { number: issueNumberFromUrl(url), url };
+}
+
+/** Overwrites an issue's body — used to stamp the `## Children` task list onto a freshly-planned epic. */
+export async function updateIssueBody(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
+  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--body", body]);
+}
+
+/**
+ * A single issue's number/title/body, or `undefined` on any fetch failure
+ * (deleted issue, transient `gh` error) — callers that use this for prompt
+ * framing treat a miss as "skip the context" rather than failing the ticket.
+ */
+export async function getIssue(project: ProjectConfig, issueNumber: number): Promise<{ number: number; title: string; body: string } | undefined> {
+  try {
+    return await runJson<{ number: number; title: string; body: string }>("gh", [
+      "issue", "view", String(issueNumber),
+      "--repo", project.githubRepo,
+      "--json", "number,title,body",
+    ]);
+  } catch {
+    return undefined;
+  }
 }
 
 export async function setPriority(project: ProjectConfig, issueNumber: number, priority: string | null): Promise<void> {

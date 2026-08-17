@@ -8,11 +8,14 @@ import {
 } from "@fleet/shared";
 import { key, type LoopContext } from "./context.ts";
 import {
+  bodyWithChildTaskList,
   bodyWithDependsOn,
+  bodyWithPartOf,
   createIssue,
   createPullRequest,
   escalateToElevated,
   swapLabel,
+  updateIssueBody,
   upsertStatusComment,
   type ReadyIssue,
 } from "../github/github.ts";
@@ -191,9 +194,16 @@ export async function finishPlanned(
     // `resolveDependsOnIndex` only ever returns indices strictly earlier than
     // `index`, so each has already been filed and has a real issue number.
     const dependsOn = valid.map((i) => created[i]!.number);
-    const body = bodyWithDependsOn(ticket.body, dependsOn);
+    const body = bodyWithDependsOn(bodyWithPartOf(ticket.body, issue.number), dependsOn);
     const child = await createIssue(project, { title: ticket.title, body, labels });
     created.push({ ...child, title: ticket.title });
+  }
+  if (created.length > 0) {
+    try {
+      await updateIssueBody(project, issue.number, bodyWithChildTaskList(issue.body, created));
+    } catch (err) {
+      logError("loop", `${key(project.name, issue.number)}: could not stamp the Children task list onto the epic body`, err);
+    }
   }
   await moveToReview(ctx, project, issue.number, {
     comment: [

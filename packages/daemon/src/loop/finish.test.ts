@@ -17,6 +17,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   markReady: vi.fn(async () => {}),
   swapLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
+  updateIssueBody: vi.fn(async () => {}),
   upsertStatusComment: vi.fn(async () => {}),
 }));
 
@@ -227,8 +228,8 @@ describe("finishPlanned — dependsOnIndex translation", () => {
     await finishPlanned(ctx, project, planIssue, result);
 
     const calls = vi.mocked(github.createIssue).mock.calls;
-    expect(calls[0]?.[1]?.body).toBe("add it");
-    expect(calls[1]?.[1]?.body).toBe("use it\n\nDepends-on: #101");
+    expect(calls[0]?.[1]?.body).toBe("add it\n\nPart-of: #7");
+    expect(calls[1]?.[1]?.body).toBe("use it\n\nPart-of: #7\n\nDepends-on: #101");
   });
 
   it("drops an out-of-range/self/forward dependsOnIndex, files the rest normally, and notes it in the status comment", async () => {
@@ -243,12 +244,111 @@ describe("finishPlanned — dependsOnIndex translation", () => {
 
     await finishPlanned(ctx, project, planIssue, result);
 
-    expect(vi.mocked(github.createIssue).mock.calls[0]?.[1]?.body).toBe("first body");
+    expect(vi.mocked(github.createIssue).mock.calls[0]?.[1]?.body).toBe("first body\n\nPart-of: #7");
     expect(github.upsertStatusComment).toHaveBeenCalledWith(
       project,
       7,
       expect.stringContaining("Dropped invalid dependencies"),
     );
+  });
+});
+
+describe("finishPlanned — epic linkage", () => {
+  const planIssue = { number: 7, title: "epic 7", body: "epic body", labels: [], author: "collab-author", assignees: [] };
+
+  beforeEach(() => {
+    let nextNumber = 100;
+    vi.mocked(github.createIssue).mockImplementation(async () => {
+      nextNumber += 1;
+      return { number: nextNumber, url: `https://github.com/acme/alpha/issues/${nextNumber}` };
+    });
+  });
+
+  it("stamps a Part-of line onto every filed child", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [
+        { title: "add the schema field", body: "add it" },
+        { title: "use it in the dashboard", body: "use it" },
+      ],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    const calls = vi.mocked(github.createIssue).mock.calls;
+    expect(calls[0]?.[1]?.body).toBe("add it\n\nPart-of: #7");
+    expect(calls[1]?.[1]?.body).toBe("use it\n\nPart-of: #7");
+  });
+
+  it("combines Part-of and Depends-on on the same child body", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [
+        { title: "add the schema field", body: "add it" },
+        { title: "use it in the dashboard", body: "use it", dependsOnIndex: [0] },
+      ],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    const calls = vi.mocked(github.createIssue).mock.calls;
+    expect(calls[1]?.[1]?.body).toBe("use it\n\nPart-of: #7\n\nDepends-on: #101");
+  });
+
+  it("stamps a Children task list onto the epic body once children are filed", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [
+        { title: "add the schema field", body: "add it" },
+        { title: "use it in the dashboard", body: "use it" },
+      ],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.updateIssueBody).toHaveBeenCalledWith(
+      project,
+      7,
+      "epic body\n\n## Children\n- [ ] #101 add the schema field\n- [ ] #102 use it in the dashboard",
+    );
+  });
+
+  it("does not touch the epic body when no children were filed", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = { status: "completed", summary: "epic summary", confidence: "high", tickets: [] };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.updateIssueBody).not.toHaveBeenCalled();
+  });
+
+  it("still reaches fleet:review when stamping the Children task list fails", async () => {
+    vi.mocked(github.updateIssueBody).mockRejectedValueOnce(new Error("gh: rate limited"));
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [{ title: "add the schema field", body: "add it" }],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
   });
 });
 

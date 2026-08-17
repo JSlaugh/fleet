@@ -9,7 +9,9 @@ vi.mock("./exec.ts", async (importActual) => ({
 
 const exec = await import("./exec.ts");
 const {
+  bodyWithChildTaskList,
   bodyWithDependsOn,
+  bodyWithPartOf,
   buildConflictPrompt,
   buildPrFeedback,
   buildReviewFeedbackPrompt,
@@ -19,12 +21,15 @@ const {
   getStatusCommentInfo,
   issueNumberFromUrl,
   mergePullRequest,
+  parseChildTaskList,
   parseDependsOn,
   parseHeartbeat,
+  parsePartOf,
   priorityRank,
   readyLabelArgs,
   refreshHeartbeat,
   refreshHeartbeatIfStale,
+  toBoardTicket,
   upsertStatusComment,
 } = await import("./github.ts");
 
@@ -218,6 +223,129 @@ function reviewComment(patch: Partial<{ path: string; line: number | null; body:
     ...patch,
   };
 }
+
+describe("parsePartOf", () => {
+  it("returns undefined when there is no Part-of line", () => {
+    expect(parsePartOf("Just a plain description.")).toBeUndefined();
+  });
+
+  it("parses a Part-of line", () => {
+    expect(parsePartOf("Part-of: #40")).toBe(40);
+  });
+
+  it("is case-insensitive on the key", () => {
+    expect(parsePartOf("part-of: #7")).toBe(7);
+  });
+
+  it("finds the line anywhere in a multi-line body", () => {
+    const body = ["## Problem", "Some description.", "", "Part-of: #12", "", "## More"].join("\n");
+    expect(parsePartOf(body)).toBe(12);
+  });
+
+  it("takes only the first reference when there are several", () => {
+    expect(parsePartOf("Part-of: #12\nPart-of: #14")).toBe(12);
+  });
+});
+
+describe("bodyWithPartOf", () => {
+  it("leaves the body untouched when there is no epic", () => {
+    expect(bodyWithPartOf("details", undefined)).toBe("details");
+  });
+
+  it("appends a Part-of line", () => {
+    expect(bodyWithPartOf("details", 40)).toBe("details\n\nPart-of: #40");
+  });
+
+  it("doesn't leave a leading blank line when the body is empty", () => {
+    expect(bodyWithPartOf("", 40)).toBe("Part-of: #40");
+  });
+
+  it("round-trips through parsePartOf", () => {
+    expect(parsePartOf(bodyWithPartOf("details", 40))).toBe(40);
+  });
+});
+
+describe("bodyWithChildTaskList / parseChildTaskList", () => {
+  it("leaves the body untouched when there are no children", () => {
+    expect(bodyWithChildTaskList("details", [])).toBe("details");
+  });
+
+  it("appends an unchecked task-list item per child", () => {
+    const body = bodyWithChildTaskList("epic body", [
+      { number: 41, title: "add the field" },
+      { number: 42, title: "use the field" },
+    ]);
+    expect(body).toBe("epic body\n\n## Children\n- [ ] #41 add the field\n- [ ] #42 use the field");
+  });
+
+  it("doesn't leave a leading blank line when the body is empty", () => {
+    expect(bodyWithChildTaskList("", [{ number: 41, title: "add the field" }])).toBe("## Children\n- [ ] #41 add the field");
+  });
+
+  it("round-trips through parseChildTaskList", () => {
+    const body = bodyWithChildTaskList("epic body", [
+      { number: 41, title: "add the field" },
+      { number: 42, title: "use the field" },
+    ]);
+    expect(parseChildTaskList(body)).toEqual([
+      { number: 41, checked: false },
+      { number: 42, checked: false },
+    ]);
+  });
+
+  it("returns [] when there is no Children section", () => {
+    expect(parseChildTaskList("Just a plain description.")).toEqual([]);
+  });
+
+  it("reads a GitHub-checked item as closed", () => {
+    const body = ["## Children", "- [x] #41 add the field", "- [ ] #42 use the field"].join("\n");
+    expect(parseChildTaskList(body)).toEqual([
+      { number: 41, checked: true },
+      { number: 42, checked: false },
+    ]);
+  });
+
+  it("is case-insensitive on the header and the checkbox letter", () => {
+    const body = ["## children", "- [X] #41 add the field"].join("\n");
+    expect(parseChildTaskList(body)).toEqual([{ number: 41, checked: true }]);
+  });
+
+  it("stops at the first non-list-item line after the section starts", () => {
+    const body = ["## Children", "- [ ] #41 add the field", "", "## Unrelated", "more text"].join("\n");
+    expect(parseChildTaskList(body)).toEqual([{ number: 41, checked: false }]);
+  });
+});
+
+describe("toBoardTicket — epic linkage", () => {
+  function fleetIssue(patch: Partial<{ number: number; title: string; body: string; labels: string[]; url: string }> = {}) {
+    return {
+      number: 7,
+      title: "issue 7",
+      body: "",
+      labels: ["fleet:ready"],
+      author: "collab-author",
+      url: "https://github.com/acme/alpha/issues/7",
+      ...patch,
+    };
+  }
+
+  it("leaves a non-epic, non-child ticket unchanged", () => {
+    const ticket = toBoardTicket(project, fleetIssue());
+    expect(ticket?.epicNumber).toBeUndefined();
+    expect(ticket?.epicProgress).toBeUndefined();
+  });
+
+  it("carries epicNumber for a child with a Part-of line", () => {
+    const ticket = toBoardTicket(project, fleetIssue({ body: "Part-of: #40" }));
+    expect(ticket?.epicNumber).toBe(40);
+  });
+
+  it("carries epicProgress for an epic with a Children task list", () => {
+    const body = ["## Children", "- [x] #41 done child", "- [ ] #42 open child"].join("\n");
+    const ticket = toBoardTicket(project, fleetIssue({ labels: ["fleet:review", "fleet:plan"], body }));
+    expect(ticket?.epicProgress).toEqual({ closed: 1, total: 2 });
+  });
+});
 
 describe("buildPrFeedback", () => {
   it("returns nothing when there is nothing new", () => {

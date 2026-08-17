@@ -37,6 +37,7 @@ export function synthesizeDoneTickets(
       status: "done" as const,
       priority: null,
       isPlan: record.isPlan ?? false,
+      ...(record.epicNumber !== undefined ? { epicNumber: record.epicNumber } : {}),
       record,
     }));
 }

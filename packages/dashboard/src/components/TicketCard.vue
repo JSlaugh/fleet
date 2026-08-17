@@ -84,6 +84,20 @@ const blurb = computed(() => {
         plan
       </span>
       <span
+        v-if="ticket.epicProgress"
+        class="rounded bg-teal-100 px-1.5 py-0.5 font-medium text-teal-800 dark:bg-teal-900 dark:text-teal-200"
+        :title="`${ticket.epicProgress.closed} of ${ticket.epicProgress.total} child tickets closed`"
+      >
+        {{ ticket.epicProgress.closed }}/{{ ticket.epicProgress.total }} children
+      </span>
+      <span
+        v-if="ticket.epicNumber"
+        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
+        :title="`Part of epic #${ticket.epicNumber}`"
+      >
+        epic #{{ ticket.epicNumber }}
+      </span>
+      <span
         v-if="closedRecord"
         class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
       >

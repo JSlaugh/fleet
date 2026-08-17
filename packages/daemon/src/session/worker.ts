@@ -346,11 +346,40 @@ export class WorkerSession {
   }
 }
 
-export function buildIssuePrompt(project: ProjectConfig, issue: { number: number; title: string; body: string }, comments: string[]): string {
-  const parts = [
+/** Chars of an epic body quoted into a child's framing block — enough for context, capped so a huge epic body can't dominate the prompt. */
+const EPIC_CONTEXT_BODY_CHARS = 500;
+
+/**
+ * The framing block prepended to a child ticket's prompt when its body
+ * carries a `Part-of: #<epic>` line: the epic's title, an excerpt of its
+ * body, and — when the epic's own `## Children` task list can place this
+ * ticket in it — this ticket's position among its siblings.
+ */
+export function buildEpicContextBlock(
+  epic: { number: number; title: string; body: string },
+  position?: { index: number; total: number },
+): string {
+  const positionNote = position ? ` — ticket ${position.index} of ${position.total}` : "";
+  const bodyExcerpt = epic.body.trim().slice(0, EPIC_CONTEXT_BODY_CHARS);
+  return [
+    `## Part of epic #${epic.number}`,
+    `This ticket is part of epic #${epic.number}: ${epic.title}${positionNote}.`,
+    bodyExcerpt,
+  ].filter(Boolean).join("\n\n");
+}
+
+export function buildIssuePrompt(
+  project: ProjectConfig,
+  issue: { number: number; title: string; body: string },
+  comments: string[],
+  epicContext?: string,
+): string {
+  const parts: string[] = [];
+  if (epicContext) parts.push(epicContext);
+  parts.push(
     `GitHub issue #${issue.number} in ${project.githubRepo}: ${issue.title}`,
     issue.body || "(no description)",
-  ];
+  );
   if (comments.length > 0) {
     parts.push(`## Discussion on the issue\n\n${comments.join("\n\n")}`);
   }

@@ -10,6 +10,7 @@ import {
 import { cleanupFinished } from "./board.ts";
 import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
+import { closeFinishedEpics } from "./epics.ts";
 import { reportRunFailure } from "./finish.ts";
 import { releaseStaleClaims } from "./heartbeat.ts";
 import { applyIntakeLint } from "./intake.ts";
@@ -19,12 +20,15 @@ import {
   addAssignee,
   dependencyStatus,
   getAuthenticatedLogin,
+  getIssue,
   getIssueAssignees,
   getIssueComments,
   getPushCollaborators,
   listFleetIssues,
   listIssueStates,
+  parseChildTaskList,
   parseDependsOn,
+  parsePartOf,
   removeAssignee,
   swapLabel,
   toBoardTicket,
@@ -37,8 +41,26 @@ import { addressComments } from "./comments.ts";
 import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
 import { runSession } from "./runner.ts";
-import { buildIssuePrompt } from "../session/worker.ts";
+import { buildEpicContextBlock, buildIssuePrompt } from "../session/worker.ts";
 import { createWorktree } from "../github/worktree.ts";
+
+/**
+ * The `## Part of epic #N` framing block for a child ticket's first prompt:
+ * fetches the epic (title/body) and, when its `## Children` task list can
+ * place this issue in it, this ticket's position among its siblings. Any
+ * fetch failure (deleted epic, transient `gh` error) degrades to no block
+ * rather than failing the claim — `getIssue` already swallows its own errors.
+ */
+async function fetchEpicContext(project: ProjectConfig, issue: ReadyIssue): Promise<string | undefined> {
+  const epicNumber = parsePartOf(issue.body);
+  if (epicNumber === undefined) return undefined;
+  const epic = await getIssue(project, epicNumber);
+  if (!epic) return undefined;
+  const siblings = parseChildTaskList(epic.body);
+  const index = siblings.findIndex((c) => c.number === issue.number);
+  const position = index !== -1 ? { index: index + 1, total: siblings.length } : undefined;
+  return buildEpicContextBlock(epic, position);
+}
 
 /** Fleet status labels that mean an issue has already moved past `fleet:ready`. */
 const POST_READY_STATUS_LABELS = [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review];
@@ -232,6 +254,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
   }
 
   if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for finished plan epics to close`);
+  } else {
+    await closeFinishedEpics(ctx, project, issues, openIssueNumbers);
+  }
+
+  if (ctx.dryRun) {
     log("loop", `[dry-run] would check ${project.name} for stale claims to release`);
   } else {
     await releaseStaleClaims(ctx, project, issues, myLogin);
@@ -379,6 +407,8 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
     }
 
     const comments = await getIssueComments(project, issue.number);
+    const epicNumber = parsePartOf(issue.body);
+    const epicContext = await fetchEpicContext(project, issue);
     const worktree = await createWorktree(project, issue.number, ctx.config.worktreeRoot, issue.labels);
 
     const elevated = issue.labels.includes(ELEVATE_LABEL);
@@ -402,6 +432,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       light,
       isPlan,
       autoElevated,
+      epicNumber,
       // Every comment that exists at claim time is already in `comments`, folded
       // into the first prompt below — the watermark stops the next cycle's
       // `addressComments` from re-injecting them.
@@ -416,7 +447,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       issue,
       worktree,
       journal,
-      firstMessage: buildIssuePrompt(project, issue, comments),
+      firstMessage: buildIssuePrompt(project, issue, comments, epicContext),
       elevated,
       light,
       kind: isPlan ? "plan" : "code",
