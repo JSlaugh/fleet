@@ -31,6 +31,10 @@ export function makeProject(patch: Partial<ProjectConfig> = {}): ProjectConfig {
     autoElevateOnFailure: true,
     autoAddressReviews: true,
     machineReview: false,
+    // Off by default here (schema default is true) so the hundreds of
+    // existing claim-flow tests using `makeIssue`'s empty body don't all
+    // start failing intake lint — opt in per test with `{ intakeLint: true }`.
+    intakeLint: false,
     autoMerge: false,
     mergeMethod: "squash",
     ...patch,

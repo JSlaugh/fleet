@@ -12,6 +12,7 @@ import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { releaseStaleClaims } from "./heartbeat.ts";
+import { applyIntakeLint } from "./intake.ts";
 import { isProjectPaused } from "./pause.ts";
 import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
 import {
@@ -290,6 +291,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     myLogin,
   });
   ready = await applyContributorFloor(ctx, project, ready);
+  ready = await applyIntakeLint(ctx, project, ready);
 
   const gate = computeBudgetGate(ctx);
   if (gate.level === "blocked") {
