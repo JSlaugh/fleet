@@ -110,3 +110,46 @@ export const FleetConfigSchema = z.object({
   projects: z.array(ProjectConfigSchema).min(1),
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;
+
+function unwrapSchema(schema: any): any {
+  let current = schema;
+  // Only unwrap single-inner-type wrappers — ZodArray also exposes `.unwrap()`
+  // (returning its element type), which would wrongly collapse `T[]` into `T`.
+  while (current instanceof z.ZodOptional || current instanceof z.ZodDefault || current instanceof z.ZodNullable) {
+    current = current.unwrap();
+  }
+  return current;
+}
+
+/**
+ * Recursively diffs a parsed config object's keys against a zod object schema's
+ * shape, returning dotted/indexed paths (e.g. `projects[0].machineRevieww`) for
+ * every key the schema doesn't recognize. Descends into nested object fields and
+ * array-of-object fields so it covers `projects[]` and `notifications` alike
+ * without hardcoding either.
+ */
+export function findUnknownConfigKeys(schema: z.ZodObject<any>, value: unknown, path: string[] = []): string[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  const shape: Record<string, any> = schema.shape;
+  const warnings: string[] = [];
+  for (const key of Object.keys(record)) {
+    if (!(key in shape)) warnings.push([...path, key].join("."));
+  }
+  for (const [key, fieldSchema] of Object.entries(shape)) {
+    if (!(key in record)) continue;
+    const unwrapped = unwrapSchema(fieldSchema);
+    const fieldValue = record[key];
+    if (unwrapped instanceof z.ZodObject) {
+      warnings.push(...findUnknownConfigKeys(unwrapped, fieldValue, [...path, key]));
+    } else if (unwrapped instanceof z.ZodArray && Array.isArray(fieldValue)) {
+      const elementSchema = unwrapSchema(unwrapped.element);
+      if (elementSchema instanceof z.ZodObject) {
+        fieldValue.forEach((item, i) => {
+          warnings.push(...findUnknownConfigKeys(elementSchema, item, [...path, `${key}[${i}]`]));
+        });
+      }
+    }
+  }
+  return warnings;
+}

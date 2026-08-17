@@ -54,6 +54,68 @@ describe("loadConfig with an explicit path", () => {
   });
 });
 
+describe("loadConfig warns on unknown keys", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("warns on an unrecognized top-level key, naming its path", () => {
+    const dir = tempDir();
+    const path = join(dir, "fleet.config.json");
+    writeFileSync(path, JSON.stringify({ ...validConfig, pollIntervalSeconnds: 30 }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    loadConfig(path);
+
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("pollIntervalSeconnds"))).toBe(true);
+  });
+
+  it("warns on an unrecognized key inside a projects[] entry, naming its indexed path", () => {
+    const dir = tempDir();
+    const path = join(dir, "fleet.config.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...validConfig,
+        projects: [{ name: "alpha", repoPath: "/repo/alpha", githubRepo: "acme/alpha", machineRevieww: false }],
+      }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    loadConfig(path);
+
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("projects[0].machineRevieww"))).toBe(true);
+  });
+
+  it("warns on an unrecognized key inside a nested object like notifications", () => {
+    const dir = tempDir();
+    const path = join(dir, "fleet.config.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...validConfig,
+        notifications: { discordUrl: "https://discord.com/api/webhooks/1/x", digestTimme: "09:00" },
+      }),
+    );
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    loadConfig(path);
+
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("notifications.digestTimme"))).toBe(true);
+  });
+
+  it("logs no warnings for a clean config", () => {
+    const dir = tempDir();
+    const path = join(dir, "fleet.config.json");
+    writeFileSync(path, JSON.stringify(validConfig));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    loadConfig(path);
+
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("loadConfig's upward search for a default config", () => {
   const cleanupDirs: string[] = [];
 
