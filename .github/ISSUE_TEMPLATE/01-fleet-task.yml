@@ -10,6 +10,7 @@ body:
 
         - **Priority** is a label, not a field: add `fleet:p1` / `fleet:p2` / `fleet:p3` after filing (optional).
         - **Dependencies:** put a line `Depends-on: #12, #14` anywhere below and fleet won't claim this until those issues close.
+        - **Timeout:** put a line `Timeout: 60m` (or `2h`) anywhere below to override the default per-turn timeout for this ticket, up to a 240m max.
         - Not ready to queue it yet? Remove the `fleet:ready` label after filing.
   - type: textarea
     id: problem
