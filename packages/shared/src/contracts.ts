@@ -48,3 +48,15 @@ export const PlanResultSchema = z.object({
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that this decomposition is correct and complete"),
 });
 export type PlanResult = z.infer<typeof PlanResultSchema>;
+
+export const PlanReviewResultSchema = z.object({
+  verdict: z.enum(["pass", "findings"]).describe("pass = the decomposition is ready to file as child issues; findings = the planner should revise tickets[] first"),
+  summary: z.string().describe("1-3 sentence overall assessment of the decomposition, written for the epic's status comment"),
+  findings: z.array(z.object({
+    ticketIndex: z.number().int().nonnegative().optional().describe("0-based index into tickets[] this finding is about; omit for a finding about the decomposition as a whole (e.g. missing scope)"),
+    severity: z.enum(["blocker", "major", "minor"]).optional().describe("blocker = must not file as-is; major = real defect; minor = worth fixing while we're here"),
+    summary: z.string().describe("One-sentence statement of the problem"),
+    detail: z.string().describe("Why it's a problem and what the planner should change"),
+  })).default([]).describe("Concrete, actionable problems only — empty when verdict is pass"),
+});
+export type PlanReviewResult = z.infer<typeof PlanReviewResultSchema>;

@@ -205,10 +205,12 @@ export async function finishPlanned(
       logError("loop", `${key(project.name, issue.number)}: could not stamp the Children task list onto the epic body`, err);
     }
   }
+  const record = ctx.state.get(project.name, issue.number);
   await moveToReview(ctx, project, issue.number, {
     comment: [
       `**Status: planned** (confidence: ${result.confidence})`,
       result.summary,
+      machineReviewLine(record?.machineReviewOutcome),
       created.length > 0
         ? `Child tickets:\n${created.map((c) => `- #${c.number} ${c.title} — ${c.url}`).join("\n")}`
         : "No child tickets were proposed.",
