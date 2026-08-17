@@ -52,6 +52,51 @@ describe("summarize", () => {
     expect(result).not.toHaveProperty("usage");
   });
 
+  it("captures thinking blocks alongside text", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "let me consider the options", signature: "sig" },
+          { type: "text", text: "here's my plan" },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.thinking).toBe("let me consider the options");
+    expect(result.text).toBe("here's my plan");
+  });
+
+  it("joins multiple thinking blocks and caps them at 1000 characters", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "a".repeat(700) },
+          { type: "thinking", thinking: "b".repeat(700) },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect((result.thinking as string)).toHaveLength(1000);
+    expect((result.thinking as string).startsWith("a".repeat(700))).toBe(true);
+  });
+
+  it("omits thinking when the assistant message has no thinking blocks", () => {
+    const message = {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "just talking" }] },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("thinking");
+  });
+
   it("omits toolCalls when the assistant message has no tool_use blocks", () => {
     const message = {
       type: "assistant",
@@ -62,6 +107,39 @@ describe("summarize", () => {
 
     expect(result.tools).toEqual([]);
     expect(result).not.toHaveProperty("toolCalls");
+  });
+
+  it("captures plain-string user content as text — operator/user steering echoed back through the stream", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "please also update the README" },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.text).toBe("please also update the README");
+  });
+
+  it("omits text for an empty or whitespace-only string user message", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "   " },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("text");
+  });
+
+  it("captures text blocks within an array-content user message", () => {
+    const message = {
+      type: "user",
+      message: { content: [{ type: "text", text: "steering via a content block" }] },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.text).toBe("steering via a content block");
   });
 
   it("captures tool_result blocks, defaulting is_error to false when absent", () => {

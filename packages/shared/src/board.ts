@@ -95,7 +95,10 @@ export interface JournalEntry {
   ts: string;
   type: string;
   subtype?: string;
+  /** Assistant text, or plain user/operator steering text on a `"user"`-type entry (tool-result entries carry no `text`). */
   text?: string;
+  /** Extended-thinking content on an `"assistant"`-type entry. */
+  thinking?: string;
   tools?: string[];
   costUsd?: number;
   event?: string;

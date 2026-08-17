@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ClosedTicketRecord, FleetState, SpendLedgerEntry, TicketRecord } from "@fleet/shared";
+import type { ClosedTicketRecord, FleetState, JournalEntry, SpendLedgerEntry, TicketRecord } from "@fleet/shared";
 import { logError } from "../log.ts";
 
 /**
@@ -27,6 +27,13 @@ export function openDatabase(dataDir: string): DatabaseSync {
   dbCache.set(resolvedDir, db);
 
   if (isNewDb) migrateFromJson(db, resolvedDir);
+  // Unlike state.json/history.json above, journals predate fleet.db itself
+  // (#130 left them as JSONL on purpose), so most installs hit this with an
+  // existing db and a `journals/` dir still full of `.jsonl` files — this
+  // can't be gated on `isNewDb`. It's still one-time in effect: imported
+  // files are renamed to `*.imported.bak`, so a dir with nothing left to
+  // import is a fast no-op scan on every later boot.
+  migrateJournalsFromJsonl(db, resolvedDir);
 
   return db;
 }
@@ -37,6 +44,13 @@ export function closeAllDatabases(): void {
   dbCache.clear();
 }
 
+/**
+ * `journal_entries` carries no retention policy yet, unlike `daemon_events`
+ * below: it's brand new (moved off unbounded-growth JSONL files in #144) and
+ * nothing has read it back in production yet to say what's safe to drop.
+ * Once that's known, trimming is a one-line indexed DELETE ... WHERE ts < ?,
+ * the same shape as insertEvent's cutoff further down this file.
+ */
 function createSchema(db: DatabaseSync): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS tickets (
@@ -74,6 +88,15 @@ function createSchema(db: DatabaseSync): void {
       data TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_daemon_events_at ON daemon_events (at);
+    CREATE TABLE IF NOT EXISTS journal_entries (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      issue_number INTEGER NOT NULL,
+      ts TEXT NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_journal_entries_project_issue ON journal_entries (project, issue_number);
+    CREATE INDEX IF NOT EXISTS idx_journal_entries_ts ON journal_entries (ts);
   `);
 }
 
@@ -210,6 +233,25 @@ export function eventsSince(db: DatabaseSync, sinceIso: string): DaemonEvent[] {
   return rows.map(toDaemonEvent);
 }
 
+// --- journal entries ---------------------------------------------------
+
+export function insertJournalEntry(db: DatabaseSync, project: string, issueNumber: number, entry: JournalEntry): void {
+  db.prepare(`INSERT INTO journal_entries (project, issue_number, ts, data) VALUES (?, ?, ?, ?)`).run(
+    project,
+    issueNumber,
+    entry.ts,
+    JSON.stringify(entry),
+  );
+}
+
+/** The most recent `limit` entries for one ticket, oldest first — `id` (insertion order) breaks ties within the same `ts`. */
+export function journalEntriesTail(db: DatabaseSync, project: string, issueNumber: number, limit: number): JournalEntry[] {
+  const rows = db
+    .prepare(`SELECT data FROM journal_entries WHERE project = ? AND issue_number = ? ORDER BY id DESC LIMIT ?`)
+    .all(project, issueNumber, limit) as { data: string }[];
+  return rows.reverse().map((row) => JSON.parse(row.data) as JournalEntry);
+}
+
 // --- one-time JSON import --------------------------------------------------
 
 /**
@@ -249,6 +291,46 @@ function importHistoryJson(db: DatabaseSync, dataDir: string): void {
     }
   } catch (err) {
     logError("store", `history.json exists but failed to import — starting with empty history`, err);
+  }
+  renameSync(path, `${path}.imported.bak`);
+}
+
+/**
+ * Scans `<dataDir>/journals/<project>/<issueNumber>.jsonl` for every project
+ * dir and imports each file's lines into `journal_entries`, then renames the
+ * file to `*.imported.bak` — the same never-delete archive pattern as
+ * `importStateJson`/`importHistoryJson`, just fanned out over many files
+ * instead of one. A single malformed line is logged and skipped rather than
+ * losing the rest of that ticket's history.
+ */
+function migrateJournalsFromJsonl(db: DatabaseSync, dataDir: string): void {
+  const journalsDir = join(dataDir, "journals");
+  if (!existsSync(journalsDir)) return;
+  for (const projectEntry of readdirSync(journalsDir, { withFileTypes: true })) {
+    if (!projectEntry.isDirectory()) continue;
+    const project = projectEntry.name;
+    const projectDir = join(journalsDir, project);
+    for (const file of readdirSync(projectDir)) {
+      const match = /^(\d+)\.jsonl$/.exec(file);
+      if (!match) continue;
+      importJournalFile(db, project, Number(match[1]), join(projectDir, file));
+    }
+  }
+}
+
+function importJournalFile(db: DatabaseSync, project: string, issueNumber: number, path: string): void {
+  try {
+    const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as JournalEntry;
+        insertJournalEntry(db, project, issueNumber, { ...entry, ts: entry.ts ?? new Date().toISOString() });
+      } catch (err) {
+        logError("store", `a line in ${path} failed to parse — skipping just that entry`, err);
+      }
+    }
+  } catch (err) {
+    logError("store", `${path} exists but failed to import — some journal history for ${project}#${issueNumber} may be missing`, err);
   }
   renameSync(path, `${path}.imported.bak`);
 }

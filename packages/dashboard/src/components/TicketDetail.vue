@@ -353,6 +353,9 @@ onUnmounted(() => clearInterval(timer));
           <p v-if="entry.text" class="mt-0.5 whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
             {{ entry.text }}
           </p>
+          <p v-if="entry.thinking" class="mt-0.5 whitespace-pre-wrap break-words italic text-neutral-400 dark:text-neutral-500">
+            {{ entry.thinking }}
+          </p>
         </li>
       </ol>
     </div>

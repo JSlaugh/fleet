@@ -69,7 +69,7 @@ Stopping the long-running daemon (`--once` runs need none of this) has two modes
 - **Drain** (`POST /api/daemon/shutdown` with `{ "mode": "drain" }`) enables the same pause as the dashboard's Pause toggle, then exits once every running ticket reaches a normal terminal state (review/needs-input/failed) — nothing is interrupted.
 - **Stop now** (`{ "mode": "now" }`, and Ctrl+C / SIGTERM) aborts every live session immediately and leaves each interrupted ticket `stalled` with its session id intact and `autoResumed` cleared, so the next `pnpm daemon` boot auto-resumes every one of them exactly once instead of burning that budget recovering from an unclean stop.
 
-Operational state lives in `.fleet/` (ticket records and closed-ticket archive in the SQLite database `fleet.db`, per-ticket session journals in `journals/`). The source of truth for tickets is always GitHub.
+Operational state lives in `.fleet/` — ticket records, the closed-ticket archive, and per-ticket session journals all in the SQLite database `fleet.db`. The source of truth for tickets is always GitHub.
 
 ## Filing tickets from inside a project
 
