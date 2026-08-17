@@ -270,12 +270,16 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
 
   const reserve = computeWorkHoursReserveGate(ctx);
   if (reserve.active) {
-    log(
-      "loop",
-      `${project.name}: work-hours reserve active — holding claims until ${reserve.releaseAt?.toLocaleTimeString()}`,
-    );
+    const holdLine = `work-hours reserve active — holding claims until ${reserve.releaseAt?.toLocaleTimeString()}`;
+    log("loop", `${project.name}: ${holdLine}`);
+    // Same once-per-spell dedup as the budget gate below — this gate is recomputed every cycle for as long as the reserve window is open.
+    if (!ctx.workHoursReserveNotified.has(project.name)) {
+      ctx.workHoursReserveNotified.add(project.name);
+      ctx.state.appendEvent("gate-hold-work-hours", { project: project.name, data: { detail: holdLine } });
+    }
     return;
   }
+  ctx.workHoursReserveNotified.delete(project.name);
 
   let ready = selectEligibleReady(issues, {
     openIssueNumbers,
@@ -295,6 +299,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     // poll cycle for as long as spend stays over budget, unlike extendPause's own once-per-hit dedup.
     if (!ctx.budgetBlockedNotified.has(project.name)) {
       ctx.budgetBlockedNotified.add(project.name);
+      ctx.state.appendEvent("gate-hold-budget", { project: project.name, data: { detail: holdLine } });
       await notify(ctx, "paused", project, { title: "Budget gate", detail: holdLine, url: projectUrl(project) });
     }
     return;

@@ -4,14 +4,18 @@ import {
   allHistory,
   allTickets,
   appendSpendRow,
+  type DaemonEvent,
+  eventsSince,
   getHistory,
   getMeta,
   getTicket,
+  insertEvent,
   insertHistory,
   openDatabase,
   prunedSpendLedger,
   removeTicket,
   setMeta,
+  sumSpendSince,
   upsertTicket,
 } from "./db.ts";
 
@@ -91,6 +95,28 @@ export class StateStore {
     if (usd <= 0) return;
     prunedSpendLedger(this.db, windowHours);
     appendSpendRow(this.db, new Date().toISOString(), usd);
+  }
+
+  /** Read-only spend sum since `sinceIso` — for a digest's own window, which a caller must not let prune the budget gate's separately-windowed ledger. See `sumSpendSince`. */
+  getSpendSince(sinceIso: string): number {
+    return sumSpendSince(this.db, sinceIso);
+  }
+
+  getLastDigestSentAt(): string | undefined {
+    return getMeta<string>(this.db, "lastDigestSentAt");
+  }
+
+  setLastDigestSentAt(at: string | undefined): void {
+    setMeta(this.db, "lastDigestSentAt", at);
+  }
+
+  /** Appends one digest-worthy occurrence (auto-merge, stale-claim release, claim-gate hold). */
+  appendEvent(type: string, opts: { project?: string; issueNumber?: number; data?: Record<string, unknown> } = {}): void {
+    insertEvent(this.db, { at: new Date().toISOString(), type, project: opts.project, issueNumber: opts.issueNumber, data: opts.data ?? {} });
+  }
+
+  getEventsSince(sinceIso: string): DaemonEvent[] {
+    return eventsSince(this.db, sinceIso);
   }
 
   clearLiveFlags(): void {

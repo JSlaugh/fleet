@@ -324,6 +324,62 @@ describe("StateStore", () => {
       expect(new StateStore(dataDir).getWindowSpend(5)).toBe(3);
     });
   });
+
+  describe("getSpendSince", () => {
+    it("sums entries at/after the given timestamp without pruning anything", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendSpend(1, 100000); // old entry, well outside a normal window
+      const cutoff = new Date().toISOString();
+      store.appendSpend(2, 100000);
+      expect(store.getSpendSince(cutoff)).toBeCloseTo(2);
+      // The first entry is still there for a wider window — getSpendSince never deletes.
+      expect(store.getWindowSpend(100000)).toBeCloseTo(3);
+    });
+
+    it("is 0 with an empty ledger", () => {
+      const store = new StateStore(tempDataDir());
+      expect(store.getSpendSince(new Date(0).toISOString())).toBe(0);
+    });
+  });
+
+  describe("getLastDigestSentAt/setLastDigestSentAt", () => {
+    it("round-trips and persists across instances", () => {
+      const dataDir = tempDataDir();
+      const store = new StateStore(dataDir);
+      expect(store.getLastDigestSentAt()).toBeUndefined();
+      store.setLastDigestSentAt("2026-01-02T09:00:00.000Z");
+      expect(store.getLastDigestSentAt()).toBe("2026-01-02T09:00:00.000Z");
+      expect(new StateStore(dataDir).getLastDigestSentAt()).toBe("2026-01-02T09:00:00.000Z");
+      store.setLastDigestSentAt(undefined);
+      expect(store.getLastDigestSentAt()).toBeUndefined();
+    });
+  });
+
+  describe("appendEvent/getEventsSince", () => {
+    it("round-trips project/issueNumber/data and filters by timestamp", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendEvent("auto-merged", { project: "alpha", issueNumber: 3, data: { title: "Fixed it" } });
+      const [recorded] = store.getEventsSince(new Date(0).toISOString());
+      expect(recorded).toMatchObject({ type: "auto-merged", project: "alpha", issueNumber: 3, data: { title: "Fixed it" } });
+      expect(typeof recorded?.at).toBe("string");
+    });
+
+    it("excludes events before sinceIso", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendEvent("stale-claim-released", { project: "alpha" });
+      const future = new Date(Date.now() + 60_000).toISOString();
+      expect(store.getEventsSince(future)).toEqual([]);
+    });
+
+    it("defaults data to {} and omits project/issueNumber when not given", () => {
+      const store = new StateStore(tempDataDir());
+      store.appendEvent("gate-hold-budget");
+      const [recorded] = store.getEventsSince(new Date(0).toISOString());
+      expect(recorded).toMatchObject({ type: "gate-hold-budget", data: {} });
+      expect(recorded?.project).toBeUndefined();
+      expect(recorded?.issueNumber).toBeUndefined();
+    });
+  });
 });
 
 describe("HistoryStore", () => {

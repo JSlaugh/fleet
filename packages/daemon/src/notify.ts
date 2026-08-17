@@ -1,4 +1,4 @@
-import type { FleetConfig, NotificationEvent, ProjectConfig } from "@fleet/shared";
+import type { DigestResponse, FleetConfig, NotificationEvent, ProjectConfig } from "@fleet/shared";
 import { logError } from "./log.ts";
 
 export interface NotifyDetail {
@@ -90,5 +90,45 @@ export async function notify(
     }
   } catch (err) {
     logError("notify", `discord webhook failed for ${event} on ${scope}`, err);
+  }
+}
+
+/** The compact Discord message body for a daily digest — pure so it's cheaply testable without a network mock. */
+export function buildDigestMessage(digest: DigestResponse): string {
+  const lines: string[] = [`**Daily digest** — trailing ${digest.windowHours}h`];
+  for (const project of digest.projects) {
+    const total =
+      project.completed.length + project.autoMerged.length + project.blocked.length + project.failed.length + project.staleReleases.length;
+    if (total === 0) continue;
+    lines.push(`**${project.project}**`);
+    if (project.completed.length > 0) lines.push(`- ${project.completed.length} completed, awaiting review`);
+    if (project.autoMerged.length > 0) lines.push(`- ${project.autoMerged.length} auto-merged`);
+    if (project.blocked.length > 0) lines.push(`- ${project.blocked.length} blocked`);
+    if (project.failed.length > 0) lines.push(`- ${project.failed.length} failed`);
+    if (project.staleReleases.length > 0) lines.push(`- ${project.staleReleases.length} stale claim(s) released`);
+  }
+  if (digest.gateHolds.length > 0) lines.push(`${digest.gateHolds.length} claim-gate hold(s)`);
+  if (digest.budget) lines.push(`Spend: $${digest.totalSpendUsd.toFixed(2)} / $${digest.budget.budgetUsd.toFixed(2)} (${digest.budget.windowHours}h)`);
+  if (lines.length === 1) lines.push("Nothing happened.");
+  return lines.join("\n");
+}
+
+/** Fire-and-forget Discord digest post — same dry-run/once/error-swallow contract as `notify`, but daemon-wide rather than per-issue. */
+export async function postDigest(ctx: NotifyContext, digest: DigestResponse): Promise<void> {
+  if (ctx.dryRun || ctx.once) return;
+  const url = ctx.config.notifications?.discordUrl;
+  if (!url) return;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: buildDigestMessage(digest) }),
+      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      logError("notify", `discord webhook returned ${res.status} for the daily digest`);
+    }
+  } catch (err) {
+    logError("notify", `discord webhook failed for the daily digest`, err);
   }
 }

@@ -65,6 +65,15 @@ function createSchema(db: DatabaseSync): void {
       at TEXT NOT NULL,
       usd REAL NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS daemon_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      at TEXT NOT NULL,
+      type TEXT NOT NULL,
+      project TEXT,
+      issue_number INTEGER,
+      data TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_daemon_events_at ON daemon_events (at);
   `);
 }
 
@@ -145,6 +154,60 @@ export function prunedSpendLedger(db: DatabaseSync, windowHours: number): SpendL
   const cutoff = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
   db.prepare(`DELETE FROM spend_ledger WHERE at < ?`).run(cutoff);
   return db.prepare(`SELECT at, usd FROM spend_ledger ORDER BY at ASC`).all() as unknown as SpendLedgerEntry[];
+}
+
+/**
+ * Read-only sum of the trailing spend since `sinceIso` — unlike `prunedSpendLedger`
+ * (which `getWindowSpend` uses), this never deletes anything. A digest query's window
+ * rarely matches the budget gate's own `usageWindowHours`, so pruning on a digest read
+ * would risk destroying ledger rows the gate's own (possibly wider) window still needs.
+ */
+export function sumSpendSince(db: DatabaseSync, sinceIso: string): number {
+  const row = db.prepare(`SELECT COALESCE(SUM(usd), 0) AS total FROM spend_ledger WHERE at >= ?`).get(sinceIso) as { total: number };
+  return row.total;
+}
+
+// --- daemon events (digest-worthy occurrences: auto-merges, stale-claim
+// releases, claim-gate holds) ------------------------------------------------
+
+export interface DaemonEvent {
+  at: string;
+  type: string;
+  project?: string;
+  issueNumber?: number;
+  data: Record<string, unknown>;
+}
+
+/** Retention ceiling independent of any single caller's query window — see `sumSpendSince`'s comment on why a query window must never drive deletion. */
+const EVENT_RETENTION_HOURS = 24 * 30;
+
+export function insertEvent(db: DatabaseSync, event: DaemonEvent): void {
+  db.prepare(`INSERT INTO daemon_events (at, type, project, issue_number, data) VALUES (?, ?, ?, ?, ?)`).run(
+    event.at,
+    event.type,
+    event.project ?? null,
+    event.issueNumber ?? null,
+    JSON.stringify(event.data),
+  );
+  const cutoff = new Date(Date.now() - EVENT_RETENTION_HOURS * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM daemon_events WHERE at < ?`).run(cutoff);
+}
+
+function toDaemonEvent(row: { at: string; type: string; project: string | null; issue_number: number | null; data: string }): DaemonEvent {
+  return {
+    at: row.at,
+    type: row.type,
+    project: row.project ?? undefined,
+    issueNumber: row.issue_number ?? undefined,
+    data: JSON.parse(row.data) as Record<string, unknown>,
+  };
+}
+
+export function eventsSince(db: DatabaseSync, sinceIso: string): DaemonEvent[] {
+  const rows = db.prepare(`SELECT at, type, project, issue_number, data FROM daemon_events WHERE at >= ? ORDER BY at ASC`).all(
+    sinceIso,
+  ) as { at: string; type: string; project: string | null; issue_number: number | null; data: string }[];
+  return rows.map(toDaemonEvent);
 }
 
 // --- one-time JSON import --------------------------------------------------

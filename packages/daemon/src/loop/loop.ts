@@ -3,6 +3,7 @@ import type {
   BoardTicket,
   BudgetStatus,
   ClosedTicketRecord,
+  DigestResponse,
   FleetConfig,
   HistoryResponse,
   ProjectConfig,
@@ -13,6 +14,7 @@ import { cleanupFinished, getBoard, issueUrl, pausedProjectNames } from "./board
 import { budgetStatus } from "./budget.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
+import { checkDigestSchedule, getDigest } from "./digest.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import { refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { ReadyIssue } from "../github/github.ts";
@@ -53,6 +55,8 @@ export class FleetLoop {
   private readonly contributorFloorSkipsLogged = new Set<string>();
   /** Project names currently notified about a budget-gate `blocked` hold; see `LoopContext`. */
   private readonly budgetBlockedNotified = new Set<string>();
+  /** Project names currently logged for a work-hours reserve hold; see `LoopContext`. */
+  private readonly workHoursReserveNotified = new Set<string>();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
@@ -83,6 +87,7 @@ export class FleetLoop {
       boardCache: this.boardCache,
       contributorFloorSkipsLogged: this.contributorFloorSkipsLogged,
       budgetBlockedNotified: this.budgetBlockedNotified,
+      workHoursReserveNotified: this.workHoursReserveNotified,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
       isShuttingDown: () => this.shuttingDown,
@@ -99,6 +104,7 @@ export class FleetLoop {
     this.updatePauseState();
     this.recoverStalled();
     await refreshOwnHeartbeats(this.ctx);
+    await checkDigestSchedule(this.ctx);
     for (const project of this.config.projects) {
       try {
         await cycleProject(this.ctx, project);
@@ -197,6 +203,10 @@ export class FleetLoop {
       ...page,
       records: page.records.map((record) => ({ ...record, url: issueUrl(this.config.projects, record) })),
     };
+  }
+
+  getDigest(hours: number): DigestResponse {
+    return getDigest(this.ctx, hours);
   }
 
   // ── Delegations ──────────────────────────────────────────────────────────

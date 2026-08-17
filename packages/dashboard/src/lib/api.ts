@@ -1,6 +1,7 @@
 import type {
   BoardTicket,
   BudgetStatus,
+  DigestResponse,
   HistoryResponse,
   PendingApproval,
   TicketDetail,
@@ -53,6 +54,10 @@ export function fetchHistory(params: HistoryQueryParams = {}): Promise<HistoryRe
   const qs = search.toString();
   return fetch(`/api/history${qs ? `?${qs}` : ""}`).then((res) => json<HistoryResponse>(res));
 }
+export function fetchDigest(hours = 24): Promise<DigestResponse> {
+  return fetch(`/api/digest?hours=${hours}`).then((res) => json<DigestResponse>(res));
+}
+
 export function fetchTicketReport(project: string, issueNumber: number): Promise<TicketReport> {
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/report`).then((res) =>
     json<TicketReport>(res),

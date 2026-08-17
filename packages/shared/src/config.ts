@@ -50,6 +50,8 @@ export const NotificationsConfigSchema = z.object({
   discordUrl: z.string().url(),
   /** Which events to post; unset (default) posts every event above. */
   events: z.array(z.enum(NOTIFICATION_EVENTS)).optional(),
+  /** Local machine time, 24h HH:MM, to post the daily digest. Unset falls back to `workHoursReserve.workStart`; if neither is set, the digest is never posted (the dashboard panel works regardless). */
+  digestTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM").optional(),
 });
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 

@@ -106,6 +106,64 @@ export interface JournalEntry {
   [key: string]: unknown;
 }
 
+/** One ticket surfaced in a digest bucket — a project-scoped, single-line summary with a link back to the issue. */
+export interface DigestTicketItem {
+  project: string;
+  issueNumber: number;
+  title: string;
+  url: string;
+  prUrl?: string;
+  costUsd?: number;
+  /** Set on the blocked/failed buckets: the worker's blocked question, or the one-line failure reason. */
+  reason?: string;
+}
+
+/** One `fleet:in-progress`/`fleet:needs-input` claim a peer daemon released back to the pool as dead. */
+export interface DigestStaleRelease {
+  project: string;
+  issueNumber: number;
+  title: string;
+  url: string;
+  owners: string[];
+  at: string;
+}
+
+export type DigestGateType = "budget" | "work-hours" | "plan-limit";
+
+/** One instance of a claim gate (budget/work-hours/plan-limit) actually holding claims during the digest window. */
+export interface DigestGateHold {
+  gate: DigestGateType;
+  at: string;
+  project?: string;
+  detail: string;
+}
+
+/** One project's slice of a `DigestResponse` — see `computeDigest`. */
+export interface ProjectDigest {
+  project: string;
+  /** Completed and pushed a PR, currently awaiting review. */
+  completed: DigestTicketItem[];
+  autoMerged: DigestTicketItem[];
+  blocked: DigestTicketItem[];
+  failed: DigestTicketItem[];
+  staleReleases: DigestStaleRelease[];
+  /** Sum of `costUsd` across every ticket surfaced above for this project — not a windowed spend figure, see `totalSpendUsd` for that. */
+  spendUsd: number;
+}
+
+/** `GET /api/digest` response: what happened across every project in the trailing `windowHours`. */
+export interface DigestResponse {
+  windowHours: number;
+  since: string;
+  until: string;
+  projects: ProjectDigest[];
+  /** The daemon's self-estimated spend actually incurred during `[since, until]`, from the same ledger `windowBudgetUsd` gates on. */
+  totalSpendUsd: number;
+  /** Present only when `windowBudgetUsd` is configured — the budget gate's own window, not necessarily `windowHours`. */
+  budget?: { budgetUsd: number; windowHours: number };
+  gateHolds: DigestGateHold[];
+}
+
 export interface TicketDetail {
   ticket?: BoardTicket;
   record?: TicketRecord | ClosedTicketRecord;

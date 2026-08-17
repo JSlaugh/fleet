@@ -1,7 +1,7 @@
-import type { NotificationsConfig } from "@fleet/shared";
+import type { DigestResponse, NotificationsConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeProject } from "./test-support.ts";
-import { buildNotificationMessage, issueUrl, notify, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
+import { buildDigestMessage, buildNotificationMessage, issueUrl, notify, postDigest, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
 
 const project = makeProject();
 
@@ -155,6 +155,101 @@ describe("notify", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail)).resolves.toBeUndefined();
+
+    expect(errSpy).toHaveBeenCalledOnce();
+    errSpy.mockRestore();
+  });
+});
+
+function emptyDigest(patch: Partial<DigestResponse> = {}): DigestResponse {
+  return { windowHours: 24, since: "2026-01-01T00:00:00.000Z", until: "2026-01-02T00:00:00.000Z", projects: [], totalSpendUsd: 0, gateHolds: [], ...patch };
+}
+
+describe("buildDigestMessage", () => {
+  it("says nothing happened when every project is empty and there are no gate holds", () => {
+    expect(buildDigestMessage(emptyDigest())).toBe("**Daily digest** — trailing 24h\nNothing happened.");
+  });
+
+  it("summarizes each non-empty bucket per project", () => {
+    const message = buildDigestMessage(
+      emptyDigest({
+        projects: [
+          {
+            project: "alpha",
+            completed: [{ project: "alpha", issueNumber: 1, title: "t", url: "u" }],
+            autoMerged: [{ project: "alpha", issueNumber: 2, title: "t", url: "u" }],
+            blocked: [{ project: "alpha", issueNumber: 3, title: "t", url: "u" }],
+            failed: [{ project: "alpha", issueNumber: 4, title: "t", url: "u" }],
+            staleReleases: [{ project: "alpha", issueNumber: 5, title: "t", url: "u", owners: ["bob"], at: "2026-01-01T00:00:00.000Z" }],
+            spendUsd: 1,
+          },
+        ],
+      }),
+    );
+    expect(message).toContain("**alpha**");
+    expect(message).toContain("1 completed, awaiting review");
+    expect(message).toContain("1 auto-merged");
+    expect(message).toContain("1 blocked");
+    expect(message).toContain("1 failed");
+    expect(message).toContain("1 stale claim(s) released");
+  });
+
+  it("omits an empty project entirely", () => {
+    const message = buildDigestMessage(
+      emptyDigest({ projects: [{ project: "alpha", completed: [], autoMerged: [], blocked: [], failed: [], staleReleases: [], spendUsd: 0 }] }),
+    );
+    expect(message).not.toContain("alpha");
+  });
+
+  it("includes gate holds and spend vs budget when present", () => {
+    const message = buildDigestMessage(
+      emptyDigest({ gateHolds: [{ gate: "budget", at: "2026-01-01T00:00:00.000Z", detail: "held" }], totalSpendUsd: 4, budget: { budgetUsd: 10, windowHours: 5 } }),
+    );
+    expect(message).toContain("1 claim-gate hold(s)");
+    expect(message).toContain("Spend: $4.00 / $10.00 (5h)");
+  });
+});
+
+describe("postDigest", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("does nothing without a discordUrl configured", async () => {
+    await postDigest({ config: {}, dryRun: false, once: false }, emptyDigest());
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing under --dry-run or --once", async () => {
+    const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook" };
+    await postDigest({ config: { notifications: config }, dryRun: true, once: false }, emptyDigest());
+    await postDigest({ config: { notifications: config }, dryRun: false, once: true }, emptyDigest());
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("posts the built message to the webhook", async () => {
+    const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook" };
+    await postDigest({ config: { notifications: config }, dryRun: false, once: false }, emptyDigest());
+
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/webhook", expect.objectContaining({ method: "POST" }));
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as { content: string };
+    expect(body.content).toContain("Daily digest");
+  });
+
+  it("logs once and resolves cleanly on a webhook failure", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 500 })),
+    );
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const config: NotificationsConfig = { discordUrl: "https://discord.example/webhook" };
+    await expect(postDigest({ config: { notifications: config }, dryRun: false, once: false }, emptyDigest())).resolves.toBeUndefined();
 
     expect(errSpy).toHaveBeenCalledOnce();
     errSpy.mockRestore();
