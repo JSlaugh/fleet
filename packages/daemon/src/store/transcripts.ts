@@ -1,7 +1,7 @@
-import { copyFileSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { TicketRecord } from "@fleet/shared";
+import type { TicketRecord, TicketTranscriptFile } from "@fleet/shared";
 import { log } from "../log.ts";
 
 /** Mirrors the Claude CLI's own cwd sanitization for `~/.claude/projects/<sanitized-cwd>`. */
@@ -48,4 +48,34 @@ export function copyTicketTranscripts(
     copyFileSync(join(sourceDir, file), join(destDir, file));
   }
   log("loop", `${scope}: archived ${files.length} session transcript(s) to ${destDir}`);
+}
+
+/** The archived transcript dir for this ticket, if `copyTicketTranscripts` has populated it. */
+export function transcriptDirIfPresent(dataDirPath: string, project: string, issueNumber: number): string | undefined {
+  const dir = join(dataDirPath, "transcripts", project, String(issueNumber));
+  try {
+    if (existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".jsonl"))) return dir;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Reads every archived session transcript for a ticket, oldest session first
+ * (by archive-copy mtime, since session-id filenames carry no chronological
+ * order of their own). Returns `undefined` when nothing has been archived yet.
+ */
+export function readTicketTranscript(
+  dataDirPath: string,
+  project: string,
+  issueNumber: number,
+): TicketTranscriptFile[] | undefined {
+  const dir = transcriptDirIfPresent(dataDirPath, project, issueNumber);
+  if (!dir) return undefined;
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .map((name) => ({ name, mtimeMs: statSync(join(dir, name)).mtimeMs }))
+    .sort((a, b) => a.mtimeMs - b.mtimeMs)
+    .map(({ name }) => ({ name, content: readFileSync(join(dir, name), "utf8") }));
 }

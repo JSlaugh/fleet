@@ -180,6 +180,18 @@ export interface TicketDetail {
   canReply: boolean;
 }
 
+/** One archived `.jsonl` session file, copied in full fidelity by `copyTicketTranscripts`. */
+export interface TicketTranscriptFile {
+  name: string;
+  content: string;
+}
+
+/** `GET /api/tickets/:project/:issue/transcript` response — 404 when nothing has been archived yet. */
+export interface TicketTranscript {
+  /** Oldest session first (by archive-copy mtime — session-id filenames carry no chronological order of their own). */
+  files: TicketTranscriptFile[];
+}
+
 /** One resumption of the worker: from a `claimed`/`resumed` fleet event through the next `result` entry. */
 export interface SessionSegmentReport {
   numTurns: number | null;

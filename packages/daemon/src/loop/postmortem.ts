@@ -1,11 +1,11 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { JournalEntry, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import { collectBranchSummary } from "../github/worktree.ts";
 import { logError } from "../log.ts";
 import { activityNote } from "../session/worker.ts";
 import { readJournalTail } from "../store/journal.ts";
+import { transcriptDirIfPresent } from "../store/transcripts.ts";
 import { key } from "./context.ts";
 
 /** How many meaningful (text or tool-use) journal entries to surface in "What was attempted". */
@@ -128,17 +128,6 @@ export function buildFailurePostMortem(input: PostMortemInput): string {
     nextStepsSection(input.retryHint),
   ].filter((section): section is string => Boolean(section));
   return truncate(sections.join("\n\n"), POST_MORTEM_CHAR_LIMIT);
-}
-
-/** The archived transcript dir for this ticket, if `copyTicketTranscripts` has populated it. */
-function transcriptDirIfPresent(dataDirPath: string, project: string, issueNumber: number): string | undefined {
-  const dir = join(dataDirPath, "transcripts", project, String(issueNumber));
-  try {
-    if (existsSync(dir) && readdirSync(dir).length > 0) return dir;
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 /**
