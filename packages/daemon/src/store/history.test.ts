@@ -30,7 +30,53 @@ describe("computeHistoryAggregates", () => {
       autoResumedRate: 0,
       planRate: 0,
       modelTotals: {},
+      bashDeniedByModel: {},
+      approvalLatency: { count: 0, totalWaitMs: 0, maxWaitMs: 0 },
+      machineReviewOutcomeCounts: { pending: 0, passed: 0, findings: 0, skipped: 0, none: 0 },
     });
+  });
+
+  it("does not NaN or throw on tickets that predate bash-denied/approval-latency/machine-review fields", () => {
+    const record = closedRecord({});
+    expect(record.bashDeniedCount).toBeUndefined();
+    expect(record.approvalLatency).toBeUndefined();
+    expect(record.machineReviewOutcome).toBeUndefined();
+
+    const aggregates = computeHistoryAggregates([record]);
+
+    expect(aggregates.bashDeniedByModel).toEqual({});
+    expect(aggregates.approvalLatency).toEqual({ count: 0, totalWaitMs: 0, maxWaitMs: 0 });
+    expect(aggregates.machineReviewOutcomeCounts).toEqual({ pending: 0, passed: 0, findings: 0, skipped: 0, none: 1 });
+  });
+
+  it("rolls up bash-denied counts by model, approval latency, and machine-review outcomes", () => {
+    const records = [
+      closedRecord({
+        issueNumber: 1,
+        model: "claude-sonnet-5",
+        bashDeniedCount: 2,
+        approvalLatency: { count: 2, totalWaitMs: 3000, maxWaitMs: 2000 },
+        machineReviewOutcome: "findings",
+      }),
+      closedRecord({
+        issueNumber: 2,
+        model: "claude-sonnet-5",
+        bashDeniedCount: 1,
+        approvalLatency: { count: 1, totalWaitMs: 5000, maxWaitMs: 5000 },
+        machineReviewOutcome: "passed",
+      }),
+      closedRecord({
+        issueNumber: 3,
+        model: "claude-opus-5",
+        machineReviewOutcome: "skipped",
+      }),
+    ];
+
+    const aggregates = computeHistoryAggregates(records);
+
+    expect(aggregates.bashDeniedByModel).toEqual({ "claude-sonnet-5": 3 });
+    expect(aggregates.approvalLatency).toEqual({ count: 3, totalWaitMs: 8000, maxWaitMs: 5000 });
+    expect(aggregates.machineReviewOutcomeCounts).toEqual({ pending: 0, passed: 1, findings: 1, skipped: 1, none: 0 });
   });
 
   it("computes correct aggregates for a single record", () => {
@@ -63,7 +109,7 @@ describe("computeHistoryAggregates", () => {
         closedAt: "2026-01-01T00:10:00.000Z",
         prState: "MERGED",
         elevated: true,
-        modelUsage: { "claude-sonnet-5": { inputTokens: 10, outputTokens: 5, costUsd: 1 } },
+        modelUsage: { "claude-sonnet-5": { inputTokens: 10, outputTokens: 5, costUsd: 1, cacheReadTokens: 2, cacheCreationTokens: 1 } },
       }),
       closedRecord({
         issueNumber: 2,
@@ -73,7 +119,7 @@ describe("computeHistoryAggregates", () => {
         prState: "CLOSED",
         light: true,
         autoResumed: true,
-        modelUsage: { "claude-sonnet-5": { inputTokens: 20, outputTokens: 10, costUsd: 3 } },
+        modelUsage: { "claude-sonnet-5": { inputTokens: 20, outputTokens: 10, costUsd: 3, cacheReadTokens: 4, cacheCreationTokens: 2 } },
       }),
       closedRecord({
         issueNumber: 3,
@@ -82,7 +128,7 @@ describe("computeHistoryAggregates", () => {
         closedAt: "2026-01-03T00:00:00.000Z",
         prState: "NONE",
         isPlan: true,
-        modelUsage: { "claude-opus-5": { inputTokens: 5, outputTokens: 2, costUsd: 0.5 } },
+        modelUsage: { "claude-opus-5": { inputTokens: 5, outputTokens: 2, costUsd: 0.5, cacheReadTokens: 1, cacheCreationTokens: 0 } },
       }),
     ];
 
@@ -97,8 +143,8 @@ describe("computeHistoryAggregates", () => {
     expect(aggregates.autoResumedRate).toBeCloseTo(1 / 3);
     expect(aggregates.planRate).toBeCloseTo(1 / 3);
     expect(aggregates.modelTotals).toEqual({
-      "claude-sonnet-5": { inputTokens: 30, outputTokens: 15, costUsd: 4 },
-      "claude-opus-5": { inputTokens: 5, outputTokens: 2, costUsd: 0.5 },
+      "claude-sonnet-5": { inputTokens: 30, outputTokens: 15, costUsd: 4, cacheReadTokens: 6, cacheCreationTokens: 3 },
+      "claude-opus-5": { inputTokens: 5, outputTokens: 2, costUsd: 0.5, cacheReadTokens: 1, cacheCreationTokens: 0 },
     });
   });
 });

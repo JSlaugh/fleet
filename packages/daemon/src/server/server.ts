@@ -19,7 +19,7 @@ import { bodyWithDependsOn, createIssue, setPriority } from "../github/github.ts
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
-import { readJournalTail } from "../store/journal.ts";
+import { readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
 import type { StateStore } from "../store/state.ts";
 import { readTicketTranscript } from "../store/transcripts.ts";
 
@@ -426,5 +426,6 @@ function buildTicketReport(journal: JournalEntry[]): TicketReport {
       durationMs: segments.reduce((sum, s) => sum + (s.durationMs ?? 0), 0),
       costUsd: segments.reduce((sum, s) => sum + s.costUsd, 0),
     },
+    ...summarizeJournalEvents(journal),
   };
 }

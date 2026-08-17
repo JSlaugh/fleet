@@ -51,6 +51,11 @@ describe("GET /api/tickets/:project/:issue/report", () => {
       errorCount: 0,
       segments: [],
       totals: { toolCalls: 0, errors: 0, turns: 0, durationMs: 0, costUsd: 0 },
+      bashDeniedCount: 0,
+      approvalLatency: { count: 0, totalWaitMs: 0, maxWaitMs: 0 },
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      machineReview: undefined,
     });
   });
 
@@ -127,5 +132,115 @@ describe("GET /api/tickets/:project/:issue/report", () => {
     expect(body.toolCounts).toEqual({ Bash: 1 });
     expect(body.segments).toEqual([{ numTurns: null, durationMs: null, costUsd: 0.1 }]);
     expect(body.totals).toEqual({ toolCalls: 1, errors: 0, turns: 0, durationMs: 0, costUsd: 0.1 });
+  });
+
+  it("counts bash-denied firings and rolls up approval-decided wait times", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 6, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "fleet", event: "bash-denied", command: "git push", reason: "forbidden" },
+      { ts: "t2", type: "fleet", event: "bash-denied", command: "gh pr create", reason: "forbidden" },
+      { ts: "t3", type: "fleet", event: "approval-decided", toolName: "Bash", outcome: "allowed", waitMs: 1000 },
+      { ts: "t4", type: "fleet", event: "approval-decided", toolName: "Write", outcome: "denied", waitMs: 5000 },
+      { ts: "t5", type: "result", subtype: "success", costUsd: 0.1 },
+    ]);
+
+    const { body } = await fetchReport(app, 6);
+
+    expect(body.bashDeniedCount).toBe(2);
+    expect(body.approvalLatency).toEqual({ count: 2, totalWaitMs: 6000, maxWaitMs: 5000 });
+  });
+
+  it("sums per-message cache-read/cache-creation tokens, excluding the machine-review sub-session", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 7, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "assistant", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheCreationTokens: 20 } },
+      { ts: "t2", type: "assistant", usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 50, cacheCreationTokens: 0 } },
+      { ts: "t3", type: "result", subtype: "success", costUsd: 0.1 },
+      { ts: "t4", type: "fleet", event: "machine-review-started" },
+      { ts: "t5", type: "assistant", usage: { cacheReadTokens: 999 }, session: "machine-review" },
+      { ts: "t6", type: "result", subtype: "success", session: "machine-review" },
+    ]);
+
+    const { body } = await fetchReport(app, 7);
+
+    expect(body.cacheReadTokens).toBe(150);
+    expect(body.cacheCreationTokens).toBe(20);
+  });
+
+  it("reports a passed machine review", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 8, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "fleet", event: "machine-review-started", model: "claude-sonnet-5" },
+      { ts: "t2", type: "fleet", event: "machine-review-passed", summary: "looks good" },
+    ]);
+
+    const { body } = await fetchReport(app, 8);
+
+    expect(body.machineReview).toEqual({
+      kind: "code",
+      outcome: "passed",
+      model: "claude-sonnet-5",
+      findings: [],
+      errorSubtype: undefined,
+    });
+  });
+
+  it("reports a plan review's findings", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 9, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "fleet", event: "plan-review-started", model: "claude-haiku-4-5" },
+      {
+        ts: "t2",
+        type: "fleet",
+        event: "plan-review-findings",
+        count: 1,
+        findings: [{ ticketIndex: 0, severity: "major", summary: "too vague", detail: "needs acceptance criteria" }],
+      },
+    ]);
+
+    const { body } = await fetchReport(app, 9);
+
+    expect(body.machineReview).toEqual({
+      kind: "plan",
+      outcome: "findings",
+      model: "claude-haiku-4-5",
+      findings: [{ ticketIndex: 0, severity: "major", summary: "too vague", detail: "needs acceptance criteria" }],
+      errorSubtype: undefined,
+    });
+  });
+
+  it("reports a machine review that failed open", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 10, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "fleet", event: "machine-review-started" },
+      { ts: "t2", type: "fleet", event: "machine-review-error", errorSubtype: "timed out after 8 minutes" },
+    ]);
+
+    const { body } = await fetchReport(app, 10);
+
+    expect(body.machineReview).toEqual({
+      kind: "code",
+      outcome: "error",
+      model: undefined,
+      findings: [],
+      errorSubtype: "timed out after 8 minutes",
+    });
+  });
+
+  it("omits machineReview entirely when no review ran", async () => {
+    const { app, dataDir } = makeApp();
+    writeJournal(dataDir, 11, [
+      { ts: "t0", type: "fleet", event: "claimed" },
+      { ts: "t1", type: "result", subtype: "success", costUsd: 0.1 },
+    ]);
+
+    const { body } = await fetchReport(app, 11);
+
+    expect(body.machineReview).toBeUndefined();
   });
 });

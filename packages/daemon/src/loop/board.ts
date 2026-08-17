@@ -4,6 +4,7 @@ import { run } from "../github/exec.ts";
 import { getPrOutcome, getPrState, type PrOutcome } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { deleteRemoteBranch, removeWorktree } from "../github/worktree.ts";
+import { readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
 import { copyTicketTranscripts } from "../store/transcripts.ts";
 
 /** GitHub issue URL for a ticket record, or "" if its project isn't in the current config (e.g. removed since it closed). */
@@ -116,10 +117,16 @@ export async function cleanupFinished(
     await removeWorktree(project, record.worktreePath);
     await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
     await deleteRemoteBranch(project, record.branch);
+    // Snapshotted once here so cross-ticket history aggregates never need to
+    // re-scan a journal — see `summarizeJournalEvents`.
+    const journal = readJournalTail(ctx.dataDirPath, record.project, record.issueNumber, Number.MAX_SAFE_INTEGER);
+    const { bashDeniedCount, approvalLatency } = summarizeJournalEvents(journal);
     ctx.history.add({
       ...record,
       closedAt: new Date().toISOString(),
       prState,
+      bashDeniedCount,
+      approvalLatency,
       ...(outcome
         ? {
             timeToMergeMs: outcome.timeToMergeMs,

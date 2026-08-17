@@ -74,7 +74,15 @@ describe("mergeModelUsage", () => {
 
   it("sums overlapping keys field by field", () => {
     expect(mergeModelUsage({ opus }, { opus })).toEqual({
-      opus: { inputTokens: 200, outputTokens: 20, costUsd: 1 },
+      opus: { inputTokens: 200, outputTokens: 20, costUsd: 1, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    });
+  });
+
+  it("sums cache-read/cache-creation tokens when present", () => {
+    const a = { inputTokens: 100, outputTokens: 10, costUsd: 0.5, cacheReadTokens: 50, cacheCreationTokens: 5 };
+    const b = { inputTokens: 20, outputTokens: 2, costUsd: 0.1, cacheReadTokens: 10, cacheCreationTokens: 1 };
+    expect(mergeModelUsage({ opus: a }, { opus: b })).toEqual({
+      opus: { inputTokens: 120, outputTokens: 12, costUsd: 0.6, cacheReadTokens: 60, cacheCreationTokens: 6 },
     });
   });
 

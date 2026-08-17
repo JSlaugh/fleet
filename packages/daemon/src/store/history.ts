@@ -1,4 +1,4 @@
-import type { ClosedTicketRecord, HistoryAggregates, ModelUsageSummary } from "@fleet/shared";
+import type { ApprovalLatencyStats, ClosedTicketRecord, HistoryAggregates, ModelUsageSummary } from "@fleet/shared";
 
 const DEFAULT_LIMIT = 50;
 
@@ -37,11 +37,50 @@ function sumModelUsage(records: ClosedTicketRecord[]): Record<string, ModelUsage
             inputTokens: prev.inputTokens + usage.inputTokens,
             outputTokens: prev.outputTokens + usage.outputTokens,
             costUsd: prev.costUsd + usage.costUsd,
+            cacheReadTokens: (prev.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0),
+            cacheCreationTokens: (prev.cacheCreationTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
           }
         : { ...usage };
     }
   }
   return totals;
+}
+
+/** Rolls each record's `bashDeniedCount` into a total keyed by its assigned model — absent on records predating #157, or on a record with no `model` set. */
+function sumBashDeniedByModel(records: ClosedTicketRecord[]): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const record of records) {
+    if (!record.bashDeniedCount) continue;
+    const model = record.model ?? "unknown";
+    totals[model] = (totals[model] ?? 0) + record.bashDeniedCount;
+  }
+  return totals;
+}
+
+/** Sums each record's `approvalLatency` — `count`/`totalWaitMs` add cleanly; `maxWaitMs` is the max of maxes. Absent on records predating #157. */
+function sumApprovalLatency(records: ClosedTicketRecord[]): ApprovalLatencyStats {
+  return records.reduce<ApprovalLatencyStats>(
+    (acc, record) => {
+      const latency = record.approvalLatency;
+      if (!latency) return acc;
+      return {
+        count: acc.count + latency.count,
+        totalWaitMs: acc.totalWaitMs + latency.totalWaitMs,
+        maxWaitMs: Math.max(acc.maxWaitMs, latency.maxWaitMs),
+      };
+    },
+    { count: 0, totalWaitMs: 0, maxWaitMs: 0 },
+  );
+}
+
+/** Counts each record's `machineReviewOutcome` — `"none"` covers both an opted-out project and a ticket that predates the field. */
+function countMachineReviewOutcomes(records: ClosedTicketRecord[]): HistoryAggregates["machineReviewOutcomeCounts"] {
+  const counts: HistoryAggregates["machineReviewOutcomeCounts"] = { pending: 0, passed: 0, findings: 0, skipped: 0, none: 0 };
+  for (const record of records) {
+    const outcome = record.machineReviewOutcome ?? "none";
+    counts[outcome] += 1;
+  }
+  return counts;
 }
 
 /** Pure rollup over an already-filtered slice of history — every rate is 0 (not NaN) when `records` is empty. */
@@ -69,6 +108,9 @@ export function computeHistoryAggregates(records: ClosedTicketRecord[]): History
     autoResumedRate: rateOf((r) => r.autoResumed === true),
     planRate: rateOf((r) => r.isPlan === true),
     modelTotals: sumModelUsage(records),
+    bashDeniedByModel: sumBashDeniedByModel(records),
+    approvalLatency: sumApprovalLatency(records),
+    machineReviewOutcomeCounts: countMachineReviewOutcomes(records),
   };
 }
 

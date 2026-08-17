@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, ClosedTicketRecord, TicketDetail, TicketReport, TicketTranscript } from "@fleet/shared";
+import type {
+  ApprovalLatencyStats,
+  BoardTicket,
+  ClosedTicketRecord,
+  TicketDetail,
+  TicketReport,
+  TicketReportFinding,
+  TicketTranscript,
+} from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import {
   acceptPlan,
@@ -16,6 +24,31 @@ import {
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function formatApprovalWait(latency: ApprovalLatencyStats | undefined): string {
+  if (!latency || latency.count === 0) return "—";
+  const meanMs = latency.totalWaitMs / latency.count;
+  return `${formatDuration(meanMs)} / ${formatDuration(latency.maxWaitMs)}`;
+}
+
+function machineReviewBadgeClass(outcome: string): string {
+  switch (outcome) {
+    case "findings":
+      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
+    case "passed":
+      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
+    case "error":
+      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
+    default:
+      return "bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300";
+  }
+}
+
+function findingLocation(finding: TicketReportFinding): string {
+  if (finding.ticketIndex !== undefined) return `ticket [${finding.ticketIndex}]`;
+  if (finding.file === undefined) return "decomposition";
+  return finding.line !== undefined ? `${finding.file}:${finding.line}` : finding.file;
 }
 
 const props = defineProps<{
@@ -316,7 +349,59 @@ onUnmounted(() => clearInterval(timer));
                 {{ formatCost(report?.totals.costUsd) || "&lt;$0.01" }}
               </dd>
             </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Bash denied</dt>
+              <dd
+                class="font-semibold"
+                :class="
+                  (report?.bashDeniedCount ?? 0) > 0
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-neutral-700 dark:text-neutral-300'
+                "
+              >
+                {{ report?.bashDeniedCount ?? 0 }}
+              </dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Approval wait (mean/max)</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+                {{ formatApprovalWait(report?.approvalLatency) }}
+              </dd>
+            </div>
+            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
+              <dt class="text-neutral-400 dark:text-neutral-500">Cache read/write</dt>
+              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+                {{ formatTokens(report?.cacheReadTokens ?? 0) }} / {{ formatTokens(report?.cacheCreationTokens ?? 0) }}
+              </dd>
+            </div>
           </dl>
+
+          <div v-if="report?.machineReview" class="rounded bg-neutral-50 px-2 py-1.5 text-[11px] dark:bg-neutral-800">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-neutral-700 dark:text-neutral-300">
+                {{ report.machineReview.kind === "plan" ? "Plan review" : "Machine review" }}
+              </span>
+              <span
+                class="rounded px-1.5 py-0.5 font-medium"
+                :class="machineReviewBadgeClass(report.machineReview.outcome)"
+              >
+                {{ report.machineReview.outcome }}
+              </span>
+              <span v-if="report.machineReview.model" class="text-neutral-400 dark:text-neutral-500">
+                {{ shortModelName(report.machineReview.model) }}
+              </span>
+            </div>
+            <p v-if="report.machineReview.errorSubtype" class="mt-1 text-neutral-500 dark:text-neutral-400">
+              {{ report.machineReview.errorSubtype }}
+            </p>
+            <ul v-if="report.machineReview.findings.length" class="mt-1 space-y-0.5">
+              <li v-for="(finding, index) in report.machineReview.findings" :key="index" class="text-neutral-600 dark:text-neutral-400">
+                <span class="font-medium text-neutral-700 dark:text-neutral-300">{{ findingLocation(finding) }}</span>
+                <template v-if="finding.severity"> ({{ finding.severity }})</template>
+                <template v-if="finding.summary">: {{ finding.summary }}</template>
+              </li>
+            </ul>
+          </div>
 
           <table v-if="reportToolNames.length" class="w-full text-left text-[11px]">
             <thead>
