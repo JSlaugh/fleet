@@ -159,6 +159,51 @@ describe("notify", () => {
     expect(errSpy).toHaveBeenCalledOnce();
     errSpy.mockRestore();
   });
+
+  it("routes to a project's override webhook instead of the global one", async () => {
+    const overrideProject = makeProject({ notifications: { discordUrl: "https://discord.example/project-webhook" } });
+
+    await notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", overrideProject, detail);
+
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/project-webhook", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("falls back to the global webhook when a project has no override", async () => {
+    await notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", project, detail);
+
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/webhook", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("posts to a project override even when no global webhook is configured", async () => {
+    const overrideProject = makeProject({ notifications: { discordUrl: "https://discord.example/project-webhook" } });
+
+    await notify({ config: {}, dryRun: false, once: false }, "needs-input", overrideProject, detail);
+
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/project-webhook", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("resolves the events filter per-field: a project overriding only discordUrl still inherits the global events filter", async () => {
+    const filteredGlobal: NotificationsConfig = { ...config, events: ["failed"] };
+    const overrideProject = makeProject({ notifications: { discordUrl: "https://discord.example/project-webhook" } });
+
+    await notify({ config: { notifications: filteredGlobal }, dryRun: false, once: false }, "needs-input", overrideProject, detail);
+    expect(fetch).not.toHaveBeenCalled();
+
+    await notify({ config: { notifications: filteredGlobal }, dryRun: false, once: false }, "failed", overrideProject, detail);
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/project-webhook", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("a project's own events filter overrides the global one", async () => {
+    const overrideProject = makeProject({
+      notifications: { discordUrl: "https://discord.example/project-webhook", events: ["failed"] },
+    });
+
+    await notify({ config: { notifications: config }, dryRun: false, once: false }, "needs-input", overrideProject, detail);
+    expect(fetch).not.toHaveBeenCalled();
+
+    await notify({ config: { notifications: config }, dryRun: false, once: false }, "failed", overrideProject, detail);
+    expect(fetch).toHaveBeenCalledWith("https://discord.example/project-webhook", expect.objectContaining({ method: "POST" }));
+  });
 });
 
 function emptyDigest(patch: Partial<DigestResponse> = {}): DigestResponse {
