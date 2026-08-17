@@ -122,6 +122,13 @@ export function parseDependsOn(body: string): number[] {
   return [...new Set(numbers)];
 }
 
+/** Appends a `Depends-on: #...` line `parseDependsOn` will parse back out. */
+export function bodyWithDependsOn(body: string, dependsOn: number[] | undefined): string {
+  if (!dependsOn || dependsOn.length === 0) return body;
+  const line = `Depends-on: ${dependsOn.map((n) => `#${n}`).join(", ")}`;
+  return body.trim().length > 0 ? `${body}\n\n${line}` : line;
+}
+
 /**
  * `blockedBy` is deps that are still open (unsatisfied); `unknown` is deps that
  * reference an issue number this repo has never had — treated as satisfied so a

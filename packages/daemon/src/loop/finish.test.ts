@@ -1,11 +1,13 @@
-import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import type { FleetConfig, PlanResult, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeCtx, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { readJournalTail } from "../store/journal.ts";
-import { PostCompletionError } from "./finish.ts";
+import { finishPlanned, PostCompletionError, resolveDependsOnIndex } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 
-vi.mock("../github/github.ts", () => ({
+vi.mock("../github/github.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../github/github.ts")>()),
+  createIssue: vi.fn(async () => ({ number: 1, url: "https://github.com/acme/alpha/issues/1" })),
   createPullRequest: vi.fn(async () => "https://github.com/acme/alpha/pull/7"),
   escalateToElevated: vi.fn(async () => {}),
   getIssueComments: vi.fn(async () => []),
@@ -167,6 +169,85 @@ describe("finishFailed — auto-elevation", () => {
         toModel: "claude-opus-5",
         error: "the model gave up",
       }),
+    );
+  });
+});
+
+describe("resolveDependsOnIndex", () => {
+  it("returns no dependencies when dependsOnIndex is absent or empty", () => {
+    expect(resolveDependsOnIndex(2, undefined, 3)).toEqual({ valid: [], dropped: [] });
+    expect(resolveDependsOnIndex(2, [], 3)).toEqual({ valid: [], dropped: [] });
+  });
+
+  it("resolves references to strictly earlier indices (happy path)", () => {
+    expect(resolveDependsOnIndex(2, [0, 1], 3)).toEqual({ valid: [0, 1], dropped: [] });
+  });
+
+  it("drops a self reference", () => {
+    expect(resolveDependsOnIndex(1, [1], 3)).toEqual({ valid: [], dropped: [1] });
+  });
+
+  it("drops a forward reference", () => {
+    expect(resolveDependsOnIndex(0, [1], 3)).toEqual({ valid: [], dropped: [1] });
+  });
+
+  it("drops an out-of-range index", () => {
+    expect(resolveDependsOnIndex(2, [-1, 5], 3)).toEqual({ valid: [], dropped: [-1, 5] });
+  });
+
+  it("dedupes a repeated valid index", () => {
+    expect(resolveDependsOnIndex(2, [1, 0, 1], 3)).toEqual({ valid: [1, 0], dropped: [] });
+  });
+});
+
+describe("finishPlanned — dependsOnIndex translation", () => {
+  const planIssue = { number: 7, title: "epic 7", body: "body", labels: [], author: "collab-author", assignees: [] };
+
+  beforeEach(() => {
+    let nextNumber = 100;
+    vi.mocked(github.createIssue).mockImplementation(async () => {
+      nextNumber += 1;
+      return { number: nextNumber, url: `https://github.com/acme/alpha/issues/${nextNumber}` };
+    });
+  });
+
+  it("files children in order and appends a Depends-on line with the real sibling issue number", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [
+        { title: "add the schema field", body: "add it" },
+        { title: "use it in the dashboard", body: "use it", dependsOnIndex: [0] },
+      ],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    const calls = vi.mocked(github.createIssue).mock.calls;
+    expect(calls[0]?.[1]?.body).toBe("add it");
+    expect(calls[1]?.[1]?.body).toBe("use it\n\nDepends-on: #101");
+  });
+
+  it("drops an out-of-range/self/forward dependsOnIndex, files the rest normally, and notes it in the status comment", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [{ title: "first", body: "first body", dependsOnIndex: [0, 1, 5] }],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(vi.mocked(github.createIssue).mock.calls[0]?.[1]?.body).toBe("first body");
+    expect(github.upsertStatusComment).toHaveBeenCalledWith(
+      project,
+      7,
+      expect.stringContaining("Dropped invalid dependencies"),
     );
   });
 });

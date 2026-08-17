@@ -9,6 +9,7 @@ vi.mock("./exec.ts", async (importActual) => ({
 
 const exec = await import("./exec.ts");
 const {
+  bodyWithDependsOn,
   buildConflictPrompt,
   buildPrFeedback,
   buildReviewFeedbackPrompt,
@@ -150,6 +151,25 @@ describe("parseDependsOn", () => {
   it("unions dependencies from the line and section forms when both are present", () => {
     const body = ["Depends-on: #1", "", "### Depends on", "", "#2"].join("\n");
     expect(parseDependsOn(body)).toEqual([1, 2]);
+  });
+});
+
+describe("bodyWithDependsOn", () => {
+  it("leaves the body untouched when there are no dependencies", () => {
+    expect(bodyWithDependsOn("details", undefined)).toBe("details");
+    expect(bodyWithDependsOn("details", [])).toBe("details");
+  });
+
+  it("appends a Depends-on line for a single dependency", () => {
+    expect(bodyWithDependsOn("details", [12])).toBe("details\n\nDepends-on: #12");
+  });
+
+  it("appends a Depends-on line listing every dependency", () => {
+    expect(bodyWithDependsOn("details", [12, 14])).toBe("details\n\nDepends-on: #12, #14");
+  });
+
+  it("doesn't leave a leading blank line when the body is empty", () => {
+    expect(bodyWithDependsOn("", [12])).toBe("Depends-on: #12");
   });
 });
 

@@ -14,7 +14,7 @@ import {
   type TicketReport,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { createIssue, setPriority } from "../github/github.ts";
+import { bodyWithDependsOn, createIssue, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
@@ -38,13 +38,6 @@ export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): s
   if (input.ready) labels.push(FLEET_LABELS.ready);
   if (input.priority) labels.push(input.priority);
   return labels;
-}
-
-/** Appends a `Depends-on: #...` line the daemon's own gating will parse back out. */
-export function bodyWithDependsOn(body: string, dependsOn: number[] | undefined): string {
-  if (!dependsOn || dependsOn.length === 0) return body;
-  const line = `Depends-on: ${dependsOn.map((n) => `#${n}`).join(", ")}`;
-  return body.trim().length > 0 ? `${body}\n\n${line}` : line;
 }
 
 /** Builds the Hono app without binding a port, so routes are testable via `app.request(...)`. */
