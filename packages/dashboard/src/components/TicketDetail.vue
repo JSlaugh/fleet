@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import type { BoardTicket, TicketDetail, TicketReport } from "@fleet/shared";
+import type { BoardTicket, ClosedTicketRecord, TicketDetail, TicketReport } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import {
   acceptPlan,
@@ -37,6 +37,10 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 const accepting = ref(false);
 const acceptStatus = ref<string>();
+
+const closedRecord = computed<ClosedTicketRecord | undefined>(() =>
+  detail.value?.record && "prState" in detail.value.record ? (detail.value.record as ClosedTicketRecord) : undefined,
+);
 
 const canReply = computed(() => detail.value?.canReply ?? false);
 const canRestart = computed(() => detail.value?.canRestart ?? false);
@@ -202,6 +206,27 @@ onUnmounted(() => clearInterval(timer));
         <div v-for="(usage, model) in detail.record.modelUsage" :key="model" class="flex gap-2">
           <dt class="font-medium text-neutral-600 dark:text-neutral-300">{{ shortModelName(String(model)) }}</dt>
           <dd>{{ formatTokens(usage.inputTokens) }} in / {{ formatTokens(usage.outputTokens) }} out · {{ formatCost(usage.costUsd) || "&lt;$0.01" }}</dd>
+        </div>
+      </dl>
+      <dl
+        v-if="closedRecord"
+        class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        <div v-if="closedRecord.timeToMergeMs !== undefined" class="flex gap-1">
+          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Time to merge</dt>
+          <dd>{{ formatDuration(closedRecord.timeToMergeMs) }}</dd>
+        </div>
+        <div v-if="closedRecord.reviewRounds !== undefined" class="flex gap-1">
+          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Review rounds</dt>
+          <dd>{{ closedRecord.reviewRounds }}</dd>
+        </div>
+        <div v-if="closedRecord.reviewCommentCount !== undefined" class="flex gap-1">
+          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Review comments</dt>
+          <dd>{{ closedRecord.reviewCommentCount }}</dd>
+        </div>
+        <div v-if="closedRecord.humanPushedAfterOpen !== undefined" class="flex gap-1">
+          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Human rework</dt>
+          <dd>{{ closedRecord.humanPushedAfterOpen ? "yes" : "no" }}</dd>
         </div>
       </dl>
       <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">

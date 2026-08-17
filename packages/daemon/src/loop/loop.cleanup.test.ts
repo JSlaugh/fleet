@@ -4,6 +4,7 @@ import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState 
 import { FleetLoop } from "./loop.ts";
 
 vi.mock("../github/github.ts", () => ({
+  getPrOutcome: vi.fn(async () => undefined),
   getPrState: vi.fn(),
   listFleetIssues: vi.fn(async () => []),
   swapLabel: vi.fn(async () => {}),
@@ -145,6 +146,49 @@ describe("cleanupFinished", () => {
 
     expect(worktreeMod.removeWorktree).not.toHaveBeenCalled();
     expect(state.get("alpha", 7)).toBeDefined();
+  });
+
+  it("archives the PR outcome fields fetched alongside prState", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    vi.mocked(github.getPrOutcome).mockResolvedValue({
+      openedAt: "2026-01-01T00:00:00.000Z",
+      mergedAt: "2026-01-02T00:00:00.000Z",
+      timeToMergeMs: 24 * 60 * 60 * 1000,
+      humanPushedAfterOpen: true,
+      reviewRounds: 2,
+      reviewCommentCount: 3,
+    });
+    const { loop, internals } = makeLoop(record());
+
+    await internals.cleanupFinished(project, []);
+
+    expect(github.getPrOutcome).toHaveBeenCalledWith(project, "https://github.com/acme/alpha/pull/7");
+    const archived = loop.getHistoryRecord("alpha", 7);
+    expect(archived?.timeToMergeMs).toBe(24 * 60 * 60 * 1000);
+    expect(archived?.humanPushedAfterOpen).toBe(true);
+    expect(archived?.reviewRounds).toBe(2);
+    expect(archived?.reviewCommentCount).toBe(3);
+  });
+
+  it("still archives and cleans up when the PR outcome fetch fails, just without the enriched fields", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    vi.mocked(github.getPrOutcome).mockRejectedValue(new Error("gh: rate limited"));
+    const { loop, state, internals } = makeLoop(record());
+
+    await expect(internals.cleanupFinished(project, [])).resolves.toBeUndefined();
+
+    expect(state.get("alpha", 7)).toBeUndefined();
+    const archived = loop.getHistoryRecord("alpha", 7);
+    expect(archived?.prState).toBe("MERGED");
+    expect(archived?.timeToMergeMs).toBeUndefined();
+  });
+
+  it("does not fetch a PR outcome for a PR-less plan record", async () => {
+    const { internals } = makeLoop(record({ isPlan: true, prUrl: undefined }));
+
+    await internals.cleanupFinished(project, []);
+
+    expect(github.getPrOutcome).not.toHaveBeenCalled();
   });
 
   it("still skips a non-plan record with no prUrl", async () => {

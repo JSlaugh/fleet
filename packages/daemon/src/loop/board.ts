@@ -1,7 +1,7 @@
 import type { BoardTicket, ClosedTicketRecord, ProjectConfig } from "@fleet/shared";
 import { key, type LoopContext } from "./context.ts";
 import { run } from "../github/exec.ts";
-import { getPrState } from "../github/github.ts";
+import { getPrOutcome, getPrState, type PrOutcome } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { deleteRemoteBranch, removeWorktree } from "../github/worktree.ts";
 import { copyTicketTranscripts } from "../store/transcripts.ts";
@@ -97,13 +97,38 @@ export async function cleanupFinished(
       prState = "NONE";
     }
 
+    // Best-effort: this only enriches the archived record with outcome data
+    // (time-to-merge, review rounds, ...) — a failed fetch here shouldn't
+    // block cleanup itself, which is why prState above (which gates whether
+    // cleanup proceeds at all) is checked separately.
+    let outcome: PrOutcome | undefined;
+    if (record.prUrl) {
+      try {
+        outcome = await getPrOutcome(project, record.prUrl);
+      } catch (err) {
+        logError("loop", `${scope}: could not fetch PR outcome details`, err);
+      }
+    }
+
     const reason = record.prUrl ? `PR ${prState.toLowerCase()} and issue closed` : "plan epic issue closed";
     log("loop", `${scope}: ${reason} — cleaning up worktree + branch ${record.branch}`);
     copyTicketTranscripts(ctx.dataDirPath, record);
     await removeWorktree(project, record.worktreePath);
     await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
     await deleteRemoteBranch(project, record.branch);
-    ctx.history.add({ ...record, closedAt: new Date().toISOString(), prState });
+    ctx.history.add({
+      ...record,
+      closedAt: new Date().toISOString(),
+      prState,
+      ...(outcome
+        ? {
+            timeToMergeMs: outcome.timeToMergeMs,
+            humanPushedAfterOpen: outcome.humanPushedAfterOpen,
+            reviewRounds: outcome.reviewRounds,
+            reviewCommentCount: outcome.reviewCommentCount,
+          }
+        : {}),
+    });
     ctx.state.remove(record.project, record.issueNumber);
     ctx.emitBoard();
   }

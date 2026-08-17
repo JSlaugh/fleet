@@ -18,6 +18,20 @@ export const BOARD_COLUMNS: { status: BoardStatus; title: string }[] = [
 export interface ClosedTicketRecord extends TicketRecord {
   closedAt: string;
   prState: "MERGED" | "CLOSED" | "NONE";
+  /** PR opened → merged, in ms. Undefined unless `prState` is `"MERGED"`, or when the PR outcome fetch failed at cleanup. */
+  timeToMergeMs?: number;
+  /**
+   * Whether a commit landed on the fleet branch, authored by someone other
+   * than the daemon's own GitHub login, after the PR opened — the best
+   * available proxy for "a human reworked the worker's output" (a resumed
+   * worker session pushes under the same login, so it doesn't count).
+   * Undefined when the PR outcome fetch failed at cleanup.
+   */
+  humanPushedAfterOpen?: boolean;
+  /** Total PR review submissions (approvals, change requests, plain comments). Undefined when the PR outcome fetch failed at cleanup. */
+  reviewRounds?: number;
+  /** Total inline PR review comments. Undefined when the PR outcome fetch failed at cleanup. */
+  reviewCommentCount?: number;
 }
 
 /** A `ClosedTicketRecord` enriched with the GitHub issue URL, for the history view's table rows. */
