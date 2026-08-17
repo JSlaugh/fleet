@@ -1,52 +1,37 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import type { ClosedTicketRecord, FleetState, SpendLedgerEntry, TicketRecord } from "@fleet/shared";
-
-/** How many archived tickets `HistoryStore` keeps on disk. */
-const HISTORY_LIMIT = 1000;
-
-/** Newest-first, capped to `max` — applied on every write so the file never grows unbounded. */
-export function trimHistory(records: ClosedTicketRecord[], max: number = HISTORY_LIMIT): ClosedTicketRecord[] {
-  return [...records].sort((a, b) => Date.parse(b.closedAt) - Date.parse(a.closedAt)).slice(0, max);
-}
+import type { DatabaseSync } from "node:sqlite";
+import type { ClosedTicketRecord, TicketRecord } from "@fleet/shared";
+import {
+  allHistory,
+  allTickets,
+  appendSpendRow,
+  getHistory,
+  getMeta,
+  getTicket,
+  insertHistory,
+  openDatabase,
+  prunedSpendLedger,
+  removeTicket,
+  setMeta,
+  upsertTicket,
+} from "./db.ts";
 
 export class StateStore {
-  private readonly filePath: string;
-  private state: FleetState;
+  private readonly db: DatabaseSync;
 
   constructor(dataDir: string) {
-    this.filePath = join(dataDir, "state.json");
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    this.state = this.read();
-  }
-
-  private read(): FleetState {
-    try {
-      return JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, "")) as FleetState;
-    } catch {
-      return { tickets: [] };
-    }
-  }
-
-  private write(): void {
-    writeFileSync(this.filePath, JSON.stringify(this.state, null, 2));
+    this.db = openDatabase(dataDir);
   }
 
   get(project: string, issueNumber: number): TicketRecord | undefined {
-    return this.state.tickets.find((t) => t.project === project && t.issueNumber === issueNumber);
+    return getTicket(this.db, project, issueNumber);
   }
 
   all(): TicketRecord[] {
-    return [...this.state.tickets];
+    return allTickets(this.db);
   }
 
   upsert(record: TicketRecord): void {
-    const index = this.state.tickets.findIndex(
-      (t) => t.project === record.project && t.issueNumber === record.issueNumber,
-    );
-    if (index === -1) this.state.tickets.push(record);
-    else this.state.tickets[index] = record;
-    this.write();
+    upsertTicket(this.db, record);
   }
 
   update(project: string, issueNumber: number, patch: Partial<TicketRecord>): TicketRecord | undefined {
@@ -58,44 +43,38 @@ export class StateStore {
   }
 
   remove(project: string, issueNumber: number): void {
-    const index = this.state.tickets.findIndex((t) => t.project === project && t.issueNumber === issueNumber);
-    if (index === -1) return;
-    this.state.tickets.splice(index, 1);
-    this.write();
+    removeTicket(this.db, project, issueNumber);
   }
 
   getPausedUntil(): string | undefined {
-    return this.state.pausedUntil;
+    return getMeta<string>(this.db, "pausedUntil");
   }
 
   setPausedUntil(pausedUntil: string | undefined): void {
-    this.state.pausedUntil = pausedUntil;
-    this.write();
+    setMeta(this.db, "pausedUntil", pausedUntil);
   }
 
   getPaused(): boolean {
-    return this.state.paused ?? false;
+    return getMeta<boolean>(this.db, "paused") ?? false;
   }
 
   setPaused(paused: boolean): void {
-    this.state.paused = paused;
-    this.write();
+    setMeta(this.db, "paused", paused);
   }
 
   getPausedProjects(): string[] {
-    return [...(this.state.pausedProjects ?? [])];
+    return [...(getMeta<string[]>(this.db, "pausedProjects") ?? [])];
   }
 
   isProjectPaused(project: string): boolean {
-    return (this.state.pausedProjects ?? []).includes(project);
+    return this.getPausedProjects().includes(project);
   }
 
   setProjectPaused(project: string, paused: boolean): void {
-    const projects = new Set(this.state.pausedProjects ?? []);
+    const projects = new Set(getMeta<string[]>(this.db, "pausedProjects") ?? []);
     if (paused) projects.add(project);
     else projects.delete(project);
-    this.state.pausedProjects = [...projects];
-    this.write();
+    setMeta(this.db, "pausedProjects", [...projects]);
   }
 
   /**
@@ -104,40 +83,30 @@ export class StateStore {
    * window in use actually needs.
    */
   getWindowSpend(windowHours: number): number {
-    return this.prunedLedger(windowHours).reduce((sum, entry) => sum + entry.usd, 0);
+    return prunedSpendLedger(this.db, windowHours).reduce((sum, entry) => sum + entry.usd, 0);
   }
 
   /** Appends one spend delta (never a running total) and prunes anything past `windowHours`. A non-positive delta is a no-op. */
   appendSpend(usd: number, windowHours: number): void {
     if (usd <= 0) return;
-    this.state.spendLedger = [...this.prunedLedger(windowHours), { at: new Date().toISOString(), usd }];
-    this.write();
-  }
-
-  private prunedLedger(windowHours: number): SpendLedgerEntry[] {
-    const cutoff = Date.now() - windowHours * 60 * 60 * 1000;
-    const ledger = this.state.spendLedger ?? [];
-    const pruned = ledger.filter((entry) => Date.parse(entry.at) >= cutoff);
-    if (pruned.length !== ledger.length) {
-      this.state.spendLedger = pruned;
-      this.write();
-    }
-    return pruned;
+    prunedSpendLedger(this.db, windowHours);
+    appendSpendRow(this.db, new Date().toISOString(), usd);
   }
 
   clearLiveFlags(): void {
-    let changed = false;
-    for (const ticket of this.state.tickets) {
-      if (ticket.sessionLive) {
-        ticket.sessionLive = false;
+    for (const ticket of this.all()) {
+      let changed = false;
+      const updated = { ...ticket };
+      if (updated.sessionLive) {
+        updated.sessionLive = false;
         changed = true;
       }
-      if (ticket.status === "running") {
-        ticket.status = "stalled";
+      if (updated.status === "running") {
+        updated.status = "stalled";
         changed = true;
       }
+      if (changed) this.upsert(updated);
     }
-    if (changed) this.write();
   }
 }
 
@@ -145,40 +114,24 @@ export class StateStore {
  * Archive of tickets removed from `StateStore` once their PR and issue both
  * close — `cleanupFinished` deletes the live `TicketRecord`, so this is the
  * only surviving trace of a finished ticket for the dashboard's Done column.
+ * Unbounded: unlike the old JSON file, nothing here is ever trimmed.
  */
 export class HistoryStore {
-  private readonly filePath: string;
-  private records: ClosedTicketRecord[];
+  private readonly db: DatabaseSync;
 
   constructor(dataDir: string) {
-    this.filePath = join(dataDir, "history.json");
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    this.records = this.read();
-  }
-
-  private read(): ClosedTicketRecord[] {
-    try {
-      const parsed = JSON.parse(readFileSync(this.filePath, "utf8").replace(/^\uFEFF/, "")) as ClosedTicketRecord[];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
-  private write(): void {
-    writeFileSync(this.filePath, JSON.stringify(this.records, null, 2));
+    this.db = openDatabase(dataDir);
   }
 
   add(record: ClosedTicketRecord): void {
-    this.records = trimHistory([record, ...this.records]);
-    this.write();
+    insertHistory(this.db, record);
   }
 
   get(project: string, issueNumber: number): ClosedTicketRecord | undefined {
-    return this.records.find((r) => r.project === project && r.issueNumber === issueNumber);
+    return getHistory(this.db, project, issueNumber);
   }
 
   all(): ClosedTicketRecord[] {
-    return [...this.records];
+    return allHistory(this.db);
   }
 }

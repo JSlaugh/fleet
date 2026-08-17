@@ -1,10 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClosedTicketRecord, TicketRecord } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeRecord } from "../test-support.ts";
-import { HistoryStore, StateStore, trimHistory } from "./state.ts";
+import { closeAllDatabases } from "./db.ts";
+import { HistoryStore, StateStore } from "./state.ts";
 
 function closed(issueNumber: number, closedAt: string, patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
   const record = makeRecord({
@@ -17,46 +18,6 @@ function closed(issueNumber: number, closedAt: string, patch: Partial<ClosedTick
   });
   return { ...record, closedAt, prState: "MERGED", ...patch };
 }
-
-describe("trimHistory", () => {
-  it("sorts newest first", () => {
-    const records = [
-      closed(1, "2026-01-01T00:00:00.000Z"),
-      closed(2, "2026-01-03T00:00:00.000Z"),
-      closed(3, "2026-01-02T00:00:00.000Z"),
-    ];
-    expect(trimHistory(records).map((r) => r.issueNumber)).toEqual([2, 3, 1]);
-  });
-
-  it("caps at the given max", () => {
-    const records = Array.from({ length: 10 }, (_, i) => closed(i, `2026-01-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`));
-    const trimmed = trimHistory(records, 3);
-    expect(trimmed).toHaveLength(3);
-    expect(trimmed.map((r) => r.issueNumber)).toEqual([9, 8, 7]);
-  });
-
-  it("defaults to keeping the most recent 1000, trimming oldest-first", () => {
-    const records = Array.from({ length: 1010 }, (_, i) => closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
-    const trimmed = trimHistory(records);
-    expect(trimmed).toHaveLength(1000);
-    expect(trimmed.map((r) => r.issueNumber)).not.toContain(0);
-    expect(trimmed.map((r) => r.issueNumber)).not.toContain(9);
-    expect(trimmed[0]?.issueNumber).toBe(1009);
-    expect(trimmed.at(-1)?.issueNumber).toBe(10);
-  });
-
-  it("leaves entries under the cap untouched aside from sorting", () => {
-    const records = Array.from({ length: 5 }, (_, i) => closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
-    expect(trimHistory(records)).toHaveLength(5);
-  });
-
-  it("does not mutate the input array", () => {
-    const records = [closed(1, "2026-01-01T00:00:00.000Z"), closed(2, "2026-01-02T00:00:00.000Z")];
-    const copy = [...records];
-    trimHistory(records);
-    expect(records).toEqual(copy);
-  });
-});
 
 function ticket(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketRecord {
   return makeRecord({
@@ -78,30 +39,111 @@ function tempDataDir(): string {
 }
 
 afterEach(() => {
+  // An open sqlite handle blocks directory deletion on Windows, so close every
+  // cached connection before rm'ing the temp dirs those connections live in.
+  closeAllDatabases();
   for (const dir of dataDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
+describe("migration from JSON", () => {
+  it("creates an empty db when no state.json/history.json exist", () => {
+    const dataDir = tempDataDir();
+    const state = new StateStore(dataDir);
+    const history = new HistoryStore(dataDir);
+    expect(state.all()).toEqual([]);
+    expect(history.all()).toEqual([]);
+    expect(existsSync(join(dataDir, "fleet.db"))).toBe(true);
+  });
+
+  it("imports tickets, pause state, and the spend ledger from an existing state.json, then archives it", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(
+      join(dataDir, "state.json"),
+      JSON.stringify({
+        tickets: [ticket(1), ticket(2)],
+        paused: true,
+        pausedUntil: "2026-02-01T00:00:00.000Z",
+        pausedProjects: ["alpha"],
+        spendLedger: [{ at: new Date().toISOString(), usd: 4 }],
+      }),
+    );
+
+    const state = new StateStore(dataDir);
+
+    expect(state.all()).toHaveLength(2);
+    expect(state.get("alpha", 1)?.issueNumber).toBe(1);
+    expect(state.getPaused()).toBe(true);
+    expect(state.getPausedUntil()).toBe("2026-02-01T00:00:00.000Z");
+    expect(state.getPausedProjects()).toEqual(["alpha"]);
+    expect(state.getWindowSpend(5)).toBe(4);
+    expect(existsSync(join(dataDir, "state.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "state.json.imported.bak"))).toBe(true);
+  });
+
+  it("imports history records from an existing history.json, then archives it", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(
+      join(dataDir, "history.json"),
+      JSON.stringify([closed(1, "2026-01-01T00:00:00.000Z"), closed(2, "2026-01-02T00:00:00.000Z")]),
+    );
+
+    const history = new HistoryStore(dataDir);
+
+    expect(history.all().map((r) => r.issueNumber)).toEqual([2, 1]);
+    expect(existsSync(join(dataDir, "history.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "history.json.imported.bak"))).toBe(true);
+  });
+
+  it("tolerates a corrupt state.json — starts empty and still archives the file", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(join(dataDir, "state.json"), "{not valid json");
+
+    const state = new StateStore(dataDir);
+
+    expect(state.all()).toEqual([]);
+    expect(existsSync(join(dataDir, "state.json.imported.bak"))).toBe(true);
+  });
+
+  it("tolerates a corrupt history.json — starts empty and still archives the file", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(join(dataDir, "history.json"), "not json at all");
+
+    const history = new HistoryStore(dataDir);
+
+    expect(history.all()).toEqual([]);
+    expect(existsSync(join(dataDir, "history.json.imported.bak"))).toBe(true);
+  });
+
+  it("strips a leading BOM before importing state.json", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(join(dataDir, "state.json"), "﻿" + JSON.stringify({ tickets: [ticket(1)] }));
+
+    const state = new StateStore(dataDir);
+
+    expect(state.get("alpha", 1)?.issueNumber).toBe(1);
+  });
+
+  it("is idempotent — a second boot against the same data dir does not touch already-archived files or duplicate data", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(join(dataDir, "state.json"), JSON.stringify({ tickets: [ticket(1)] }));
+
+    new StateStore(dataDir);
+    closeAllDatabases(); // simulate a process restart: force a real reopen from disk, not the connection cache
+
+    const reopened = new StateStore(dataDir);
+    expect(reopened.all()).toHaveLength(1);
+    expect(existsSync(join(dataDir, "state.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "state.json.imported.bak"))).toBe(true);
+  });
+});
+
 describe("StateStore", () => {
-  it("starts empty when there is no state file yet, creating the data dir", () => {
+  it("starts empty in a freshly created data dir", () => {
     const dataDir = join(tempDataDir(), "nested");
     const store = new StateStore(dataDir);
     expect(store.all()).toEqual([]);
-  });
-
-  it("falls back to an empty state when the file on disk is corrupt", () => {
-    const dataDir = tempDataDir();
-    writeFileSync(join(dataDir, "state.json"), "{not valid json");
-    const store = new StateStore(dataDir);
-    expect(store.all()).toEqual([]);
-  });
-
-  it("strips a leading BOM before parsing on read", () => {
-    const dataDir = tempDataDir();
-    writeFileSync(join(dataDir, "state.json"), "﻿" + JSON.stringify({ tickets: [ticket(1)] }));
-    const store = new StateStore(dataDir);
-    expect(store.get("alpha", 1)?.issueNumber).toBe(1);
   });
 
   it("upsert inserts new records and overwrites existing ones by project+issueNumber", () => {
@@ -149,6 +191,8 @@ describe("StateStore", () => {
     store.setPausedUntil("2026-02-01T00:00:00.000Z");
     expect(store.getPausedUntil()).toBe("2026-02-01T00:00:00.000Z");
     expect(new StateStore(dataDir).getPausedUntil()).toBe("2026-02-01T00:00:00.000Z");
+    store.setPausedUntil(undefined);
+    expect(store.getPausedUntil()).toBeUndefined();
   });
 
   it("getPaused/setPaused round-trip, default to false, and persist across instances", () => {
@@ -213,17 +257,6 @@ describe("StateStore", () => {
       expect(store.get("alpha", 1)?.status).toBe("review");
       expect(store.get("alpha", 1)?.sessionLive).toBe(false);
     });
-
-    it("does not rewrite the file when nothing changed", () => {
-      const dataDir = tempDataDir();
-      const store = new StateStore(dataDir);
-      store.upsert(ticket(1, { status: "review", sessionLive: false }));
-      const before = readFileSync(join(dataDir, "state.json"), "utf8");
-
-      store.clearLiveFlags();
-
-      expect(readFileSync(join(dataDir, "state.json"), "utf8")).toBe(before);
-    });
   });
 
   describe("spend ledger", () => {
@@ -257,7 +290,7 @@ describe("StateStore", () => {
       expect(store.getWindowSpend(5)).toBe(2);
     });
 
-    it("persists the pruned ledger back to disk on read, so it stays tiny", () => {
+    it("prunes the stale entry permanently — it does not reappear once pruned", () => {
       const dataDir = tempDataDir();
       writeFileSync(
         join(dataDir, "state.json"),
@@ -268,8 +301,7 @@ describe("StateStore", () => {
       );
       const store = new StateStore(dataDir);
       store.getWindowSpend(5);
-      const onDisk = JSON.parse(readFileSync(join(dataDir, "state.json"), "utf8")) as { spendLedger?: unknown[] };
-      expect(onDisk.spendLedger).toEqual([]);
+      expect(store.getWindowSpend(24 * 365)).toBe(0);
     });
 
     it("prunes stale entries on append too", () => {
@@ -300,21 +332,7 @@ describe("HistoryStore", () => {
     expect(store.all()).toEqual([]);
   });
 
-  it("falls back to an empty history when the file on disk is corrupt", () => {
-    const dataDir = tempDataDir();
-    writeFileSync(join(dataDir, "history.json"), "not json at all");
-    const store = new HistoryStore(dataDir);
-    expect(store.all()).toEqual([]);
-  });
-
-  it("falls back to an empty history when the file's top-level shape is not an array", () => {
-    const dataDir = tempDataDir();
-    writeFileSync(join(dataDir, "history.json"), JSON.stringify({ oops: true }));
-    const store = new HistoryStore(dataDir);
-    expect(store.all()).toEqual([]);
-  });
-
-  it("add prepends and persists, trimming via trimHistory", () => {
+  it("add prepends and persists", () => {
     const dataDir = tempDataDir();
     const store = new HistoryStore(dataDir);
     store.add(closed(1, "2026-01-01T00:00:00.000Z"));
@@ -328,5 +346,17 @@ describe("HistoryStore", () => {
     store.add(closed(1, "2026-01-01T00:00:00.000Z"));
     expect(store.get("alpha", 1)?.issueNumber).toBe(1);
     expect(store.get("alpha", 999)).toBeUndefined();
+  });
+
+  it("never trims — seeds well past the old 1000-record cap and reads every record back", () => {
+    const store = new HistoryStore(tempDataDir());
+    for (let i = 0; i < 1010; i++) {
+      store.add(closed(i, new Date(2026, 0, 1, 0, 0, i).toISOString()));
+    }
+    const all = store.all();
+    expect(all).toHaveLength(1010);
+    expect(all.map((r) => r.issueNumber)).toContain(0);
+    expect(all[0]?.issueNumber).toBe(1009);
+    expect(all.at(-1)?.issueNumber).toBe(0);
   });
 });
