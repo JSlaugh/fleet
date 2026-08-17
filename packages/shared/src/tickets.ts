@@ -54,6 +54,14 @@ export interface TicketRecord {
    * already attempted, so later completions skip straight to human review.
    */
   machineReviewOutcome?: "pending" | "passed" | "findings" | "skipped";
+  /**
+   * The immediately-preceding attempt's closing summary or failure reason,
+   * captured by `resetForFreshClaim` before a restart overwrites `lastSummary`
+   * with restart boilerplate. Folded into the next session's opening prompt
+   * (`buildPriorAttemptBlock`) and not itself carried forward past that —
+   * the fresh claim's own record replaces it.
+   */
+  priorAttemptSummary?: string;
 }
 
 export interface ModelUsageSummary {

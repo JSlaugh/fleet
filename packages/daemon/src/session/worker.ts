@@ -7,6 +7,7 @@ import {
   type ModelUsageSummary,
   type PlanResult,
   type ProjectConfig,
+  type TicketRecord,
   type WorkerResult,
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
@@ -368,13 +369,41 @@ export function buildEpicContextBlock(
   ].filter(Boolean).join("\n\n");
 }
 
+/** Chars of a prior attempt's summary/failure reason folded into the next session's prompt — capped so a pathological history can't blow up the prompt. */
+const PRIOR_ATTEMPT_CHARS = 1000;
+
+/**
+ * The framing block prepended to a ticket's first prompt when a previous
+ * attempt already ran against it — its closing summary or failure reason, so
+ * a restart or a post-failure re-claim isn't flying blind on what already
+ * happened. Prefers `priorAttemptSummary` (the pre-restart value
+ * `resetForFreshClaim` preserves before overwriting `lastSummary` with
+ * restart boilerplate) and falls back to `lastSummary` itself, which already
+ * holds the real failure reason for a plain failed/auto-elevated re-claim.
+ * Undefined for a genuinely first attempt, so a fresh ticket's prompt is
+ * unchanged.
+ */
+export function buildPriorAttemptBlock(
+  record: Pick<TicketRecord, "lastSummary" | "priorAttemptSummary"> | undefined,
+): string | undefined {
+  const text = record?.priorAttemptSummary ?? record?.lastSummary;
+  if (!text) return undefined;
+  return [
+    `## Prior attempt`,
+    `A previous attempt on this issue did not finish. What it reported:`,
+    text.slice(0, PRIOR_ATTEMPT_CHARS),
+  ].join("\n\n");
+}
+
 export function buildIssuePrompt(
   project: ProjectConfig,
   issue: { number: number; title: string; body: string },
   comments: string[],
   epicContext?: string,
+  priorAttempt?: string,
 ): string {
   const parts: string[] = [];
+  if (priorAttempt) parts.push(priorAttempt);
   if (epicContext) parts.push(epicContext);
   parts.push(
     `GitHub issue #${issue.number} in ${project.githubRepo}: ${issue.title}`,

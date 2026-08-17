@@ -180,6 +180,7 @@ export async function acceptPlan(ctx: LoopContext, projectName: string, issueNum
  */
 export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfig, issueNumber: number): Promise<void> {
   const scope = key(project.name, issueNumber);
+  const existing = ctx.state.get(project.name, issueNumber);
   new Journal(ctx.dataDirPath, project.name, issueNumber).append({
     type: "fleet",
     event: "restarted-by-operator",
@@ -196,6 +197,10 @@ export async function resetForFreshClaim(ctx: LoopContext, project: ProjectConfi
     // treat this ticket as permanently past ready.
     prUrl: undefined,
     lastSummary: RESTART_SUMMARY,
+    // The real prior summary/failure reason is about to be overwritten by the
+    // line above — preserve it so the next claim's prompt can still surface
+    // it (`buildPriorAttemptBlock`).
+    priorAttemptSummary: existing?.lastSummary,
     lastActivityAt: new Date().toISOString(),
     lastActivityNote: undefined,
   });

@@ -109,6 +109,18 @@ describe("restartTicket with no live session", () => {
     expect(github.markReady).toHaveBeenCalledWith(project, 7);
   });
 
+  it("preserves the real prior summary in priorAttemptSummary before overwriting lastSummary with restart boilerplate", async () => {
+    const { loop, state } = makeLoop(
+      record({ status: "failed", sessionLive: false, lastSummary: "Ran out of retries hitting a flaky integration test." }),
+    );
+
+    await loop.restartTicket("alpha", 7);
+
+    const updated = state.get("alpha", 7);
+    expect(updated?.priorAttemptSummary).toBe("Ran out of retries hitting a flaky integration test.");
+    expect(updated?.lastSummary).not.toBe("Ran out of retries hitting a flaky integration test.");
+  });
+
   it("rejects an unknown project", async () => {
     const { loop } = makeLoop(record());
     await expect(loop.restartTicket("beta", 7)).rejects.toThrow(/unknown project/);

@@ -41,7 +41,7 @@ import { addressComments } from "./comments.ts";
 import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
 import { runSession } from "./runner.ts";
-import { buildEpicContextBlock, buildIssuePrompt } from "../session/worker.ts";
+import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock } from "../session/worker.ts";
 import { createWorktree } from "../github/worktree.ts";
 
 /**
@@ -414,10 +414,11 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
     const elevated = issue.labels.includes(ELEVATE_LABEL);
     const light = issue.labels.includes(LIGHT_LABEL);
     const isPlan = issue.labels.includes(PLAN_LABEL);
+    const priorRecord = ctx.state.get(project.name, issue.number);
     // A fresh claim otherwise wipes the once-only escalation guard along with
     // everything else the prior attempt recorded — carry it forward so a
     // second failure (now elevated) can't trigger a second auto-escalation.
-    const autoElevated = ctx.state.get(project.name, issue.number)?.autoElevated ?? false;
+    const autoElevated = priorRecord?.autoElevated ?? false;
     ctx.state.upsert({
       project: project.name,
       issueNumber: issue.number,
@@ -447,7 +448,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       issue,
       worktree,
       journal,
-      firstMessage: buildIssuePrompt(project, issue, comments, epicContext),
+      firstMessage: buildIssuePrompt(project, issue, comments, epicContext, buildPriorAttemptBlock(priorRecord)),
       elevated,
       light,
       kind: isPlan ? "plan" : "code",
