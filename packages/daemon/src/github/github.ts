@@ -751,6 +751,66 @@ export async function getPrReviews(project: ProjectConfig, prUrl: string): Promi
   return rawReviews.map((r) => ({ author: r.user?.login ?? "unknown", state: r.state, submittedAt: r.submitted_at }));
 }
 
+export interface PrOutcome {
+  openedAt: string;
+  mergedAt?: string;
+  timeToMergeMs?: number;
+  humanPushedAfterOpen: boolean;
+  reviewRounds: number;
+  reviewCommentCount: number;
+}
+
+interface GhPrCommitAuthor {
+  login?: string;
+}
+
+interface GhPrCommit {
+  authoredDate: string;
+  authors: GhPrCommitAuthor[];
+}
+
+interface GhPrOutcomeJson {
+  createdAt: string;
+  mergedAt: string | null;
+  commits: GhPrCommit[];
+}
+
+/**
+ * Archived at cleanup alongside `prState`: how long the PR was open before
+ * merging, whether anyone other than the daemon's own GitHub login pushed a
+ * commit to the branch after the PR opened (a resumed worker session pushes
+ * under that same login, so only a different author counts as human rework),
+ * and how much human review it drew.
+ */
+export async function getPrOutcome(project: ProjectConfig, prUrl: string): Promise<PrOutcome> {
+  const prNumber = issueNumberFromUrl(prUrl);
+  const [detail, rawReviews, rawComments, botLogin] = await Promise.all([
+    runJson<GhPrOutcomeJson>("gh", [
+      "pr", "view", prUrl,
+      "--repo", project.githubRepo,
+      "--json", "createdAt,mergedAt,commits",
+    ]),
+    runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
+    runJson<GhReviewComment[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
+    getAuthenticatedLogin(),
+  ]);
+
+  const humanPushedAfterOpen = detail.commits.some(
+    (commit) =>
+      isNewerThan(commit.authoredDate, detail.createdAt) &&
+      commit.authors.some((author) => !!author.login && author.login !== botLogin),
+  );
+
+  return {
+    openedAt: detail.createdAt,
+    mergedAt: detail.mergedAt ?? undefined,
+    timeToMergeMs: detail.mergedAt ? Date.parse(detail.mergedAt) - Date.parse(detail.createdAt) : undefined,
+    humanPushedAfterOpen,
+    reviewRounds: rawReviews.length,
+    reviewCommentCount: rawComments.length,
+  };
+}
+
 export interface PrCheck {
   name: string;
   bucket: string;
