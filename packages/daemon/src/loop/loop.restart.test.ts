@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "./loop.ts";
+import { readJournalTail } from "../store/journal.ts";
 
 vi.mock("../github/github.ts", () => ({
   createPullRequest: vi.fn(),
@@ -53,11 +52,7 @@ function makeLoop(seed?: TicketRecord) {
 }
 
 function journalEvents(dataDir: string, issueNumber: number): string[] {
-  const file = join(dataDir, "journals", project.name, `${issueNumber}.jsonl`);
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => String((JSON.parse(line) as { event?: unknown }).event ?? ""));
+  return readJournalTail(dataDir, project.name, issueNumber, Number.MAX_SAFE_INTEGER).map((entry) => String(entry.event ?? ""));
 }
 
 beforeEach(() => {

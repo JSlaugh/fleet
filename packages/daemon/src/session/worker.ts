@@ -487,6 +487,13 @@ export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings
         .map((block) => block.text)
         .join("\n")
         .slice(0, 1000);
+      const thinkingBlocks = content.filter(
+        (block): block is { type: "thinking"; thinking: string } =>
+          typeof block === "object" && block !== null && (block as { type?: string }).type === "thinking",
+      );
+      if (thinkingBlocks.length > 0) {
+        base.thinking = thinkingBlocks.map((block) => block.thinking).join("\n").slice(0, 1000);
+      }
       const toolUseBlocks = content.filter(
         (block): block is { type: "tool_use"; id: string; name: string; input: unknown } =>
           typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_use",
@@ -506,7 +513,20 @@ export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings
   }
   if (message.type === "user") {
     const content = message.message.content;
-    if (Array.isArray(content)) {
+    // Operator/user steering text (`session.send()` pushes a plain string;
+    // the SDK echoes it back through the message stream this way) — the only
+    // shape a "user" message takes other than the SDK's own tool-result
+    // replies below, so plain text here is always operator/user-authored.
+    if (typeof content === "string") {
+      if (content.trim()) base.text = content.slice(0, 1000);
+    } else if (Array.isArray(content)) {
+      const textBlocks = content.filter(
+        (block): block is { type: "text"; text: string } =>
+          typeof block === "object" && block !== null && (block as { type?: string }).type === "text",
+      );
+      if (textBlocks.length > 0) {
+        base.text = textBlocks.map((block) => block.text).join("\n").slice(0, 1000);
+      }
       const toolResultBlocks = content.filter(
         (block): block is { type: "tool_result"; tool_use_id: string; is_error?: boolean; content?: unknown } =>
           typeof block === "object" && block !== null && (block as { type?: string }).type === "tool_result",

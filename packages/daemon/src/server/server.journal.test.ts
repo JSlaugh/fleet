@@ -1,9 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { TicketDetail } from "@fleet/shared";
+import type { JournalEntry, TicketDetail } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "../loop/loop.ts";
+import { insertJournalEntry, openDatabase } from "../store/db.ts";
 import { createApp } from "./server.ts";
 
 const project = makeProject();
@@ -17,10 +17,10 @@ function makeApp() {
   return { app, dataDir };
 }
 
-function writeJournal(dataDir: string, issueNumber: number, lines: string[]): void {
-  const dir = join(dataDir, "journals", "alpha");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, `${issueNumber}.jsonl`), lines.join("\n"));
+/** Inserts rows straight into `journal_entries`, bypassing `Journal.append`'s `v`/`ts` defaulting, so tests can assert exact entry shapes. */
+function writeJournal(dataDir: string, issueNumber: number, entries: JournalEntry[]): void {
+  const db = openDatabase(dataDir);
+  for (const entry of entries) insertJournalEntry(db, "alpha", issueNumber, entry);
 }
 
 async function fetchJournal(app: ReturnType<typeof makeApp>["app"], issueNumber: number) {
@@ -30,16 +30,16 @@ async function fetchJournal(app: ReturnType<typeof makeApp>["app"], issueNumber:
 }
 
 describe("readJournalTail (via GET /api/tickets/:project/:issue)", () => {
-  it("returns an empty array when no journal file exists yet", async () => {
+  it("returns an empty array when no entries exist yet", async () => {
     const { app } = makeApp();
     expect(await fetchJournal(app, 1)).toEqual([]);
   });
 
-  it("parses every line of a well-formed journal", async () => {
+  it("returns every entry for the ticket, oldest first", async () => {
     const { app, dataDir } = makeApp();
     writeJournal(dataDir, 2, [
-      JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", type: "fleet", event: "started" }),
-      JSON.stringify({ ts: "2026-01-01T00:01:00.000Z", type: "assistant", text: "on it" }),
+      { ts: "2026-01-01T00:00:00.000Z", type: "fleet", event: "started" },
+      { ts: "2026-01-01T00:01:00.000Z", type: "assistant", text: "on it" },
     ]);
 
     const journal = await fetchJournal(app, 2);
@@ -50,33 +50,10 @@ describe("readJournalTail (via GET /api/tickets/:project/:issue)", () => {
     ]);
   });
 
-  it("tolerates a corrupt line by falling back to an empty journal rather than throwing", async () => {
-    // readJournalTail wraps the whole parse in one try/catch, so today a single
-    // malformed line drops the entire tail — this pins that behavior rather
-    // than crashing the request.
-    const { app, dataDir } = makeApp();
-    writeJournal(dataDir, 3, [
-      JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", type: "fleet", event: "started" }),
-      "{not valid json",
-      JSON.stringify({ ts: "2026-01-01T00:02:00.000Z", type: "fleet", event: "finished" }),
-    ]);
-
-    const res = await app.request("/api/tickets/alpha/3");
-    expect(res.status).toBe(200);
-    expect(await fetchJournal(app, 3)).toEqual([]);
-  });
-
-  it("ignores a trailing blank line rather than treating it as corrupt", async () => {
-    const { app, dataDir } = makeApp();
-    writeJournal(dataDir, 4, [JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", type: "fleet", event: "started" }), ""]);
-
-    expect(await fetchJournal(app, 4)).toEqual([{ ts: "2026-01-01T00:00:00.000Z", type: "fleet", event: "started" }]);
-  });
-
   it("caps the tail at 200 entries, keeping the most recent", async () => {
     const { app, dataDir } = makeApp();
-    const lines = Array.from({ length: 205 }, (_, i) => JSON.stringify({ ts: `entry-${i}`, type: "fleet" }));
-    writeJournal(dataDir, 5, lines);
+    const entries: JournalEntry[] = Array.from({ length: 205 }, (_, i) => ({ ts: `entry-${i}`, type: "fleet" }));
+    writeJournal(dataDir, 5, entries);
 
     const journal = await fetchJournal(app, 5);
 
