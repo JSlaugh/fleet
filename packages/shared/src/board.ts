@@ -73,6 +73,10 @@ export interface BoardTicket {
   isPlan: boolean;
   /** Unsatisfied `Depends-on` issue numbers — only set while they're still open. */
   blockedBy?: number[];
+  /** The epic issue number this ticket is `Part-of`, parsed from its body — only set on children. */
+  epicNumber?: number;
+  /** For an epic (`isPlan`) with a filed `## Children` task list: how many of its children are closed. */
+  epicProgress?: { closed: number; total: number };
   /** A `ClosedTicketRecord` when `status` is `"done"`, a live `TicketRecord` otherwise. */
   record?: TicketRecord | ClosedTicketRecord;
 }

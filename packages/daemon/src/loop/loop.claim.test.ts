@@ -15,6 +15,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   // claim-flow tests passing the contributor floor without opting in per test.
   getPushCollaborators: vi.fn(async () => new Set(["collab-author"])),
   getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
+  getIssue: vi.fn(async () => undefined),
   addAssignee: vi.fn(async () => {}),
   removeAssignee: vi.fn(async () => {}),
   // Sole assignee by default — every existing claim-flow test wins its CAS
@@ -32,6 +33,7 @@ vi.mock("./runner.ts", () => ({
 
 const github = await import("../github/github.ts");
 const worktree = await import("../github/worktree.ts");
+const runner = await import("./runner.ts");
 
 const issue = makeIssue;
 const project = makeProject({ maxConcurrent: 5, maxInReview: 2 });
@@ -574,5 +576,56 @@ describe("processTicket", () => {
 
     expect(github.removeAssignee).not.toHaveBeenCalled();
     expect(ctx.state.get("alpha", 62)?.status).toBe("running");
+  });
+
+  describe("epic linkage", () => {
+    beforeEach(() => {
+      vi.mocked(github.getIssue).mockReset().mockResolvedValue(undefined);
+      vi.mocked(runner.runSession).mockClear();
+    });
+
+    it("does not fetch an epic or set epicNumber for a plain ticket", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+      await runProcessTicket(ctx);
+
+      expect(github.getIssue).not.toHaveBeenCalled();
+      expect(ctx.state.get("alpha", 62)?.epicNumber).toBeUndefined();
+    });
+
+    it("records epicNumber from a Part-of body line even if the epic fetch fails", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      const childIssue = issue(62, ["fleet:ready"], { body: "Part-of: #7" });
+
+      await runProcessTicket(ctx, project, childIssue);
+
+      expect(ctx.state.get("alpha", 62)?.epicNumber).toBe(7);
+    });
+
+    it("degrades to no epic context in the prompt when the epic fetch fails", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      const childIssue = issue(62, ["fleet:ready"], { body: "Part-of: #7" });
+
+      await runProcessTicket(ctx, project, childIssue);
+
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { firstMessage: string } | undefined;
+      expect(call?.firstMessage).not.toContain("Part of epic");
+    });
+
+    it("prepends epic context to the first prompt when the epic fetch succeeds", async () => {
+      vi.mocked(github.getIssue).mockResolvedValue({
+        number: 7,
+        title: "the epic",
+        body: ["epic description", "", "## Children", "- [ ] #62 child ticket"].join("\n"),
+      });
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      const childIssue = issue(62, ["fleet:ready"], { body: "Part-of: #7" });
+
+      await runProcessTicket(ctx, project, childIssue);
+
+      expect(github.getIssue).toHaveBeenCalledWith(project, 7);
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { firstMessage: string } | undefined;
+      expect(call?.firstMessage).toContain("This ticket is part of epic #7: the epic — ticket 1 of 1.");
+    });
   });
 });

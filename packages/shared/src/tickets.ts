@@ -30,6 +30,8 @@ export interface TicketRecord {
   isPlan?: boolean;
   /** Set once this ticket has auto-retried on the elevated model after a failure — caps escalation to once, ever. */
   autoElevated?: boolean;
+  /** The epic issue number this ticket was filed under, parsed from its `Part-of: #<epic>` body line at claim time. */
+  epicNumber?: number;
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
   /**
