@@ -1,0 +1,17 @@
+# Fleet buildspec — read by the fleet daemon at claim time (packages/shared/src/buildspec.ts).
+#
+# The profile map's real job here is declaring this repo's ticket types:
+# `pnpm daemon init-labels` mints a fleet:type:<name> label per non-default
+# profile, and the issue forms in .github/ISSUE_TEMPLATE apply those labels.
+# Setup is identical for every type today; the per-type keys grow siblings
+# (review checklist, contract appendix, tier, verify commands) as B4 lands.
+setup:
+  default:
+    - name: install
+      run: pnpm install
+  dashboard:
+    - name: install
+      run: pnpm install
+  daemon:
+    - name: install
+      run: pnpm install

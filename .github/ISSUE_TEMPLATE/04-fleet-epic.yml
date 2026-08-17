@@ -1,0 +1,26 @@
+name: Fleet epic
+description: A large item for the planner to decompose into child tickets. Files as fleet:plan + fleet:ready — decomposition may start on the next poll.
+labels: ["fleet:plan", "fleet:ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A planner session reads this epic and files each proposed child as a real issue
+        (linked back here via `Part-of:`), so the problem statement carries all the weight —
+        acceptance criteria and verification belong on the children, not here.
+
+        Not ready to kick off decomposition yet? Remove the `fleet:ready` label after filing.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: The full shape of the work — what exists today, what should exist, and why. The planner only knows what you write here.
+    validations:
+      required: true
+  - type: textarea
+    id: shaping
+    attributes:
+      label: Shaping notes
+      description: Optional — constraints, a suggested split, sequencing that matters, or what's explicitly out of scope.
+    validations:
+      required: false
