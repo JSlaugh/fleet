@@ -16,6 +16,15 @@ export const ProjectConfigSchema = z.object({
   autoElevateOnFailure: z.boolean().default(true),
   autoAddressReviews: z.boolean().default(true),
   machineReview: z.boolean().default(true),
+  /**
+   * Deterministic pre-claim gate: a `fleet:ready` issue body must contain a
+   * problem/acceptance-criteria/verification section (problem only for
+   * `fleet:plan` epics), matched tolerantly by heading synonyms. A failing
+   * body is never claimed — it's flagged `fleet:needs-input` with a comment
+   * naming what's missing instead. Default on; opt out for repos whose
+   * conventions don't fit.
+   */
+  intakeLint: z.boolean().default(true),
   /** Opt-in: merge a `fleet:review` PR automatically once it clears `approvers` + green CI + mergeable. Default off. */
   autoMerge: z.boolean().default(false),
   /** GitHub logins whose approval authorizes an auto-merge, case-insensitive. Unset defaults to the account the daemon's `gh` is logged in as. */

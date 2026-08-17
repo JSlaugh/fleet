@@ -41,6 +41,7 @@
       "autoElevateOnFailure": true,
       "autoAddressReviews": true,
       "machineReview": true,
+      "intakeLint": true,
       "autoMerge": false,
       "approvers": ["j"],
       "mergeMethod": "squash"

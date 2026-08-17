@@ -29,7 +29,7 @@ export const PlanResultSchema = z.object({
   summary: z.string().describe("2-5 sentence plain-language summary of the decomposition (or what's blocking it), written for the plan issue's status comment"),
   tickets: z.array(z.object({
     title: z.string().describe("Concise title for the child ticket"),
-    body: z.string().describe("Full issue body for the child ticket: it must be self-contained (problem statement, acceptance criteria, and how to verify it), independently implementable, and PR-sized"),
+    body: z.string().describe("Full issue body for the child ticket, in markdown with a `## Problem`, `## Acceptance criteria`, and `## Verification` heading each — self-contained, independently implementable, and PR-sized"),
     priority: z.enum(["fleet:p1", "fleet:p2", "fleet:p3"]).optional().describe("Priority label to apply to the child issue, if any"),
     tier: z
       .enum(["light", "standard", "elevated"])
