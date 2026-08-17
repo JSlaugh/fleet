@@ -59,6 +59,21 @@ Contract:
 - Your final structured output lists every proposed child ticket in tickets[].
 `.trim();
 
+/**
+ * The system prompt appendix for one session: the fixed per-kind contract,
+ * plus (code sessions only) the claimed ticket's type-specific `contract:`
+ * markdown, if its `fleet.yaml` profile declares one. Pulled out as a pure
+ * function so the appendix text is unit-testable without spinning up the SDK
+ * `query()` call the constructor makes. A planner never gets a type appendix
+ * — `contract:` describes coding-contract nuance (verify commands, review
+ * focus), not something a read-only decomposition pass needs.
+ */
+export function buildSystemPromptAppend(kind: SessionKind, typeContract?: string): string {
+  const base = kind === "plan" ? PLANNER_CONTRACT : WORKER_CONTRACT;
+  if (kind === "plan" || !typeContract) return base;
+  return `${base}\n\n${typeContract}`;
+}
+
 export const FORBIDDEN_BASH_REASON =
   "The fleet orchestrator handles pushing, PRs, and issue state. Finish your work and report via your structured result instead.";
 
@@ -246,6 +261,8 @@ export class WorkerSession {
       resumeSessionId?: string;
       model?: string;
       kind?: SessionKind;
+      /** The claimed ticket's type-specific `contract:` markdown, if any — see `buildSystemPromptAppend`. */
+      contract?: string;
     },
   ) {
     this.kind = opts.kind ?? "code";
@@ -270,7 +287,7 @@ export class WorkerSession {
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: this.kind === "plan" ? PLANNER_CONTRACT : WORKER_CONTRACT,
+          append: buildSystemPromptAppend(this.kind, opts.contract),
         },
         outputFormat: {
           type: "json_schema",

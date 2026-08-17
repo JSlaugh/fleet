@@ -152,10 +152,29 @@ describe("createWorktree with fleet.yaml", () => {
       const defaultWt = await createWorktree(project, 202, worktreeRoot, ["fleet:ready"]);
       expect(existsSync(join(defaultWt.path, "default.txt"))).toBe(true);
       expect(existsSync(join(defaultWt.path, "frontend.txt"))).toBe(false);
+      expect(defaultWt.type).toBeUndefined();
 
       const frontendWt = await createWorktree(project, 203, worktreeRoot, ["fleet:ready", "fleet:type:frontend"]);
       expect(existsSync(join(frontendWt.path, "frontend.txt"))).toBe(true);
       expect(existsSync(join(frontendWt.path, "default.txt"))).toBe(false);
+      expect(frontendWt.type).toBe("frontend");
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "leaves type undefined for a list-form spec and for a repo with no fleet.yaml at all",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, { setup: [nodeStep("install", "require('fs').writeFileSync('ok.txt','ok')")] });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const listFormWt = await createWorktree(project, 206, worktreeRoot, ["fleet:type:frontend"]);
+      expect(listFormWt.type).toBeUndefined();
+
+      const noSpecProject = setupProject();
+      const noSpecWt = await createWorktree(noSpecProject, 207, worktreeRoot, ["fleet:type:frontend"]);
+      expect(noSpecWt.type).toBeUndefined();
     },
     TEST_TIMEOUT,
   );

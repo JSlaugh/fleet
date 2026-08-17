@@ -8,6 +8,8 @@ import { log } from "../log.ts";
 export interface Worktree {
   path: string;
   branch: string;
+  /** The `fleet:type:<name>` this claim's `fleet.yaml` setup profile actually matched — undefined when untyped, unmatched, or the repo has no profile map. */
+  type?: string;
 }
 
 export async function createWorktree(
@@ -35,8 +37,10 @@ export async function createWorktree(
   // for this claim — no silent fallback, so a malformed spec fails loudly here
   // rather than quietly running (or skipping) the old setup path.
   const spec = readBuildSpec(path);
+  let type: string | undefined;
   if (spec) {
-    const { profile, steps, warning } = selectSetupProfile(spec, issueLabels);
+    const { profile, steps, type: matchedType, warning } = selectSetupProfile(spec, issueLabels);
+    type = matchedType;
     if (warning) log("worktree", `${project.name}#${issueNumber}: ${warning}`);
     for (const step of steps) {
       log("worktree", `${project.name}#${issueNumber}: running setup step "${step.name}" (profile "${profile}")`);
@@ -50,7 +54,7 @@ export async function createWorktree(
     log("worktree", `${project.name}#${issueNumber}: running setup: ${project.setupCommand}`);
     await runShell(project.setupCommand, path);
   }
-  return { path, branch };
+  return { path, branch, type };
 }
 
 export async function removeWorktree(project: ProjectConfig, worktreePath: string): Promise<void> {

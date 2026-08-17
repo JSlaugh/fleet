@@ -7,8 +7,24 @@ export const BuildSpecStepSchema = z.object({
 });
 export type BuildSpecStep = z.infer<typeof BuildSpecStepSchema>;
 
+/**
+ * A profile is either the original bare step array, or an object that can
+ * also carry keys beyond setup — currently just `contract:`, the markdown
+ * appended to the worker's system contract for tickets of this type. Later
+ * per-type siblings (review checklist, model tier, verify commands) get their
+ * own optional keys here without another schema migration.
+ */
+const ProfileSchema = z.union([
+  z.array(BuildSpecStepSchema),
+  z.object({
+    setup: z.array(BuildSpecStepSchema),
+    contract: z.string().min(1).optional(),
+  }),
+]);
+export type Profile = z.infer<typeof ProfileSchema>;
+
 const SetupProfilesSchema = z
-  .record(z.string(), z.array(BuildSpecStepSchema))
+  .record(z.string(), ProfileSchema)
   .refine((profiles) => "default" in profiles, {
     message: 'setup profiles must include a "default" profile',
   });
@@ -17,6 +33,12 @@ export const BuildSpecSchema = z.object({
   setup: z.union([z.array(BuildSpecStepSchema), SetupProfilesSchema]),
 });
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
+
+/** A profile's steps and (map-object form only) its declared extra keys. */
+function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string } {
+  if (Array.isArray(profile)) return { steps: profile };
+  return { steps: profile.setup, contract: profile.contract };
+}
 
 /** Profile names a repo's `fleet.yaml` declares (map form only; `default` excluded since it never gets its own label). */
 export function profileNames(spec: BuildSpec): string[] {
@@ -27,6 +49,10 @@ export function profileNames(spec: BuildSpec): string[] {
 export interface SetupSelection {
   profile: string;
   steps: BuildSpecStep[];
+  /** The `fleet:type:<name>` actually matched to a profile — undefined for list-form specs, no type label, or an unmatched one (the "default" fallback doesn't count as a type). */
+  type?: string;
+  /** The matched type's declared `contract:` markdown, if any — only ever set alongside `type`. */
+  contract?: string;
   warning?: string;
 }
 
@@ -47,7 +73,7 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
   const profiles = spec.setup;
   // Schema validation (`SetupProfilesSchema`'s refine) guarantees a "default"
   // key exists; the `?? []` here is only to satisfy noUncheckedIndexedAccess.
-  const defaultSteps = profiles.default ?? [];
+  const defaultSteps = normalizeProfile(profiles.default ?? []).steps;
   const typeNames = [
     ...new Set(
       labels
@@ -69,9 +95,26 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
     warnings.push(`no setup profile named "${typeNames[0]}" in fleet.yaml — using "default"`);
   }
 
+  const matchedProfile = matched ? normalizeProfile(profiles[matched] ?? profiles.default ?? []) : undefined;
+
   return {
     profile: matched ?? "default",
-    steps: matched ? (profiles[matched] ?? defaultSteps) : defaultSteps,
+    steps: matchedProfile ? matchedProfile.steps : defaultSteps,
+    type: matched,
+    contract: matchedProfile?.contract,
     warning: warnings.length > 0 ? warnings.join("; ") : undefined,
   };
+}
+
+/**
+ * A type's declared `contract:` markdown, looked up directly by name rather
+ * than through label matching — how a resumed session re-derives the same
+ * appendix `selectSetupProfile` attached at claim time, from just the type
+ * name `TicketRecord.ticketType` already carries. Undefined for list-form
+ * specs, an unknown type name, or a profile that declares no `contract:`.
+ */
+export function contractForType(spec: BuildSpec, type: string | undefined): string | undefined {
+  if (!type || Array.isArray(spec.setup)) return undefined;
+  const profile = spec.setup[type];
+  return profile ? normalizeProfile(profile).contract : undefined;
 }

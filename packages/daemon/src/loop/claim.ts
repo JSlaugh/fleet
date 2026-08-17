@@ -434,6 +434,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       isPlan,
       autoElevated,
       epicNumber,
+      ticketType: worktree.type,
       // Every comment that exists at claim time is already in `comments`, folded
       // into the first prompt below — the watermark stops the next cycle's
       // `addressComments` from re-injecting them.
@@ -452,6 +453,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       elevated,
       light,
       kind: isPlan ? "plan" : "code",
+      ticketType: worktree.type,
     });
   } catch (err) {
     await reportRunFailure(ctx, project, issue, "failed", err);
