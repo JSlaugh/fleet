@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeProject } from "../test-support.ts";
-import { buildEpicContextBlock, buildIssuePrompt } from "./worker.ts";
+import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock } from "./worker.ts";
 
 const project = makeProject();
 const issue = { number: 42, title: "the ticket", body: "the body" };
@@ -30,6 +30,47 @@ describe("buildIssuePrompt", () => {
   it("omits the epic section entirely when there is no epic context", () => {
     const prompt = buildIssuePrompt(project, issue, []);
     expect(prompt).not.toContain("Part of epic");
+  });
+
+  it("omits the prior-attempt section on a first attempt", () => {
+    const prompt = buildIssuePrompt(project, issue, []);
+    expect(prompt).not.toContain("Prior attempt");
+  });
+
+  it("prepends the prior-attempt block ahead of the issue body when given", () => {
+    const prompt = buildIssuePrompt(project, issue, [], undefined, "## Prior attempt\n\nsome history");
+    expect(prompt.startsWith("## Prior attempt")).toBe(true);
+    expect(prompt.indexOf("## Prior attempt")).toBeLessThan(prompt.indexOf("the body"));
+  });
+});
+
+describe("buildPriorAttemptBlock", () => {
+  it("returns undefined for a first attempt (no record)", () => {
+    expect(buildPriorAttemptBlock(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when the record carries no summary of any kind", () => {
+    expect(buildPriorAttemptBlock({})).toBeUndefined();
+  });
+
+  it("surfaces lastSummary when there is no preserved priorAttemptSummary", () => {
+    const block = buildPriorAttemptBlock({ lastSummary: "timed out after 30 minutes" });
+    expect(block).toContain("## Prior attempt");
+    expect(block).toContain("timed out after 30 minutes");
+  });
+
+  it("prefers priorAttemptSummary over lastSummary — the pre-restart value over restart boilerplate", () => {
+    const block = buildPriorAttemptBlock({
+      lastSummary: "Restarted from the dashboard — a fresh session will pick this up.",
+      priorAttemptSummary: "Got stuck on a flaky test in the payments module.",
+    });
+    expect(block).toContain("Got stuck on a flaky test in the payments module.");
+    expect(block).not.toContain("Restarted from the dashboard");
+  });
+
+  it("caps the surfaced text so a pathological history can't blow up the prompt", () => {
+    const block = buildPriorAttemptBlock({ lastSummary: "x".repeat(5000) });
+    expect(block!.length).toBeLessThan(1200);
   });
 });
 

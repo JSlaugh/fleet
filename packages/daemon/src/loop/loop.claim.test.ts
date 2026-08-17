@@ -628,4 +628,57 @@ describe("processTicket", () => {
       expect(call?.firstMessage).toContain("This ticket is part of epic #7: the epic — ticket 1 of 1.");
     });
   });
+
+  describe("prior-attempt context", () => {
+    beforeEach(() => {
+      vi.mocked(runner.runSession).mockClear();
+    });
+
+    it("omits the prior-attempt block on a genuinely first claim", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+      await runProcessTicket(ctx);
+
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { firstMessage: string } | undefined;
+      expect(call?.firstMessage).not.toContain("Prior attempt");
+    });
+
+    it("folds a prior failure's lastSummary into the fresh prompt on an auto-elevated re-claim", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      ctx.state.upsert(
+        makeRecord({
+          issueNumber: 62,
+          status: "failed",
+          lastSummary: "Could not find the config file referenced in the issue.",
+          autoElevated: true,
+        }),
+      );
+
+      await runProcessTicket(ctx);
+
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { firstMessage: string } | undefined;
+      expect(call?.firstMessage).toContain("## Prior attempt");
+      expect(call?.firstMessage).toContain("Could not find the config file referenced in the issue.");
+      // The once-only escalation guard must still be carried forward alongside it.
+      expect(ctx.state.get("alpha", 62)?.autoElevated).toBe(true);
+    });
+
+    it("prefers the preserved priorAttemptSummary over restart boilerplate on a restart re-claim", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      ctx.state.upsert(
+        makeRecord({
+          issueNumber: 62,
+          status: "restarting",
+          lastSummary: "Restarted from the dashboard — a fresh session will pick this up.",
+          priorAttemptSummary: "Was mid-way through wiring up the new endpoint when it stalled.",
+        }),
+      );
+
+      await runProcessTicket(ctx);
+
+      const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { firstMessage: string } | undefined;
+      expect(call?.firstMessage).toContain("Was mid-way through wiring up the new endpoint when it stalled.");
+      expect(call?.firstMessage).not.toContain("Restarted from the dashboard");
+    });
+  });
 });
