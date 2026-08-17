@@ -18,6 +18,7 @@ const {
   dependencyStatus,
   escalateLabelArgs,
   getPrChecks,
+  getPrOutcome,
   getStatusCommentInfo,
   issueNumberFromUrl,
   mergePullRequest,
@@ -719,5 +720,83 @@ describe("getStatusCommentInfo", () => {
     vi.mocked(exec.runJson).mockResolvedValue([statusComment({ body: "<!-- fleet-status -->\nold-style body" })]);
 
     expect(await getStatusCommentInfo(project, 7)).toEqual({ createdAt: "2025-12-31T00:00:00.000Z", heartbeat: undefined });
+  });
+});
+
+// `getAuthenticatedLogin` is cached module-wide by this point (the describes
+// above all resolve it to "daemon-a"), so every case here treats that as the
+// daemon's own login without needing to re-mock the `gh api user` call.
+describe("getPrOutcome", () => {
+  function mockOutcome(opts: {
+    createdAt: string;
+    mergedAt: string | null;
+    commits?: { authoredDate: string; authors: { login?: string }[] }[];
+    reviews?: unknown[];
+    comments?: unknown[];
+  }) {
+    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
+      const argv = args as string[];
+      if (argv.includes("view")) return { createdAt: opts.createdAt, mergedAt: opts.mergedAt, commits: opts.commits ?? [] } as never;
+      if (argv.some((a) => a.includes("/reviews"))) return (opts.reviews ?? []) as never;
+      if (argv.some((a) => a.includes("/comments"))) return (opts.comments ?? []) as never;
+      return { login: "daemon-a" } as never;
+    });
+  }
+
+  it("computes time-to-merge from createdAt/mergedAt", async () => {
+    mockOutcome({ createdAt: "2026-01-01T00:00:00.000Z", mergedAt: "2026-01-02T00:00:00.000Z" });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.timeToMergeMs).toBe(24 * 60 * 60 * 1000);
+  });
+
+  it("leaves timeToMergeMs undefined when the PR never merged", async () => {
+    mockOutcome({ createdAt: "2026-01-01T00:00:00.000Z", mergedAt: null });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.timeToMergeMs).toBeUndefined();
+  });
+
+  it("flags humanPushedAfterOpen for a commit after createdAt authored by someone other than the daemon's login", async () => {
+    mockOutcome({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      mergedAt: null,
+      commits: [
+        { authoredDate: "2025-12-31T00:00:00.000Z", authors: [{ login: "daemon-a" }] },
+        { authoredDate: "2026-01-01T12:00:00.000Z", authors: [{ login: "a-human" }] },
+      ],
+    });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.humanPushedAfterOpen).toBe(true);
+  });
+
+  it("does not flag a same-login commit after open (a resumed worker session, not human rework)", async () => {
+    mockOutcome({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      mergedAt: null,
+      commits: [{ authoredDate: "2026-01-01T12:00:00.000Z", authors: [{ login: "daemon-a" }] }],
+    });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.humanPushedAfterOpen).toBe(false);
+  });
+
+  it("does not flag a human-authored commit that predates the PR opening", async () => {
+    mockOutcome({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      mergedAt: null,
+      commits: [{ authoredDate: "2025-12-31T00:00:00.000Z", authors: [{ login: "a-human" }] }],
+    });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.humanPushedAfterOpen).toBe(false);
+  });
+
+  it("counts review rounds and inline review comments from the raw fetch", async () => {
+    mockOutcome({
+      createdAt: "2026-01-01T00:00:00.000Z",
+      mergedAt: null,
+      reviews: [{ state: "CHANGES_REQUESTED" }, { state: "APPROVED" }],
+      comments: [{}],
+    });
+    const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
+    expect(outcome.reviewRounds).toBe(2);
+    expect(outcome.reviewCommentCount).toBe(1);
   });
 });
