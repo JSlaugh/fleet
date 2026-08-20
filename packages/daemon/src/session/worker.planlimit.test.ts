@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
-import { checkPlanLimit, parseLimitReset } from "./worker.ts";
+import { checkPlanLimit, formatTurnError, parseLimitReset } from "./worker.ts";
 
 describe("parseLimitReset", () => {
   it("parses the historical epoch-seconds suffix format", () => {
@@ -103,5 +103,21 @@ describe("checkPlanLimit", () => {
     }
 
     expect(hits).toEqual([{ limitResetAt: new Date(1735689600 * 1000) }]);
+  });
+});
+
+describe("formatTurnError", () => {
+  it("falls back to 'unknown error' when the turn carries no errorSubtype", () => {
+    expect(formatTurnError({})).toBe("unknown error");
+  });
+
+  it("reports the errorSubtype alone when the turn carries no terminal_reason", () => {
+    expect(formatTurnError({ errorSubtype: "error_max_turns" })).toBe("error_max_turns");
+  });
+
+  it("appends terminal_reason when the turn carries one", () => {
+    expect(formatTurnError({ errorSubtype: "error_max_turns", terminalReason: "max_turns" })).toBe(
+      "error_max_turns (terminal_reason: max_turns)",
+    );
   });
 });
