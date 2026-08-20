@@ -10,8 +10,8 @@ Fleet is a multi-project Claude Code backlog orchestrator: a daemon polls GitHub
 
 ```bash
 pnpm install
-pnpm typecheck                  # tsc for shared+daemon+mcp, then vue-tsc for dashboard
-pnpm test                       # vitest for shared+daemon+mcp
+pnpm typecheck                  # turbo run typecheck: tsc per package (vue-tsc for dashboard), cached
+pnpm test                       # turbo run test: vitest per package, cached
 pnpm build                      # turbo run build (currently just the dashboard)
 pnpm daemon -- --dry-run --once # poll and report; changes nothing
 pnpm daemon -- --once           # one full cycle, then exit (no dashboard server: worker approvals are auto-denied immediately)
@@ -24,9 +24,11 @@ pnpm dashboard:dev              # Vite on :4401, proxying /api and /ws to :4400
 pnpm dashboard:build            # turbo-cached dashboard build (every `pnpm daemon` run does this first)
 ```
 
-Task running is turborepo (`turbo.json`): `build` is cached with `dist/**` as its output, and `@fleet/daemon#start` declares `@fleet/dashboard#build` as a dependency, so `pnpm daemon` always installs and rebuilds the dashboard before the daemon boots — the daemon serves `packages/dashboard/dist` off disk, so a stale build there silently ships old UI. Arguments still pass through (`pnpm daemon -- --once`, `pnpm daemon init-labels`); the daemon filters the `--` that turbo forwards verbatim.
+Task running is turborepo (`turbo.json`): `build`, `typecheck`, and `test` are all per-package cached tasks (`dist/**` for `build`, logs-only for the other two), and `@fleet/daemon#start` declares `@fleet/dashboard#build` as a dependency, so `pnpm daemon` always installs and rebuilds the dashboard before the daemon boots — the daemon serves `packages/dashboard/dist` off disk, so a stale build there silently ships old UI. Arguments still pass through (`pnpm daemon -- --once`, `pnpm daemon init-labels`); the daemon filters the `--` that turbo forwards verbatim.
 
-Verification is `pnpm typecheck` plus `pnpm test`, plus a `--dry-run --once` daemon run for anything that isn't unit-tested. The daemon shells out to `gh` for all GitHub access, so `gh auth login` must have been run. Runtime config is `fleet.config.json` (gitignored — when changing the config shape, update both `fleet.config.example.json` and the schema in `packages/shared/src/config.ts`).
+`typecheck` and `test` each `dependsOn` their own task name prefixed `^` (e.g. `"typecheck": { "dependsOn": ["^typecheck"] }`), so a package's cache key folds in the task hash of every internal workspace dependency it declares in `package.json` — daemon and dashboard both depend on `@fleet/shared` and so invalidate whenever shared's source changes; mcp has no such dependency and stays cached. This only works because every package in the chain (including `@fleet/shared` itself) declares matching `typecheck`/`test` scripts in its own `package.json`, each scoped to just that package (`tsc -p tsconfig.json`; `vitest run --root ../.. packages/<name>` against the shared root `vitest.config.ts`) — a package with no such script breaks the chain silently rather than erroring.
+
+Verification is `pnpm typecheck` plus `pnpm test`, plus a `--dry-run --once` daemon run for anything that isn't unit-tested. The daemon shells out to `gh` for all GitHub access, so `gh auth login` must have been run. Runtime config is `fleet.config.json` (gitignored — when changing the config shape, update both `fleet.config.example.json` and the schema in `packages/shared/src/config.ts`). This repo's own `fleet.yaml` warms turbo's build/typecheck/test caches after `pnpm install` at claim time (`allowFailure: true` per step, since a red baseline on `main` must not block worktree creation — see `BuildSpecStep.allowFailure` in `packages/shared/src/buildspec.ts`).
 
 ## Architecture
 

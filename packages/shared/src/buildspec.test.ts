@@ -33,6 +33,19 @@ describe("BuildSpecSchema", () => {
     expect(() => BuildSpecSchema.parse({ setup: [{ run: "pnpm install" }] })).toThrow();
   });
 
+  it("accepts a step with allowFailure, defaulting it to unset otherwise", () => {
+    const parsed = BuildSpecSchema.parse({
+      setup: [
+        { name: "install", run: "pnpm install" },
+        { name: "warm", run: "pnpm test", allowFailure: true },
+      ],
+    });
+    expect(parsed.setup).toEqual([
+      { name: "install", run: "pnpm install" },
+      { name: "warm", run: "pnpm test", allowFailure: true },
+    ]);
+  });
+
   it("rejects a setup value that is neither a list nor a map", () => {
     expect(() => BuildSpecSchema.parse({ setup: "pnpm install" })).toThrow();
   });

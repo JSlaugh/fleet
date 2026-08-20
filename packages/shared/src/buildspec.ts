@@ -4,6 +4,8 @@ import { FLEET_TYPE_LABEL_PREFIX } from "./labels.ts";
 export const BuildSpecStepSchema = z.object({
   name: z.string().min(1),
   run: z.string().min(1),
+  /** When true, a non-zero exit is logged and swallowed instead of failing the claim — for warm-the-cache steps where a red baseline on main must not block worktree creation. */
+  allowFailure: z.boolean().optional(),
 });
 export type BuildSpecStep = z.infer<typeof BuildSpecStepSchema>;
 
