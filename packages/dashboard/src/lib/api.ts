@@ -79,6 +79,22 @@ export function fetchTicketDiff(project: string, issueNumber: number): Promise<T
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/diff`).then((res) => json<TicketDiff>(res));
 }
 
+export interface CreateTicketInput {
+  title: string;
+  body: string;
+  priority?: string;
+  ready: boolean;
+  dependsOn?: number[];
+}
+
+export function createTicket(project: string, input: CreateTicketInput): Promise<{ number: number; url: string }> {
+  return fetch(`/api/projects/${encodeURIComponent(project)}/tickets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).then((res) => json<{ number: number; url: string }>(res));
+}
+
 export async function setTicketPriority(project: string, issueNumber: number, priority: string | null): Promise<void> {
   await json(
     await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/priority`, {
