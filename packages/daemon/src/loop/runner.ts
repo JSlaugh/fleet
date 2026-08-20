@@ -1,5 +1,5 @@
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import { contractForType, tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord, type Tier } from "@fleet/shared";
+import { contractForType, tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type Effort, type ProjectConfig, type TicketRecord, type Tier } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { readBuildSpec, resolveTypeVerify } from "../github/buildspec.ts";
@@ -27,6 +27,25 @@ export function selectModel(
   if (opts.typeTier === "elevated") return project.elevatedModel ?? project.model;
   if (opts.typeTier === "light") return project.lightModel ?? project.model;
   return project.model;
+}
+
+/**
+ * Reasoning-effort counterpart of `selectModel`: same `fleet:elevate`/
+ * `fleet:light` label precedence, but no `fleet.yaml` type tier yet (that's
+ * #159's territory — a per-type `effort:` would slot in ahead of the project
+ * default here, same as `typeTier` does above). Unlike `selectModel`, an
+ * unset tier field does NOT fall back to a sibling tier — only to the plain
+ * `effort` default, and from there to `undefined` (the SDK's own default),
+ * since "no override" is a meaningful choice per tier rather than always
+ * implying "use the standard tier's value."
+ */
+export function selectEffort(
+  project: { effort?: Effort; elevatedEffort?: Effort; lightEffort?: Effort },
+  opts: { elevated: boolean; light: boolean },
+): Effort | undefined {
+  if (opts.elevated) return project.elevatedEffort ?? project.effort;
+  if (opts.light) return project.lightEffort ?? project.effort;
+  return project.effort;
 }
 
 /**
@@ -149,6 +168,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   const base: SessionBase = { costUsd: existing?.costUsd ?? 0, modelUsage: existing?.modelUsage };
   const typeTier = resolveTypeTier(scope, worktree.path, opts.ticketType);
   const model = selectModel(project, { elevated, light, typeTier });
+  const effort = selectEffort(project, { elevated, light });
   if (elevated && light) {
     log("loop", `${scope}: both ${ELEVATE_LABEL} and ${LIGHT_LABEL} are present — elevate wins`);
   }
@@ -163,6 +183,11 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     log("loop", `${scope}: running fleet.yaml type "${opts.ticketType}"'s tier "light" on ${project.lightModel}`);
     journal.append({ type: "fleet", event: "type-tier-applied", ticketType: opts.ticketType, tier: typeTier, model });
   }
+  if (elevated && project.elevatedEffort) {
+    log("loop", `${scope}: running elevated effort ${project.elevatedEffort}`);
+  } else if (!elevated && light && project.lightEffort) {
+    log("loop", `${scope}: running light effort ${project.lightEffort}`);
+  }
   const contract = resolveTypeContract(scope, worktree.path, opts.ticketType);
   const verify = resolveTypeVerify(scope, worktree.path, opts.ticketType);
   const session = new WorkerSession({
@@ -171,6 +196,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     worktreePath: worktree.path,
     journal,
     model,
+    effort,
     kind: opts.kind,
     contract,
     verify,

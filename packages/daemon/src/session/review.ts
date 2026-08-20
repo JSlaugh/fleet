@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   MachineReviewResultSchema,
   PlanReviewResultSchema,
+  type Effort,
   type MachineReviewResult,
   type ModelUsageSummary,
   type PlanResult,
@@ -87,6 +88,11 @@ export function shouldReviewPlan(
  */
 export function selectReviewModel(project: { model?: string; lightModel?: string }): string | undefined {
   return project.lightModel ?? project.model;
+}
+
+/** Reasoning-effort counterpart of `selectReviewModel` — same "prefer the light tier" posture, but each is independently optional. */
+export function selectReviewEffort(project: { effort?: Effort; lightEffort?: Effort }): Effort | undefined {
+  return project.lightEffort ?? project.effort;
 }
 
 export function truncateDiff(diff: string, max: number = DIFF_CHAR_LIMIT): string {
@@ -225,6 +231,7 @@ async function runReviewSession<T>(opts: {
   scope: string;
   worktreePath: string;
   model?: string;
+  effort?: Effort;
   prompt: string;
   claudeExecutable?: string;
   journal: Journal;
@@ -248,6 +255,7 @@ async function runReviewSession<T>(opts: {
       options: {
         cwd: opts.worktreePath,
         model: opts.model,
+        effort: opts.effort,
         abortController,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         permissionMode: "default",
@@ -307,6 +315,7 @@ export async function runMachineReview(opts: {
   scope: string;
   worktreePath: string;
   model?: string;
+  effort?: Effort;
   prompt: string;
   claudeExecutable?: string;
   journal: Journal;
@@ -330,6 +339,7 @@ export async function runPlanReview(opts: {
   scope: string;
   worktreePath: string;
   model?: string;
+  effort?: Effort;
   prompt: string;
   claudeExecutable?: string;
   journal: Journal;

@@ -9,6 +9,7 @@ import {
   buildPlanReviewPrompt,
   isActionable,
   isPlanActionable,
+  selectReviewEffort,
   selectReviewModel,
   shouldMachineReview,
   shouldReviewPlan,
@@ -64,6 +65,20 @@ describe("selectReviewModel", () => {
 
   it("is undefined when neither is configured (CLI default)", () => {
     expect(selectReviewModel({})).toBeUndefined();
+  });
+});
+
+describe("selectReviewEffort", () => {
+  it("prefers lightEffort", () => {
+    expect(selectReviewEffort({ effort: "high", lightEffort: "low" })).toBe("low");
+  });
+
+  it("falls back to the project effort", () => {
+    expect(selectReviewEffort({ effort: "high" })).toBe("high");
+  });
+
+  it("is undefined when neither is configured (SDK default)", () => {
+    expect(selectReviewEffort({})).toBeUndefined();
   });
 });
 

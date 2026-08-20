@@ -19,6 +19,10 @@ export const NotificationsConfigSchema = z.object({
 });
 export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 
+/** Same vocabulary as the Agent SDK's `Options.effort` — see `query()`'s `effort` option. */
+export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+export type Effort = z.infer<typeof EffortSchema>;
+
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   repoPath: z.string().min(1),
@@ -30,6 +34,18 @@ export const ProjectConfigSchema = z.object({
   model: z.string().optional(),
   elevatedModel: z.string().optional(),
   lightModel: z.string().optional(),
+  /**
+   * Reasoning-effort tiering, orthogonal to model selection: same layered
+   * precedence as `model`/`elevatedModel`/`lightModel` (`fleet:elevate` →
+   * `elevatedEffort`, `fleet:light` → `lightEffort`, otherwise `effort`), but
+   * unset at any tier means "no override" — the SDK's own default applies
+   * rather than falling back to a sibling field. A future per-type `effort:`
+   * in `fleet.yaml` (see `tier:`, once #159 lands) would slot into this same
+   * stack ahead of the project default, same as `typeTier` does for models.
+   */
+  effort: EffortSchema.optional(),
+  elevatedEffort: EffortSchema.optional(),
+  lightEffort: EffortSchema.optional(),
   allowedTools: z.array(z.string()).optional(),
   planChildrenReady: z.boolean().default(false),
   autoElevateOnFailure: z.boolean().default(true),
