@@ -243,6 +243,7 @@ async function runReviewSession<T>(opts: {
           message: `${toolName} is not available to the ${opts.logLabel} pass — it is read-only. Use Read/Grep/Glob, then finish with your structured verdict.`,
         }),
         settingSources: ["project"],
+        thinking: { type: "adaptive", display: "summarized" },
         systemPrompt: { type: "preset", preset: "claude_code", append: opts.systemPromptAppend },
         outputFormat: { type: "json_schema", schema: opts.outputSchema },
       },

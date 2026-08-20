@@ -86,12 +86,13 @@ describe("summarize", () => {
     expect((result.thinking as string).startsWith("a".repeat(700))).toBe(true);
   });
 
-  it("omits thinking when the API returns a signature-only block with no text — the default 'omitted' thinking display on current models, not a capture bug", () => {
+  it("omits thinking when the API returns a signature-only block with no text — a legitimate short-thought response, not a capture bug", () => {
     // Content block shape reproduced verbatim from a live probe of the
-    // installed SDK (0.1.77) against claude-sonnet-5: thinking runs by
-    // default (no maxThinkingTokens needed), but the API never streams a
-    // thinking_delta for it, so `thinking` arrives empty with only
-    // `signature` populated. See fleet#177 for making this configurable.
+    // installed SDK (0.1.77) against claude-sonnet-5, from before fleet#177
+    // requested `thinking: { display: "summarized" }`. Kept as a fixture: a
+    // signature-only block can still occur even with summarized display
+    // requested (short pre-tool-call thoughts), so the omit-when-empty
+    // handling stays load-bearing.
     const message = {
       type: "assistant",
       message: {

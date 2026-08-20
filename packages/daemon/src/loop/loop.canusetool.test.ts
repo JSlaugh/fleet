@@ -11,7 +11,7 @@ function makeCtx(opts: { once?: boolean } = {}) {
   return { approvals: ctx.approvals, journal, dataDirPath: ctx.dataDirPath, canUseTool: makeCanUseTool(ctx, project, 7, journal) };
 }
 
-const options = { signal: new AbortController().signal, toolUseID: "tool-1" };
+const options = { signal: new AbortController().signal, toolUseID: "tool-1", requestId: "req-1" };
 
 describe("makeCanUseTool in --once mode", () => {
   it("denies a permission request immediately instead of asking ApprovalManager", async () => {
@@ -19,8 +19,9 @@ describe("makeCanUseTool in --once mode", () => {
 
     const result = await canUseTool("Bash", { command: "rm -rf /" }, options);
 
-    expect(result.behavior).toBe("deny");
-    if (result.behavior === "deny") expect(result.message).toContain("--once mode");
+    expect(result).not.toBeNull();
+    expect(result?.behavior).toBe("deny");
+    if (result?.behavior === "deny") expect(result.message).toContain("--once mode");
     expect(approvals.request).not.toHaveBeenCalled();
   });
 
@@ -38,8 +39,9 @@ describe("makeCanUseTool in --once mode", () => {
 
     const result = await canUseTool("AskUserQuestion", { questions: [] }, options);
 
-    expect(result.behavior).toBe("deny");
-    if (result.behavior === "deny") {
+    expect(result).not.toBeNull();
+    expect(result?.behavior).toBe("deny");
+    if (result?.behavior === "deny") {
       expect(result.message).toContain("--once mode");
       expect(result.message).toContain('"blocked"');
     }
@@ -55,7 +57,7 @@ describe("makeCanUseTool outside --once mode", () => {
     const result = await canUseTool("Bash", { command: "ls" }, options);
 
     expect(approvals.request).toHaveBeenCalledOnce();
-    expect(result.behavior).toBe("allow");
+    expect(result?.behavior).toBe("allow");
   });
 
   it("journals the decided outcome with a wait duration", async () => {
