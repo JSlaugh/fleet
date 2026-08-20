@@ -249,7 +249,8 @@ describe("removeWorktree", () => {
     "does not throw when the worktree path does not exist (best-effort)",
     async () => {
       const project = setupProject();
-      await expect(removeWorktree(project, join(project.repoPath, "never-existed"))).resolves.toBeUndefined();
+      const result = await removeWorktree(project, join(project.repoPath, "never-existed"));
+      expect(result.stderr).not.toBe("");
     },
     TEST_TIMEOUT,
   );

@@ -125,8 +125,13 @@ export async function cleanupFinished(
     const reason = record.prUrl ? `PR ${prState.toLowerCase()} and issue closed` : "plan epic issue closed";
     log("loop", `${scope}: ${reason} — cleaning up worktree + branch ${record.branch}`);
     copyTicketTranscripts(ctx.dataDirPath, record);
-    await removeWorktree(project, record.worktreePath);
-    await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
+    // allowFailure keeps cleanup rolling, but a Windows file lock here leaks
+    // the worktree dir forever (the record is removed below regardless) — so a
+    // failure must at least be visible in the log.
+    const removed = await removeWorktree(project, record.worktreePath);
+    if (removed.stderr.trim()) log("loop", `${scope}: worktree removal reported: ${removed.stderr.trim()} — the directory may be leaked`);
+    const pruned = await run("git", ["-C", project.repoPath, "branch", "-D", record.branch], { allowFailure: true });
+    if (pruned.stderr.trim()) log("loop", `${scope}: local branch delete reported: ${pruned.stderr.trim()}`);
     await deleteRemoteBranch(project, record.branch);
     // Snapshotted once here so cross-ticket history aggregates never need to
     // re-scan a journal — see `summarizeJournalEvents`.

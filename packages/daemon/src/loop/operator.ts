@@ -1,6 +1,7 @@
 import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
-import { clearAssignees, closeIssue, markReady, upsertStatusComment } from "../github/github.ts";
+import { clearAssignees, closeIssue, closePullRequest, markReady, upsertStatusComment } from "../github/github.ts";
+import { deleteRemoteBranch } from "../github/worktree.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { resumeTicket } from "./runner.ts";
@@ -65,11 +66,14 @@ export async function reply(
   reason: string = "operator-reply",
 ): Promise<"steered" | "resumed"> {
   const scope = key(projectName, issueNumber);
-  // A human-driven session earns a fresh auto-recovery if it stalls.
-  ctx.state.update(projectName, issueNumber, { autoResumed: false });
+  // A human-driven session earns a fresh auto-recovery if it stalls — but only
+  // once the reply actually lands, so each success path below clears the flag
+  // itself. Clearing up front would let a *rejected* reply (409 on
+  // mid-transition, say) refund the once-only auto-resume budget.
 
   const waiter = ctx.replyWaiters.get(scope);
   if (waiter) {
+    ctx.state.update(projectName, issueNumber, { autoResumed: false });
     waiter(message);
     new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "parked", reason });
     return "steered";
@@ -77,6 +81,7 @@ export async function reply(
 
   const liveSession = ctx.live.get(scope);
   if (liveSession) {
+    ctx.state.update(projectName, issueNumber, { autoResumed: false });
     liveSession.send(message);
     log("loop", `${scope}: reply queued into running session`);
     new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "live", reason });
@@ -90,6 +95,7 @@ export async function reply(
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
   if (ctx.isShuttingDown()) throw new Error(`daemon is shutting down; reply again once it's back up`);
 
+  ctx.state.update(projectName, issueNumber, { autoResumed: false });
   track(ctx, projectName, issueNumber, resumeTicket(ctx, project, record, message, reason));
   return "resumed";
 }
@@ -200,11 +206,24 @@ export async function resetForFreshClaim(
   priorSummary?: string,
 ): Promise<void> {
   const scope = key(project.name, issueNumber);
-  const preservedSummary = priorSummary ?? ctx.state.get(project.name, issueNumber)?.lastSummary;
+  const prior = ctx.state.get(project.name, issueNumber);
+  const preservedSummary = priorSummary ?? prior?.lastSummary;
   new Journal(ctx.dataDirPath, project.name, issueNumber).append({
     type: "fleet",
     event: "restarted-by-operator",
   });
+  // A restart discards the previous attempt, so its PR and remote branch go
+  // too: leaving them makes the fresh run's push non-fast-forward and its
+  // `gh pr create` collide with a zombie PR reviewers can still act on.
+  // Best-effort — `finishCompleted`'s adopt-existing fallback covers a miss.
+  if (prior?.prUrl) {
+    try {
+      await closePullRequest(project, prior.prUrl, "Superseded — this ticket was restarted from the fleet dashboard; a fresh session will open a new PR.");
+    } catch (err) {
+      logError("loop", `${scope}: could not close the superseded PR ${prior.prUrl}`, err);
+    }
+  }
+  if (prior?.branch) await deleteRemoteBranch(project, prior.branch);
   ctx.state.update(project.name, issueNumber, {
     status: "restarting",
     sessionId: undefined,

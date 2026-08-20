@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import {
   FLEET_LABELS,
@@ -190,7 +190,11 @@ export function createApp(opts: {
     if (!loop.getProject(projectName) || !Number.isInteger(issueNumber)) {
       return c.json({ error: "unknown project or issue" }, 404);
     }
-    const journal = readJournalTail(dataDir, projectName, issueNumber, Number.MAX_SAFE_INTEGER);
+    // Bounded: this route is polled every few seconds by an open detail panel
+    // and journals have no retention policy — the last 2000 entries are far
+    // past what the panel renders. cleanupFinished's once-per-lifetime stats
+    // snapshot still reads the full journal.
+    const journal = readJournalTail(dataDir, projectName, issueNumber, 2000);
     return c.json(buildTicketReport(journal));
   });
 
@@ -238,7 +242,8 @@ export function createApp(opts: {
     const project = loop.getProject(c.req.param("project"));
     const issueNumber = Number(c.req.param("issue"));
     if (!project || !Number.isInteger(issueNumber)) return c.json({ error: "unknown project or issue" }, 404);
-    const { priority } = await c.req.json<{ priority: string | null }>();
+    const { priority } = await c.req.json<{ priority: string | null }>().catch(() => ({ priority: undefined }));
+    if (priority === undefined) return c.json({ error: "priority is required (a label or null)" }, 400);
     if (priority !== null && !(PRIORITY_LABELS as readonly string[]).includes(priority)) {
       return c.json({ error: `priority must be one of ${PRIORITY_LABELS.join(", ")} or null` }, 400);
     }
@@ -249,7 +254,7 @@ export function createApp(opts: {
   app.post("/api/tickets/:project/:issue/reply", async (c) => {
     const projectName = c.req.param("project");
     const issueNumber = Number(c.req.param("issue"));
-    const { message } = await c.req.json<{ message: string }>();
+    const { message } = await c.req.json<{ message: string }>().catch(() => ({ message: undefined }));
     if (typeof message !== "string" || message.trim().length === 0) {
       return c.json({ error: "message is required" }, 400);
     }
@@ -342,7 +347,9 @@ export function createApp(opts: {
   app.get("/api/approvals", (c) => c.json({ approvals: approvals.list() }));
 
   app.post("/api/approvals/:id", async (c) => {
-    const { decision, message } = await c.req.json<{ decision: "allow" | "deny" | "answer"; message?: string }>();
+    const { decision, message } = await c.req
+      .json<{ decision: "allow" | "deny" | "answer"; message?: string }>()
+      .catch(() => ({ decision: undefined, message: undefined }));
     if (decision !== "allow" && decision !== "deny" && decision !== "answer") {
       return c.json({ error: "decision must be allow, deny, or answer" }, 400);
     }
@@ -383,6 +390,32 @@ export function startServer(opts: {
 
   const httpServer = serve({ fetch: app.fetch, port }) as Server;
   const wss = new WebSocketServer({ noServer: true });
+
+  // Standard ws heartbeat: a client that misses a full ping interval without
+  // ponging is presumed gone and terminated, so dead sockets don't accumulate
+  // in `wss.clients` (and broadcast doesn't keep writing into the void).
+  interface AliveWebSocket extends WebSocket {
+    isAlive?: boolean;
+  }
+  wss.on("connection", (ws: AliveWebSocket) => {
+    ws.isAlive = true;
+    ws.on("pong", () => {
+      ws.isAlive = true;
+    });
+    ws.on("error", () => {});
+  });
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients as Set<AliveWebSocket>) {
+      if (client.isAlive === false) {
+        client.terminate();
+        continue;
+      }
+      client.isAlive = false;
+      client.ping();
+    }
+  }, 30_000);
+  wss.on("close", () => clearInterval(heartbeat));
+
   httpServer.on("upgrade", (req, socket, head) => {
     if (req.url === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));

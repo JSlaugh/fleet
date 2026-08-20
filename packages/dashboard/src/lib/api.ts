@@ -196,7 +196,9 @@ export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (c
   let ws: WebSocket | undefined;
   let closed = false;
   let reconnectDelay = WS_RECONNECT_MIN_MS;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   const open = () => {
+    if (closed) return;
     ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
     ws.onopen = () => {
       reconnectDelay = WS_RECONNECT_MIN_MS;
@@ -214,7 +216,7 @@ export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (c
     ws.onclose = () => {
       onStatus(false);
       if (!closed) {
-        setTimeout(open, reconnectDelay);
+        reconnectTimer = setTimeout(open, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, WS_RECONNECT_MAX_MS);
       }
     };
@@ -222,6 +224,7 @@ export function connectBoardSocket(onEvent: (type: string) => void, onStatus: (c
   open();
   return () => {
     closed = true;
+    clearTimeout(reconnectTimer);
     ws?.close();
   };
 }

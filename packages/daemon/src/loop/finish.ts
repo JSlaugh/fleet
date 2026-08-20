@@ -14,6 +14,10 @@ import {
   createIssue,
   createPullRequest,
   escalateToElevated,
+  findChildIssues,
+  findOpenPrUrlForBranch,
+  getIssue,
+  parseChildTaskList,
   swapLabel,
   updateIssueBody,
   upsertStatusComment,
@@ -63,15 +67,22 @@ export function machineReviewLine(outcome: TicketRecord["machineReviewOutcome"])
  * model configured, opt in (default), and this must be the ticket's first
  * failure at any tier — a manually- or already auto-elevated run that fails
  * again gets the normal needs-input treatment so escalation only ever fires once.
+ *
+ * No record means the failure happened before the claim-phase upsert (label
+ * swap, assignee CAS, worktree setup) — infrastructure a stronger model can't
+ * fix, and with no record the `autoElevated: true` write-back would silently
+ * no-op, turning "once" into an unbounded claim→fail→escalate loop. Those
+ * failures park in `fleet:needs-input` for a human instead.
  */
 export function shouldAutoElevate(
   project: { elevatedModel?: string; autoElevateOnFailure?: boolean },
   record: { elevated?: boolean; autoElevated?: boolean } | undefined,
 ): boolean {
+  if (!record) return false;
   if (!project.elevatedModel) return false;
   if (project.autoElevateOnFailure === false) return false;
-  if (record?.elevated) return false;
-  if (record?.autoElevated) return false;
+  if (record.elevated) return false;
+  if (record.autoElevated) return false;
   return true;
 }
 
@@ -117,7 +128,21 @@ export async function finishCompleted(
     const record = ctx.state.get(project.name, issue.number);
     let prUrl = record?.prUrl;
     if (!prUrl) {
-      prUrl = await createPullRequest(project, branch, result.prTitle ?? issue.title, prBody);
+      try {
+        prUrl = await createPullRequest(project, branch, result.prTitle ?? issue.title, prBody);
+      } catch (err) {
+        // A PR can already exist when a previous completion created it but the
+        // record write was lost (crash, restart cleanup failure) — adopt it
+        // rather than dead-ending every retry on "already exists".
+        if (/already exists/i.test(err instanceof Error ? err.message : String(err))) {
+          prUrl = await findOpenPrUrlForBranch(project, branch);
+        }
+        if (!prUrl) throw err;
+        log("loop", `${key(project.name, issue.number)}: adopted existing open PR ${prUrl} for ${branch}`);
+      }
+      // Persisted before the label swap below: a swap failure must not orphan
+      // the PR from the record, or the retry re-creates instead of reusing.
+      ctx.state.update(project.name, issue.number, { prUrl });
     }
     await moveToReview(ctx, project, issue.number, {
       comment: [
@@ -177,6 +202,30 @@ export async function finishPlanned(
   result: PlanResult,
 ): Promise<void> {
   const autoReady = project.planChildrenReady;
+
+  // Filing is not idempotent (createIssue per child), so gate on GitHub, the
+  // source of truth: a re-completed plan whose children already exist — from a
+  // crash mid-filing or a transient failure after filing — must not file a
+  // second batch. A re-run planner words its tickets differently, so presence
+  // of *any* prior child is the signal, not title matching. The epic ends in
+  // fleet:review either way; a partially-filed batch is the human's call.
+  const alreadyFiled = await hasExistingChildren(project, issue);
+  if (alreadyFiled) {
+    log("loop", `${key(project.name, issue.number)}: children already filed for this epic — skipping filing, moving to review`);
+    const record = ctx.state.get(project.name, issue.number);
+    await moveToReview(ctx, project, issue.number, {
+      comment: [
+        `**Status: planned** (confidence: ${result.confidence})`,
+        result.summary,
+        machineReviewLine(record?.machineReviewOutcome),
+        "This plan re-completed after its children were already filed — no new issues were created. Review the existing children against the summary above.",
+      ].filter(Boolean).join("\n\n"),
+      update: { lastSummary: result.summary },
+      logLine: "planned (children already filed)",
+    });
+    return;
+  }
+
   const created: { number: number; url: string; title: string }[] = [];
   const droppedNotes: string[] = [];
   for (const [index, ticket] of result.tickets.entries()) {
@@ -199,8 +248,18 @@ export async function finishPlanned(
     created.push({ ...child, title: ticket.title });
   }
   if (created.length > 0) {
+    // Stamp onto the body GitHub holds *right now*, never the claim-time (or,
+    // for a resumed session, synthesized-empty) snapshot: `updateIssueBody`
+    // overwrites the whole body, so stamping a stale one destroys the epic's
+    // description and any edits a human made while the planner ran. No fresh
+    // read → no stamp; the child list above is in the status comment anyway.
     try {
-      await updateIssueBody(project, issue.number, bodyWithChildTaskList(issue.body, created));
+      const live = await getIssue(project, issue.number);
+      if (live) {
+        await updateIssueBody(project, issue.number, bodyWithChildTaskList(live.body, created));
+      } else {
+        log("loop", `${key(project.name, issue.number)}: could not re-read the epic body — skipping the Children stamp`);
+      }
     } catch (err) {
       logError("loop", `${key(project.name, issue.number)}: could not stamp the Children task list onto the epic body`, err);
     }
@@ -220,6 +279,24 @@ export async function finishPlanned(
     update: { lastSummary: result.summary },
     logLine: `planned ${created.length} child ticket(s)`,
   });
+}
+
+/**
+ * Whether this epic already has filed children, per GitHub: the live body's
+ * `## Children` list (present once the stamp succeeded) or any issue carrying
+ * the epic's `Part-of:` stamp (present from the first `createIssue`, so it
+ * also catches a crash before the stamp). Fails open to "none found" — a
+ * transient search failure must not block a first filing.
+ */
+async function hasExistingChildren(project: ProjectConfig, issue: ReadyIssue): Promise<boolean> {
+  try {
+    const live = await getIssue(project, issue.number);
+    if (parseChildTaskList(live?.body ?? issue.body).length > 0) return true;
+    return (await findChildIssues(project, issue.number)).length > 0;
+  } catch (err) {
+    logError("loop", `${key(project.name, issue.number)}: could not check for existing children — proceeding to file`, err);
+    return false;
+  }
 }
 
 export async function finishBlocked(

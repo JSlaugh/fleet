@@ -17,13 +17,15 @@ vi.mock("../github/github.ts", () => ({
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
   clearAssignees: vi.fn(async () => {}),
+  closePullRequest: vi.fn(async () => {}),
 }));
 
 vi.mock("../github/worktree.ts", () => ({
   createWorktree: vi.fn(),
+  deleteRemoteBranch: vi.fn(async () => {}),
   hasCommits: vi.fn(async () => true),
   pushBranch: vi.fn(async () => {}),
-  removeWorktree: vi.fn(async () => {}),
+  removeWorktree: vi.fn(async () => ({ stdout: "", stderr: "" })),
   collectBranchDiff: vi.fn(async () => ({ diff: "diff --git a b", commits: "abc123 fix" })),
 }));
 

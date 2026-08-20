@@ -1,6 +1,7 @@
 import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type ProjectConfig } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { swapLabel } from "../github/github.ts";
+import { logError } from "../log.ts";
 import type { HistoryStore, StateStore } from "../store/state.ts";
 import type { WorkerSession } from "../session/worker.ts";
 
@@ -65,10 +66,23 @@ export function countRunning(runningKeys: Iterable<string>, projectName: string)
   return [...runningKeys].filter((k) => k.startsWith(`${projectName}#`)).length;
 }
 
-/** Registers a run in the concurrency ledger, clearing it once the run settles. */
+/**
+ * Registers a run in the concurrency ledger, clearing it once the run settles.
+ * One run per scope is an invariant every caller must uphold (check
+ * `running.has` with only synchronous code before calling this) — an overwrite
+ * here is a caller bug, logged loudly, and the delete-if-current guard keeps
+ * the first run's settlement from evicting the newer entry so the ledger can't
+ * under-count and over-admit past `maxConcurrent`.
+ */
 export function track(ctx: LoopContext, projectName: string, issueNumber: number, promise: Promise<void>): void {
   const runKey = key(projectName, issueNumber);
-  ctx.running.set(runKey, promise.finally(() => ctx.running.delete(runKey)));
+  if (ctx.running.has(runKey)) {
+    logError("loop", `${runKey}: track() called while a run is already registered — duplicate session start`, new Error("duplicate track"));
+  }
+  const tracked: Promise<void> = promise.finally(() => {
+    if (ctx.running.get(runKey) === tracked) ctx.running.delete(runKey);
+  });
+  ctx.running.set(runKey, tracked);
 }
 
 /**

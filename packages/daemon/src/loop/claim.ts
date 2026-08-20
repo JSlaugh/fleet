@@ -12,7 +12,7 @@ import { computeBudgetGate } from "./budget.ts";
 import { countRunning, key, track, type LoopContext } from "./context.ts";
 import { closeFinishedEpics } from "./epics.ts";
 import { reportRunFailure } from "./finish.ts";
-import { releaseStaleClaims } from "./heartbeat.ts";
+import { healOrphanedClaims, releaseStaleClaims } from "./heartbeat.ts";
 import { applyIntakeLint } from "./intake.ts";
 import { isProjectPaused } from "./pause.ts";
 import { computeWorkHoursReserveGate } from "./workHoursReserve.ts";
@@ -263,6 +263,12 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     log("loop", `[dry-run] would check ${project.name} for stale claims to release`);
   } else {
     await releaseStaleClaims(ctx, project, issues, myLogin);
+  }
+
+  if (ctx.dryRun) {
+    log("loop", `[dry-run] would check ${project.name} for orphaned claims to release`);
+  } else {
+    await healOrphanedClaims(ctx, project, issues, myLogin);
   }
 
   if (ctx.dryRun) {

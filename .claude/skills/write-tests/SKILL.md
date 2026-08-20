@@ -28,7 +28,7 @@ Rules:
 
 ## Prefer pure functions over mocks
 
-The codebase deliberately extracts decision logic into pure functions (`shouldAutoElevate`, `pickReviewCandidates`, `shouldResumeForConflict`, the supervisor's `decideNextAction`). Test those directly — no mocks, no temp dirs, exhaustive cases are cheap. Reserve loop-level tests (a `FleetLoop` + mocked `github.ts`) for wiring: does the cycle call the right thing at the right time. If you find yourself mocking four modules to reach an if-statement, extract the if-statement instead and leave one wiring test behind.
+The codebase deliberately extracts decision logic into pure functions (`shouldAutoElevate`, `pickReviewCandidates`, `shouldResumeForConflict`, `epicCloseDecision`; even the process supervisor's restart policy is extracted as `decideNextAction` in `scripts/supervisor-policy.mjs`). Test those directly — no mocks, no temp dirs, exhaustive cases are cheap. Reserve loop-level tests (a `FleetLoop` + mocked `github.ts`) for wiring: does the cycle call the right thing at the right time. If you find yourself mocking four modules to reach an if-statement, extract the if-statement instead and leave one wiring test behind.
 
 ## Mocking conventions
 

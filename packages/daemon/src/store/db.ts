@@ -19,20 +19,30 @@ export function openDatabase(dataDir: string): DatabaseSync {
 
   mkdirSync(resolvedDir, { recursive: true });
   const dbPath = join(resolvedDir, "fleet.db");
-  const isNewDb = !existsSync(dbPath);
 
-  const db = new DatabaseSync(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  createSchema(db);
+  let db: DatabaseSync;
+  try {
+    db = new DatabaseSync(dbPath);
+    db.exec("PRAGMA journal_mode = WAL");
+    // A second daemon pointed at the same dataDir should wait briefly (and then
+    // fail coherently) rather than throw a raw SQLITE_BUSY on its first write.
+    db.exec("PRAGMA busy_timeout = 5000");
+    createSchema(db);
+  } catch (err) {
+    throw new Error(
+      `could not open ${dbPath} — corrupt database or another daemon running against this dataDir. ` +
+        `GitHub labels are the source of truth, so moving fleet.db aside rebuilds operational state from the repos. ` +
+        `(${err instanceof Error ? err.message : String(err)})`,
+    );
+  }
   dbCache.set(resolvedDir, db);
 
-  if (isNewDb) migrateFromJson(db, resolvedDir);
-  // Unlike state.json/history.json above, journals predate fleet.db itself
-  // (#130 left them as JSONL on purpose), so most installs hit this with an
-  // existing db and a `journals/` dir still full of `.jsonl` files — this
-  // can't be gated on `isNewDb`. It's still one-time in effect: imported
-  // files are renamed to `*.imported.bak`, so a dir with nothing left to
-  // import is a fast no-op scan on every later boot.
+  // Both importers run on every boot and gate per-file on a daemon_state meta
+  // key committed in the same transaction as the imported rows — the db itself
+  // is the migration ledger, so a crash or a locked file can neither strand a
+  // legacy file unimported nor import one twice. The renames to
+  // `*.imported.bak` are pure archival and best-effort.
+  migrateFromJson(db, resolvedDir);
   migrateJournalsFromJsonl(db, resolvedDir);
 
   return db;
@@ -96,7 +106,7 @@ function createSchema(db: DatabaseSync): void {
       data TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_journal_entries_project_issue ON journal_entries (project, issue_number);
-    CREATE INDEX IF NOT EXISTS idx_journal_entries_ts ON journal_entries (ts);
+    DROP INDEX IF EXISTS idx_journal_entries_ts;
   `);
 }
 
@@ -252,47 +262,101 @@ export function journalEntriesTail(db: DatabaseSync, project: string, issueNumbe
   return rows.reverse().map((row) => JSON.parse(row.data) as JournalEntry);
 }
 
-// --- one-time JSON import --------------------------------------------------
+// --- legacy JSON import -----------------------------------------------------
 
 /**
- * Runs once, only when `fleet.db` didn't exist before this boot. Imports
- * `state.json`/`history.json` if present, then renames them to `*.imported.bak`
- * — never deletes — so a second boot (db already exists) is a no-op and the
- * originals stay around as a paper trail.
+ * Legacy-file import, gated per file on a `daemon_state` meta key that commits
+ * in the same transaction as the imported rows — the db itself is the ledger
+ * of what's been imported, so this is safe (and cheap) to run on every boot:
+ *
+ * - transient read failure → nothing committed, no key, retried next boot;
+ * - malformed file → archived to `*.failed.bak` and latched, never retried;
+ * - crash mid-import → transaction rolls back, clean retry next boot;
+ * - crash after commit → key present, file skipped (rename is re-attempted).
+ *
+ * A missing file also latches its key: matching the old "only when fleet.db is
+ * new" semantics, a legacy file appearing *later* next to a live db must not
+ * import over current state.
  */
 function migrateFromJson(db: DatabaseSync, dataDir: string): void {
   importStateJson(db, dataDir);
   importHistoryJson(db, dataDir);
 }
 
-function importStateJson(db: DatabaseSync, dataDir: string): void {
-  const path = join(dataDir, "state.json");
-  if (!existsSync(path)) return;
+/** Best-effort archival rename — the meta key is the real gate, so a locked file just logs and stays put. */
+function archiveImported(path: string, suffix: string): void {
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as FleetState;
+    renameSync(path, `${path}${suffix}`);
+  } catch (err) {
+    logError("store", `${path} imported but could not be renamed to ${path}${suffix} — safe to remove or rename by hand`, err);
+  }
+}
+
+/** The shared gate/transaction/archive shell around one legacy file's import — see `migrateFromJson`'s contract table. */
+function importLegacyFile(db: DatabaseSync, path: string, metaKey: string, importRaw: (raw: string) => void): void {
+  if (getMeta<boolean>(db, metaKey)) {
+    if (existsSync(path)) archiveImported(path, ".imported.bak");
+    return;
+  }
+  if (!existsSync(path)) {
+    setMeta(db, metaKey, true);
+    return;
+  }
+  let raw: string;
+  try {
+    raw = stripBom(readFileSync(path, "utf8"));
+  } catch (err) {
+    logError("store", `${path} exists but could not be read — leaving it in place to retry on the next boot`, err);
+    return;
+  }
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      importRaw(raw);
+      setMeta(db, metaKey, true);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      // Malformed content is deterministic — archiving and latching beats
+      // re-logging the same parse error on every boot forever.
+      logError("store", `${path} is malformed and was not imported — archived as ${path}.failed.bak`, err);
+      setMeta(db, metaKey, true);
+      archiveImported(path, ".failed.bak");
+      return;
+    }
+    logError("store", `${path} failed to import — leaving it in place to retry on the next boot`, err);
+    return;
+  }
+  archiveImported(path, ".imported.bak");
+}
+
+/** UTF-8 BOM strip (code point U+FEFF), kept out of regex literals for editability. */
+function stripBom(raw: string): string {
+  return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
+}
+
+function importStateJson(db: DatabaseSync, dataDir: string): void {
+  importLegacyFile(db, join(dataDir, "state.json"), "imported:state.json", (raw) => {
+    const parsed = JSON.parse(raw) as FleetState;
     for (const ticket of parsed.tickets ?? []) upsertTicket(db, ticket);
     if (parsed.pausedUntil !== undefined) setMeta(db, "pausedUntil", parsed.pausedUntil);
     if (parsed.paused !== undefined) setMeta(db, "paused", parsed.paused);
     if (parsed.pausedProjects !== undefined) setMeta(db, "pausedProjects", parsed.pausedProjects);
     for (const entry of parsed.spendLedger ?? []) appendSpendRow(db, entry.at, entry.usd);
-  } catch (err) {
-    logError("store", `state.json exists but failed to import — starting with empty ticket state`, err);
-  }
-  renameSync(path, `${path}.imported.bak`);
+  });
 }
 
 function importHistoryJson(db: DatabaseSync, dataDir: string): void {
-  const path = join(dataDir, "history.json");
-  if (!existsSync(path)) return;
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8").replace(/^\uFEFF/, "")) as unknown;
+  importLegacyFile(db, join(dataDir, "history.json"), "imported:history.json", (raw) => {
+    const parsed = JSON.parse(raw) as unknown;
     if (Array.isArray(parsed)) {
       for (const record of parsed as ClosedTicketRecord[]) insertHistory(db, record);
     }
-  } catch (err) {
-    logError("store", `history.json exists but failed to import — starting with empty history`, err);
-  }
-  renameSync(path, `${path}.imported.bak`);
+  });
 }
 
 /**
@@ -319,9 +383,11 @@ function migrateJournalsFromJsonl(db: DatabaseSync, dataDir: string): void {
 }
 
 function importJournalFile(db: DatabaseSync, project: string, issueNumber: number, path: string): void {
-  try {
-    const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-    for (const line of lines) {
+  // Same gate/transaction shell as state/history: without it, a crash between
+  // the inserts and the rename would re-import the whole file next boot and
+  // permanently inflate the stats `cleanupFinished` snapshots at close.
+  importLegacyFile(db, path, `imported:journal:${project}#${issueNumber}`, (raw) => {
+    for (const line of raw.split("\n").filter(Boolean)) {
       try {
         const entry = JSON.parse(line) as JournalEntry;
         insertJournalEntry(db, project, issueNumber, { ...entry, ts: entry.ts ?? new Date().toISOString() });
@@ -329,8 +395,5 @@ function importJournalFile(db: DatabaseSync, project: string, issueNumber: numbe
         logError("store", `a line in ${path} failed to parse — skipping just that entry`, err);
       }
     }
-  } catch (err) {
-    logError("store", `${path} exists but failed to import — some journal history for ${project}#${issueNumber} may be missing`, err);
-  }
-  renameSync(path, `${path}.imported.bak`);
+  });
 }

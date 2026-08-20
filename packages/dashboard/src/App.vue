@@ -65,9 +65,14 @@ const ACCENTS: Record<BoardStatus, string> = {
   done: "bg-neutral-400",
 };
 
+/** Guards concurrent load()s (WS ping + polling interval): only the latest request's response is applied. */
+let loadSeq = 0;
+
 async function load() {
+  const seq = ++loadSeq;
   try {
     const board = await fetchBoard();
+    if (seq !== loadSeq) return;
     tickets.value = board.tickets;
     pausedUntil.value = board.pausedUntil;
     paused.value = board.paused;
@@ -83,6 +88,7 @@ async function load() {
       ) ?? selected.value;
     }
   } catch (err) {
+    if (seq !== loadSeq) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
@@ -175,7 +181,7 @@ async function onResolveApproval(
 async function onSetPriority(ticket: BoardTicket, priority: string | null) {
   try {
     await setTicketPriority(ticket.project, ticket.issueNumber, priority);
-    ticket.priority = priority;
+    await load();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }

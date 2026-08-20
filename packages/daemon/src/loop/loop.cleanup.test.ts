@@ -18,7 +18,7 @@ vi.mock("../github/worktree.ts", () => ({
   deleteRemoteBranch: vi.fn(async () => {}),
   hasCommits: vi.fn(async () => true),
   pushBranch: vi.fn(async () => {}),
-  removeWorktree: vi.fn(async () => {}),
+  removeWorktree: vi.fn(async () => ({ stdout: "", stderr: "" })),
   collectBranchDiff: vi.fn(async () => ({ diff: "", commits: "" })),
 }));
 

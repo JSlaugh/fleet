@@ -33,4 +33,4 @@ pnpm daemon -- --dry-run --once
 
 It changes nothing (no claims, no worktrees, no label writes) — safe to run anytime `fleet.config.json` exists and `gh auth login` has been run. If neither is set up in the current environment, say so explicitly instead of skipping silently — a pure-dashboard or pure-schema change may not need it.
 
-If you touched `ProjectConfigSchema`/`FleetConfigSchema`, see [[config-shape-change]] first — `pnpm test` will fail on `example-config.test.ts` if the example file or README drifted.
+If you touched `ProjectConfigSchema`/`FleetConfigSchema`, see [[config-shape-change]] first — `pnpm test` will fail on `example-config.test.ts` if `fleet.config.example.json` drifted (the README isn't test-enforced — update it by hand).

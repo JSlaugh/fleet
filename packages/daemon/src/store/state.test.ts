@@ -96,24 +96,52 @@ describe("migration from JSON", () => {
     expect(existsSync(join(dataDir, "history.json.imported.bak"))).toBe(true);
   });
 
-  it("tolerates a corrupt state.json — starts empty and still archives the file", () => {
+  it("tolerates a corrupt state.json — starts empty and archives it as failed", () => {
     const dataDir = tempDataDir();
     writeFileSync(join(dataDir, "state.json"), "{not valid json");
 
     const state = new StateStore(dataDir);
 
     expect(state.all()).toEqual([]);
-    expect(existsSync(join(dataDir, "state.json.imported.bak"))).toBe(true);
+    expect(existsSync(join(dataDir, "state.json.failed.bak"))).toBe(true);
   });
 
-  it("tolerates a corrupt history.json — starts empty and still archives the file", () => {
+  it("tolerates a corrupt history.json — starts empty and archives it as failed", () => {
     const dataDir = tempDataDir();
     writeFileSync(join(dataDir, "history.json"), "not json at all");
 
     const history = new HistoryStore(dataDir);
 
     expect(history.all()).toEqual([]);
-    expect(existsSync(join(dataDir, "history.json.imported.bak"))).toBe(true);
+    expect(existsSync(join(dataDir, "history.json.failed.bak"))).toBe(true);
+  });
+
+  it("does not import a state.json that appears after the first boot — the meta-key latch holds", () => {
+    const dataDir = tempDataDir();
+    new StateStore(dataDir);
+    closeAllDatabases();
+    writeFileSync(join(dataDir, "state.json"), JSON.stringify({ tickets: [ticket(1)] }));
+
+    const reopened = new StateStore(dataDir);
+
+    expect(reopened.all()).toEqual([]);
+    // Latched out, archived unimported (indistinguishable from a lost rename).
+    expect(existsSync(join(dataDir, "state.json"))).toBe(false);
+    expect(existsSync(join(dataDir, "state.json.imported.bak"))).toBe(true);
+  });
+
+  it("does not double-import on a second boot even when the archival rename never happened", () => {
+    const dataDir = tempDataDir();
+    writeFileSync(join(dataDir, "history.json"), JSON.stringify([closed(1, "2026-01-01T00:00:00.000Z")]));
+    const first = new HistoryStore(dataDir);
+    expect(first.all()).toHaveLength(1);
+    closeAllDatabases();
+    // Simulate a crash-after-commit-before-rename: put the legacy file back.
+    writeFileSync(join(dataDir, "history.json"), JSON.stringify([closed(1, "2026-01-01T00:00:00.000Z")]));
+
+    const second = new HistoryStore(dataDir);
+
+    expect(second.all()).toHaveLength(1);
   });
 
   it("strips a leading BOM before importing state.json", () => {

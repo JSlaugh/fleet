@@ -5,6 +5,7 @@ vi.mock("./exec.ts", async (importActual) => ({
   ...(await importActual<typeof import("./exec.ts")>()),
   run: vi.fn(),
   runJson: vi.fn(),
+  runJsonPaginated: vi.fn(),
 }));
 
 const exec = await import("./exec.ts");
@@ -637,6 +638,17 @@ function mockGhIdentity(login: string) {
     if ((args as string[]).includes("user")) return { login } as never;
     return [] as never;
   });
+  mockComments([]);
+}
+
+/** Comment listings and the collaborator set both ride `runJsonPaginated` now; "daemon-a" is always a push collaborator here. */
+function mockComments(comments: unknown[]) {
+  vi.mocked(exec.runJsonPaginated).mockImplementation(async (_cmd, args) => {
+    if ((args as string[]).some((a) => a.includes("/collaborators"))) {
+      return [{ login: "daemon-a", permissions: { push: true } }] as never;
+    }
+    return comments as never;
+  });
 }
 
 function statusComment(patch: Partial<{ id: number; body: string; created_at: string }> = {}) {
@@ -659,28 +671,35 @@ describe("upsertStatusComment", () => {
     await upsertStatusComment(project, 7, "**Status: running**");
 
     const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("comment"));
-    const body = call?.[1]?.at(-1) ?? "";
+    const body = call?.[2]?.stdin ?? "";
     expect(body).toContain("<!-- fleet-status -->");
     expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
     expect(body).toContain("**Status: running**");
   });
 
   it("PATCHes the existing comment with a fresh heartbeat when one already exists", async () => {
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment()] as never;
-    });
+    mockComments([statusComment()]);
 
     await upsertStatusComment(project, 7, "**Status: review**");
 
     expect(exec.run).toHaveBeenCalledWith(
       "gh",
       expect.arrayContaining(["-X", "PATCH"]),
+      expect.anything(),
     );
     const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("PATCH"));
-    const body = call?.[1]?.at(-1) ?? "";
+    const body = call?.[2]?.stdin ?? "";
     expect(body).toContain("**Status: review**");
     expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
+  });
+
+  it("ignores a marker comment planted by another author instead of PATCHing it", async () => {
+    mockComments([{ ...statusComment(), user: { login: "drive-by" } }]);
+
+    await upsertStatusComment(project, 7, "**Status: running**");
+
+    expect(vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("PATCH"))).toBeUndefined();
+    expect(vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("comment"))).toBeDefined();
   });
 });
 
@@ -697,26 +716,20 @@ describe("refreshHeartbeat", () => {
 
   it("unconditionally stamps a fresh heartbeat when a status comment exists, even a very recent one", async () => {
     const recentTs = new Date(Date.now() - 1_000).toISOString();
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${recentTs} owner: daemon-a -->\nbody` })] as never;
-    });
+    mockComments([statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${recentTs} owner: daemon-a -->\nbody` })]);
 
     await refreshHeartbeat(project, 7);
 
-    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]), expect.anything());
   });
 
   it("inserts a heartbeat line into a pre-heartbeat comment rather than skipping it", async () => {
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })] as never;
-    });
+    mockComments([statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })]);
 
     await refreshHeartbeat(project, 7);
 
     const call = vi.mocked(exec.run).mock.calls.find((c) => c[1]?.includes("PATCH"));
-    const body = call?.[1]?.at(-1) ?? "";
+    const body = call?.[2]?.stdin ?? "";
     expect(body).toMatch(/<!-- fleet-heartbeat: .+ owner: daemon-a -->/);
     expect(body).toContain("**Status: in progress**");
   });
@@ -735,10 +748,7 @@ describe("refreshHeartbeatIfStale", () => {
 
   it("does not PATCH when the existing heartbeat is younger than maxAgeMs", async () => {
     const freshTs = new Date(Date.now() - 1_000).toISOString();
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${freshTs} owner: daemon-a -->\nbody` })] as never;
-    });
+    mockComments([statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${freshTs} owner: daemon-a -->\nbody` })]);
 
     await refreshHeartbeatIfStale(project, 7, 60_000);
 
@@ -747,36 +757,30 @@ describe("refreshHeartbeatIfStale", () => {
 
   it("PATCHes with a fresh heartbeat once the existing one is older than maxAgeMs", async () => {
     const staleTs = new Date(Date.now() - 120_000).toISOString();
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${staleTs} owner: daemon-a -->\nbody` })] as never;
-    });
+    mockComments([statusComment({ body: `<!-- fleet-status -->\n<!-- fleet-heartbeat: ${staleTs} owner: daemon-a -->\nbody` })]);
 
     await refreshHeartbeatIfStale(project, 7, 60_000);
 
-    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]), expect.anything());
   });
 
   it("treats a missing heartbeat line (pre-heartbeat comment) as stale", async () => {
-    vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
-      if ((args as string[]).includes("user")) return { login: "daemon-a" } as never;
-      return [statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })] as never;
-    });
+    mockComments([statusComment({ body: "<!-- fleet-status -->\n**Status: in progress**" })]);
 
     await refreshHeartbeatIfStale(project, 7, 60_000);
 
-    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]));
+    expect(exec.run).toHaveBeenCalledWith("gh", expect.arrayContaining(["-X", "PATCH"]), expect.anything());
   });
 });
 
 describe("getStatusCommentInfo", () => {
   it("returns undefined when there is no status comment", async () => {
-    vi.mocked(exec.runJson).mockResolvedValue([]);
+    mockComments([]);
     expect(await getStatusCommentInfo(project, 7)).toBeUndefined();
   });
 
   it("returns the comment's creation time and parsed heartbeat when both are present", async () => {
-    vi.mocked(exec.runJson).mockResolvedValue([
+    mockComments([
       statusComment({ body: "<!-- fleet-status -->\n<!-- fleet-heartbeat: 2026-01-01T00:00:00.000Z owner: daemon-a -->\nbody" }),
     ]);
 
@@ -787,9 +791,15 @@ describe("getStatusCommentInfo", () => {
   });
 
   it("returns createdAt with an undefined heartbeat for a pre-heartbeat comment", async () => {
-    vi.mocked(exec.runJson).mockResolvedValue([statusComment({ body: "<!-- fleet-status -->\nold-style body" })]);
+    mockComments([statusComment({ body: "<!-- fleet-status -->\nold-style body" })]);
 
     expect(await getStatusCommentInfo(project, 7)).toEqual({ createdAt: "2025-12-31T00:00:00.000Z", heartbeat: undefined });
+  });
+
+  it("ignores a marker comment from a non-collaborator (spoofed heartbeat)", async () => {
+    mockComments([{ ...statusComment(), user: { login: "drive-by" } }]);
+
+    expect(await getStatusCommentInfo(project, 7)).toBeUndefined();
   });
 });
 
@@ -807,9 +817,12 @@ describe("getPrOutcome", () => {
     vi.mocked(exec.runJson).mockImplementation(async (_cmd, args) => {
       const argv = args as string[];
       if (argv.includes("view")) return { createdAt: opts.createdAt, mergedAt: opts.mergedAt, commits: opts.commits ?? [] } as never;
-      if (argv.some((a) => a.includes("/reviews"))) return (opts.reviews ?? []) as never;
-      if (argv.some((a) => a.includes("/comments"))) return (opts.comments ?? []) as never;
       return { login: "daemon-a" } as never;
+    });
+    vi.mocked(exec.runJsonPaginated).mockImplementation(async (_cmd, args) => {
+      const argv = args as string[];
+      if (argv.some((a) => a.includes("/reviews"))) return (opts.reviews ?? []) as never;
+      return (opts.comments ?? []) as never;
     });
   }
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord } from "../test-support.ts";
 import { readJournalTail } from "../store/journal.ts";
-import { heartbeatRefreshAgeMs, isClaimStale, releaseStaleClaims, refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
+import { healOrphanedClaims, heartbeatRefreshAgeMs, isClaimStale, releaseStaleClaims, refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { StatusCommentInfo } from "../github/github.ts";
 
 vi.mock("../github/github.ts", async (importActual) => ({
@@ -56,6 +56,59 @@ describe("heartbeatRefreshAgeMs", () => {
   it("is half the staleness threshold, in milliseconds", () => {
     expect(heartbeatRefreshAgeMs(45)).toBe(45 * 60_000 / 2);
     expect(heartbeatRefreshAgeMs(10)).toBe(5 * 60_000);
+  });
+});
+
+describe("healOrphanedClaims", () => {
+  it("releases an in-progress issue assigned only to this daemon with no record — the mid-claim-crash orphan", async () => {
+    const ctx = makeCtx();
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:in-progress"], { assignees: ["daemon-a"] })], "daemon-a");
+
+    expect(github.removeAssignee).toHaveBeenCalledWith(project, 1, "daemon-a");
+    expect(github.markReady).toHaveBeenCalledWith(project, 1);
+  });
+
+  it("releases an unassigned label-stranded issue too (crash before self-assign)", async () => {
+    const ctx = makeCtx();
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:needs-input"], { assignees: [] })], "daemon-a");
+
+    expect(github.markReady).toHaveBeenCalledWith(project, 1);
+  });
+
+  it("skips an issue with a TicketRecord — normal recovery owns it", async () => {
+    const ctx = makeCtx();
+    ctx.state.upsert(makeRecord({ issueNumber: 1, status: "stalled" }));
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:in-progress"], { assignees: ["daemon-a"] })], "daemon-a");
+
+    expect(github.markReady).not.toHaveBeenCalled();
+  });
+
+  it("skips an issue assigned to another daemon — releaseStaleClaims' territory", async () => {
+    const ctx = makeCtx();
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:in-progress"], { assignees: ["daemon-b"] })], "daemon-a");
+
+    expect(github.markReady).not.toHaveBeenCalled();
+  });
+
+  it("skips a claim currently in flight in this very cycle", async () => {
+    const ctx = makeCtx();
+    ctx.running.set("alpha#1", Promise.resolve());
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:in-progress"], { assignees: ["daemon-a"] })], "daemon-a");
+
+    expect(github.markReady).not.toHaveBeenCalled();
+  });
+
+  it("ignores issues without an in-flight status label", async () => {
+    const ctx = makeCtx();
+
+    await healOrphanedClaims(ctx, project, [issue(1, ["fleet:review"], { assignees: ["daemon-a"] })], "daemon-a");
+
+    expect(github.markReady).not.toHaveBeenCalled();
   });
 });
 

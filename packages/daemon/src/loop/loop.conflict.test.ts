@@ -57,6 +57,7 @@ const openIssues = new Set([7]);
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(github.getPrFeedback).mockResolvedValue(noFeedback);
+  vi.mocked(github.swapLabel).mockResolvedValue(undefined);
 });
 
 describe("addressReviews — conflict detection", () => {
@@ -102,6 +103,33 @@ describe("addressReviews — conflict detection", () => {
 
     expect(runner.resumeTicket).not.toHaveBeenCalled();
     expect(state.get("alpha", 7)?.conflictHandled).toBe(false);
+  });
+
+  it("does not advance the feedback/conflict watermarks when the label swap fails — the feedback must retry next cycle", async () => {
+    vi.mocked(github.getPrMergeable).mockResolvedValue("CONFLICTING");
+    vi.mocked(github.getPrFeedback).mockResolvedValue(feedback);
+    vi.mocked(github.swapLabel).mockRejectedValue(new Error("gh: rate limited"));
+    const { ctx, state } = makeCtx(record());
+
+    await addressReviews(ctx, project, openIssues).catch(() => undefined);
+
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)?.lastReviewHandledAt).toBeUndefined();
+    expect(state.get("alpha", 7)?.conflictHandled).toBeUndefined();
+  });
+
+  it("bails without a second session when the ticket started running mid-fetch (operator reply race)", async () => {
+    const { ctx } = makeCtx(record());
+    // The reply lands while addressReviews is awaiting the PR fetches — after
+    // pickReviewCandidates' snapshot, before track().
+    vi.mocked(github.getPrMergeable).mockImplementation(async () => {
+      ctx.running.set("alpha#7", Promise.resolve());
+      return "CONFLICTING";
+    });
+
+    await addressReviews(ctx, project, openIssues);
+
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
   });
 
   it("combines fresh review feedback and a conflict into a single resume", async () => {
