@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BoardTicket, TicketRecord } from "@fleet/shared";
-import { groupByEpic, projectRollup } from "./board.ts";
+import type { BoardTicket, PendingApproval, TicketRecord } from "@fleet/shared";
+import { buildAttentionQueue, groupByEpic, projectRollup } from "./board.ts";
 
 function ticket(patch: Partial<BoardTicket> & { issueNumber: number }): BoardTicket {
   return {
@@ -83,5 +83,86 @@ describe("projectRollup", () => {
       ).needsAttention,
     ).toBe(true);
     expect(projectRollup("alpha", [ticket({ issueNumber: 1, project: "alpha", status: "ready" })], 2).needsAttention).toBe(true);
+  });
+});
+
+function approval(patch: Partial<PendingApproval> & { issueNumber: number }): PendingApproval {
+  return {
+    id: `approval-${patch.issueNumber}`,
+    project: "alpha",
+    toolName: "Bash",
+    kind: "permission",
+    input: {},
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...patch,
+  };
+}
+
+const NOW = Date.parse("2026-01-01T01:00:00.000Z");
+
+describe("buildAttentionQueue", () => {
+  it("ignores tickets outside needs-input/review and tickets with no lastActivityAt", () => {
+    const list = [
+      ticket({ issueNumber: 1, status: "ready" }),
+      ticket({ issueNumber: 2, status: "in-progress" }),
+      ticket({ issueNumber: 3, status: "needs-input" }),
+    ];
+    expect(buildAttentionQueue(list, [], NOW)).toEqual([]);
+  });
+
+  it("classifies a needs-input ticket as failed when its record status is failed, otherwise as needs-input", () => {
+    const blocked = ticket({
+      issueNumber: 1,
+      status: "needs-input",
+      record: { status: "needs-input", lastActivityAt: "2026-01-01T00:00:00.000Z", lastSummary: "need an API key" } as TicketRecord,
+    });
+    const failed = ticket({
+      issueNumber: 2,
+      status: "needs-input",
+      record: { status: "failed", lastActivityAt: "2026-01-01T00:00:00.000Z", lastSummary: "crashed" } as TicketRecord,
+    });
+    const items = buildAttentionQueue([blocked, failed], [], NOW);
+    expect(items.find((i) => i.issueNumber === 1)?.kind).toBe("needs-input");
+    expect(items.find((i) => i.issueNumber === 2)?.kind).toBe("failed");
+  });
+
+  it("classifies a review ticket as awaiting a PR when it has one, or a plan awaiting curation otherwise", () => {
+    const withPr = ticket({
+      issueNumber: 1,
+      status: "review",
+      record: { status: "review", lastActivityAt: "2026-01-01T00:00:00.000Z", prUrl: "https://github.com/acme/alpha/pull/9" } as TicketRecord,
+    });
+    const plan = ticket({
+      issueNumber: 2,
+      status: "review",
+      isPlan: true,
+      record: { status: "review", lastActivityAt: "2026-01-01T00:00:00.000Z" } as TicketRecord,
+    });
+    const items = buildAttentionQueue([withPr, plan], [], NOW);
+    expect(items.find((i) => i.issueNumber === 1)).toMatchObject({ kind: "review", prUrl: "https://github.com/acme/alpha/pull/9" });
+    expect(items.find((i) => i.issueNumber === 2)).toMatchObject({ kind: "review", detail: "Plan awaiting curation" });
+  });
+
+  it("includes pending approvals, filling in the matching ticket's title and url when found", () => {
+    const t = ticket({ issueNumber: 5, title: "Fix the thing", status: "in-progress" });
+    const items = buildAttentionQueue([t], [approval({ issueNumber: 5, createdAt: "2026-01-01T00:30:00.000Z" })], NOW);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "approval", title: "Fix the thing", url: t.url });
+  });
+
+  it("sorts longest wait first across mixed kinds", () => {
+    const oldest = ticket({
+      issueNumber: 1,
+      status: "needs-input",
+      record: { status: "needs-input", lastActivityAt: "2025-12-30T00:00:00.000Z" } as TicketRecord,
+    });
+    const newest = approval({ issueNumber: 2, createdAt: "2026-01-01T00:55:00.000Z" });
+    const middle = ticket({
+      issueNumber: 3,
+      status: "review",
+      record: { status: "review", lastActivityAt: "2025-12-31T12:00:00.000Z" } as TicketRecord,
+    });
+    const items = buildAttentionQueue([oldest, middle], [newest], NOW);
+    expect(items.map((i) => i.issueNumber)).toEqual([1, 3, 2]);
   });
 });

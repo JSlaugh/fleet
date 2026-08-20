@@ -9,6 +9,7 @@ import {
   formatCost,
   formatDuration,
   formatTime,
+  formatWait,
   resolveApproval,
   restartTicket,
   sendReply,
@@ -242,6 +243,29 @@ describe("formatDuration", () => {
 
   it("formats durations over a minute as minutes and seconds", () => {
     expect(formatDuration(65000)).toBe("1m 5s");
+  });
+});
+
+describe("formatWait", () => {
+  it("returns 'just now' for zero or negative elapsed time", () => {
+    expect(formatWait(0)).toBe("just now");
+    expect(formatWait(-500)).toBe("just now");
+  });
+
+  it("formats sub-minute waits as seconds", () => {
+    expect(formatWait(45_000)).toBe("45s");
+  });
+
+  it("formats sub-hour waits as minutes", () => {
+    expect(formatWait(5 * 60_000)).toBe("5m");
+  });
+
+  it("formats sub-day waits as hours and minutes", () => {
+    expect(formatWait(3 * 3_600_000 + 20 * 60_000)).toBe("3h 20m");
+  });
+
+  it("formats multi-day waits as days and hours", () => {
+    expect(formatWait(2 * 86_400_000 + 5 * 3_600_000)).toBe("2d 5h");
   });
 });
 

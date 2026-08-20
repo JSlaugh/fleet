@@ -20,8 +20,9 @@ import {
   setProjectPaused,
   setTicketPriority,
 } from "./lib/api.ts";
-import { groupByEpic, projectRollup } from "./lib/board.ts";
+import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
+import AttentionQueue from "./components/AttentionQueue.vue";
 import BoardColumn from "./components/BoardColumn.vue";
 import DigestPanel from "./components/DigestPanel.vue";
 import DormantProjectRow from "./components/DormantProjectRow.vue";
@@ -118,6 +119,23 @@ const dormantRollups = computed(() => {
     projectRollup(project, tickets.value, approvals.value.filter((a) => a.project === project).length),
   );
 });
+
+/**
+ * The cross-project "needs me" queue (#161): built from the unfiltered ticket
+ * and approval lists so dormant projects' items still surface — that's the
+ * whole point of collapsing them safely — narrowed only by an explicit
+ * project filter, same as every other board surface.
+ */
+const attentionItems = computed(() => {
+  const scopedTickets = projectFilter.value ? tickets.value.filter((t) => t.project === projectFilter.value) : tickets.value;
+  const scopedApprovals = projectFilter.value ? approvals.value.filter((a) => a.project === projectFilter.value) : approvals.value;
+  return buildAttentionQueue(scopedTickets, scopedApprovals, Date.now());
+});
+
+function onAttentionSelect(project: string, issueNumber: number) {
+  const ticket = tickets.value.find((t) => t.project === project && t.issueNumber === issueNumber);
+  if (ticket) selected.value = ticket;
+}
 
 async function loadApprovals() {
   try {
@@ -404,6 +422,12 @@ onUnmounted(() => {
 
     <div class="flex min-h-0 flex-1">
       <main v-if="view === 'board'" class="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-4" aria-label="Ticket board">
+        <AttentionQueue
+          v-if="attentionItems.length > 0"
+          :items="attentionItems"
+          @select="onAttentionSelect"
+          @open-approvals="showApprovals = true"
+        />
         <div v-if="dormantRollups.length > 0" class="flex shrink-0 flex-col gap-1.5" aria-label="Dormant projects">
           <DormantProjectRow
             v-for="rollup in dormantRollups"
