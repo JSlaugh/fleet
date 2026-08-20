@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { PRIORITY_LABELS, SECTION_LABELS } from "@fleet/shared";
 import { createTicket } from "../lib/api.ts";
 import { composeTicketBody, missingTicketSections } from "../lib/ticketForm.ts";
@@ -26,18 +26,21 @@ const result = ref<{ number: number; url: string }>();
 
 const missing = computed(() => missingTicketSections(sections));
 
-const dependsOn = computed<number[]>(() =>
+const dependsOnTokens = computed<string[]>(() =>
   dependsOnText.value
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean)
+    .filter(Boolean),
+);
+
+const dependsOn = computed<number[]>(() =>
+  dependsOnTokens.value
     .map((s) => Number(s.replace(/^#/, "")))
     .filter((n) => Number.isInteger(n) && n > 0),
 );
 
-const dependsOnInvalid = computed(
-  () => dependsOnText.value.trim().length > 0 && dependsOn.value.length === 0,
-);
+/** Flags a partial typo (e.g. `12, abc`) too, not just a fully-unparseable field — a token silently dropped from `dependsOn` is as wrong as an empty result. */
+const dependsOnInvalid = computed(() => dependsOn.value.length !== dependsOnTokens.value.length);
 
 const canSubmit = computed(
   () => title.value.trim().length > 0 && missing.value.length === 0 && !dependsOnInvalid.value && !submitting.value,
@@ -63,7 +66,7 @@ async function submit() {
   }
 }
 
-function fileAnother() {
+function resetForm() {
   title.value = "";
   sections.problem = "";
   sections.acceptance = "";
@@ -71,8 +74,12 @@ function fileAnother() {
   priority.value = "";
   ready.value = true;
   dependsOnText.value = "";
+  error.value = undefined;
   result.value = undefined;
 }
+
+/** Switching the target project mid-draft (via another chip's "+" while this panel is still open) would otherwise carry stale content into a submission filed under the new project. */
+watch(() => props.project, resetForm);
 </script>
 
 <template>
@@ -103,7 +110,7 @@ function fileAnother() {
           <button
             type="button"
             class="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
-            @click="fileAnother"
+            @click="resetForm"
           >
             File another
           </button>

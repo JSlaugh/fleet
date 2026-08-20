@@ -73,4 +73,29 @@ describe("FileTicketPanel", () => {
     expect(wrapper.text()).toContain("#42");
     expect(wrapper.emitted("created")).toBeTruthy();
   });
+
+  it("resets the draft when the target project changes mid-edit", async () => {
+    const wrapper = mount(FileTicketPanel, { props: { project: "alpha" } });
+    await fillRequiredSections(wrapper);
+    expect(wrapper.find('button[type="submit"]').attributes("disabled")).toBeUndefined();
+
+    await wrapper.setProps({ project: "beta" });
+
+    expect((wrapper.find('input[type="text"]').element as HTMLInputElement).value).toBe("");
+    for (const textarea of wrapper.findAll("textarea")) {
+      expect((textarea.element as HTMLTextAreaElement).value).toBe("");
+    }
+    expect(wrapper.find('button[type="submit"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("flags a partially-invalid depends-on list instead of silently dropping the bad token", async () => {
+    const wrapper = mount(FileTicketPanel, { props: { project: "alpha" } });
+    await fillRequiredSections(wrapper);
+
+    const dependsOnInput = wrapper.findAll('input[type="text"]')[1]!;
+    await dependsOnInput.setValue("12, abc");
+
+    expect(wrapper.text()).toContain("Enter a comma-separated list of issue numbers.");
+    expect(wrapper.find('button[type="submit"]').attributes("disabled")).toBeDefined();
+  });
 });
