@@ -302,6 +302,7 @@ export class WorkerSession {
           }],
         },
         settingSources: ["project"],
+        thinking: { type: "adaptive", display: "summarized" },
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
@@ -549,8 +550,8 @@ export function summarize(
   const base: Record<string, unknown> = { type: message.type };
   if ("subtype" in message) base.subtype = message.subtype;
   if (message.type === "assistant") {
-    const content = message.message.content;
-    const usage = (message.message as { usage?: Record<string, unknown> }).usage;
+    const content = message.message.content as unknown[];
+    const usage = (message.message as unknown as { usage?: Record<string, unknown> }).usage;
     if (usage) {
       base.usage = {
         inputTokens: usage.input_tokens as number | undefined,
@@ -571,17 +572,12 @@ export function summarize(
           typeof block === "object" && block !== null && (block as { type?: string }).type === "thinking",
       );
       if (thinkingBlocks.length > 0) {
-        // The API returns thinking blocks with an empty `thinking` string
-        // (only `signature` populated) whenever thinking display is
-        // "omitted" — the default for current models — so a present-but-
-        // empty block is a legitimate response, not a capture bug: verified
-        // with a live probe of the installed SDK (0.1.77) against
-        // claude-sonnet-5, which reliably produced a lone
-        // {type:"thinking", thinking:"", signature:"<real signature>"}
-        // content block (thinking runs by default; no maxThinkingTokens
-        // needed) with no thinking_delta text ever streamed for it. The SDK
-        // has no option to request "summarized" display — see fleet#177.
-        // Only attach the field when there's real text to show.
+        // `query()` requests `thinking: { type: "adaptive", display: "summarized" }`
+        // (worker.ts constructor / review.ts runReviewSession — see fleet#177), but a
+        // present-but-empty `thinking` string (only `signature` populated) is still a
+        // legitimate response rather than a capture bug: short pre-tool-call thoughts
+        // can come back signature-only even with summarized display requested. Only
+        // attach the field when there's real text to show.
         const thinkingText = thinkingBlocks.map((block) => block.thinking).join("\n").slice(0, 1000);
         if (thinkingText.trim()) base.thinking = thinkingText;
       }
@@ -603,7 +599,7 @@ export function summarize(
     }
   }
   if (message.type === "user") {
-    const content = message.message.content;
+    const content = message.message.content as unknown;
     // Plain-string "user" messages aren't necessarily operator/daemon
     // steering: the SDK also injects its own strings this way (Skill content
     // loads, structured-output enforcement). `pendingSends` is the ground
