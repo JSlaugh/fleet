@@ -114,6 +114,15 @@ export function shortModelName(model: string | undefined): string {
   return model.replace(/^claude-/, "").replace(/-\d{8}$/, "");
 }
 
+/** Which tier a ticket actually ran on, mirroring the `fleet:elevate`/`fleet:light` label precedence — elevated wins if both flags are somehow set. */
+export type ModelTier = "elevated" | "light" | "base";
+
+export function tierOf(record: Pick<TicketRecord, "elevated" | "light">): ModelTier {
+  if (record.elevated) return "elevated";
+  if (record.light) return "light";
+  return "base";
+}
+
 export interface PendingApproval {
   id: string;
   project: string;
