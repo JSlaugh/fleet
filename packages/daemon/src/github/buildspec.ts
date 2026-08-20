@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BuildSpecSchema, type BuildSpec } from "@fleet/shared";
+import { BuildSpecSchema, checklistForType, type BuildSpec } from "@fleet/shared";
 import { parse } from "yaml";
+import { logError } from "../log.ts";
 
 /**
  * Parses and validates a `fleet.yaml` document. Throws with a message naming
@@ -30,4 +31,22 @@ export function readBuildSpec(repoRoot: string): BuildSpec | undefined {
   const path = join(repoRoot, "fleet.yaml");
   if (!existsSync(path)) return undefined;
   return parseBuildSpec(readFileSync(path, "utf8"));
+}
+
+/**
+ * Re-reads `fleet.yaml` fresh (rather than trusting anything cached from
+ * claim time) to find `ticketType`'s declared `review:` checklist — same
+ * fail-open posture as the machine review gate that calls this: a
+ * missing/malformed spec at review time falls back to no checklist rather
+ * than blocking the review.
+ */
+export function resolveTypeChecklist(scope: string, worktreePath: string, ticketType: string | undefined): string | undefined {
+  if (!ticketType) return undefined;
+  try {
+    const spec = readBuildSpec(worktreePath);
+    return spec ? checklistForType(spec, ticketType) : undefined;
+  } catch (err) {
+    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its review checklist`, err);
+    return undefined;
+  }
 }

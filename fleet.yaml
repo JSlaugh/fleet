@@ -4,14 +4,26 @@
 # `pnpm daemon init-labels` mints a fleet:type:<name> label per non-default
 # profile, and the issue forms in .github/ISSUE_TEMPLATE apply those labels.
 # Setup is identical for every type today; the per-type keys grow siblings
-# (review checklist, contract appendix, tier, verify commands) as B4 lands.
+# (contract appendix, tier, verify commands) as B4 lands.
 setup:
   default:
     - name: install
       run: pnpm install
   dashboard:
-    - name: install
-      run: pnpm install
+    setup:
+      - name: install
+        run: pnpm install
+    review: |
+      - Accessibility: interactive elements are keyboard-reachable and operable (no click-only handlers on divs/spans); focus order is sane; icon-only buttons and status indicators have accessible names, not just color/shape.
+      - Responsive behavior: layout doesn't break or clip content at narrow widths; nothing assumes a fixed viewport.
+      - Dark mode / theming: new UI uses the existing theme tokens/classes rather than hardcoded colors, and reads correctly in both light and dark.
+      - Loading/empty/error states are handled, not just the happy path with data present.
   daemon:
-    - name: install
-      run: pnpm install
+    setup:
+      - name: install
+        run: pnpm install
+    review: |
+      - Error paths: failures from `gh`/git shell-outs, the Agent SDK, or disk I/O are caught and fail open (or fail the ticket cleanly) rather than throwing uncaught or corrupting `TicketRecord` state.
+      - Test coverage: new or changed loop/session behavior has a colocated `*.test.ts` covering it, not just the happy path.
+      - Windows path handling: paths are built with `node:path` (or otherwise forward/back-slash agnostic), not string-concatenated — this daemon runs on Windows.
+      - State model invariant: GitHub labels stay the source of truth for ticket status; `fleet.db` changes are cache only and don't diverge from what the labels say.
