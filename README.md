@@ -157,9 +157,14 @@ setup:
           run: pnpm install
         - name: test-db
           run: pnpm db:migrate:test
+    docs:
+        setup:
+            - name: install
+              run: pnpm install
+        tier: light
 ```
 
-In map form a `default` profile is required; every other key becomes a selectable profile. The daemon reads `fleet.yaml` from the **fresh worktree**, after `git worktree add` and before the worker session starts — provisioning stays fully deterministic and daemon-side, with no agent or model involvement.
+In map form a `default` profile is required; every other key becomes a selectable profile. A profile can also be written as an object (`{ setup, contract, review, tier }`) instead of a bare step list, to declare a `contract:`/`review:` markdown appendix and/or a default model `tier:` for tickets of that type (below). The daemon reads `fleet.yaml` from the **fresh worktree**, after `git worktree add` and before the worker session starts — provisioning stays fully deterministic and daemon-side, with no agent or model involvement.
 
 **Profile selection** is driven by a `fleet:type:<name>` label on the issue: `fleet:type:frontend` selects the `frontend` profile. No type label, or one that names a profile the file doesn't declare, falls back to `default` (a warning is logged for the unknown case; the claim is never failed for it). Multiple type labels pick the first match in alphabetical order and log a warning about the ambiguity. `pnpm daemon init-labels` creates a `fleet:type:<name>` label for every profile a repo's `fleet.yaml` declares (skipping `default`) — per-repo, not part of the global `fleet:*` label set.
 
@@ -174,6 +179,7 @@ Model selection is layered, most specific wins:
 1. **Skills and agents in the repo** — `model:` frontmatter in a SKILL.md or agent .md pins the model for that skill/agent's work. This is the recommended place to encode "this kind of task needs this model."
 2. **`fleet:elevate` label** on an issue — runs that ticket's session on the project's `elevatedModel` (config). Add the label + reply to a blocked ticket to retry harder with a stronger model. Wins over `fleet:light` if both are present.
 3. **`fleet:light` label** on an issue — runs that ticket's session on the project's `lightModel` (config), for cheap mechanical work (doc tweaks, renames, small sweeps). No-op without `lightModel` configured. A `fleet:plan` decomposition can tag a child ticket's suggested tier when it judges the work light or elevated; standard tier gets no label.
-4. **Per-project `model`** in the config — the session default for all of that project's workers; unset means the Claude CLI's configured default.
+4. **A type's `tier:` in `fleet.yaml`** (see above) — a map-form profile can declare `tier: light` or `tier: elevated` (or `tier: default`, same as omitting it) so every ticket of that type defaults to that tier without a human or planner adding a label. An explicit `fleet:elevate`/`fleet:light` label on the issue still wins over this.
+5. **Per-project `model`** in the config — the session default for all of that project's workers; unset means the Claude CLI's configured default.
 
 The model actually used shows on each board card and in ticket detail, with a per-model token/cost breakdown after each run (subagent models included).

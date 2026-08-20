@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveTypeContract } from "./runner.ts";
+import { resolveTypeContract, resolveTypeTier } from "./runner.ts";
 
 const dirs: string[] = [];
 
@@ -62,5 +62,47 @@ describe("resolveTypeContract", () => {
     const dir = makeTempDir();
     writeFileSync(join(dir, "fleet.yaml"), "setup: not-a-list-or-map\n");
     expect(resolveTypeContract("alpha#1", dir, "backend")).toBeUndefined();
+  });
+});
+
+describe("resolveTypeTier", () => {
+  it("is undefined when ticketType is undefined, without touching the filesystem", () => {
+    expect(resolveTypeTier("alpha#1", "/does/not/exist", undefined)).toBeUndefined();
+  });
+
+  it("is undefined when the worktree has no fleet.yaml", () => {
+    const dir = makeTempDir();
+    expect(resolveTypeTier("alpha#1", dir, "docs")).toBeUndefined();
+  });
+
+  it("returns the matched type's declared tier", () => {
+    const dir = makeTempDir();
+    writeFleetYaml(dir, {
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        docs: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          tier: "light",
+        },
+      },
+    });
+    expect(resolveTypeTier("alpha#1", dir, "docs")).toBe("light");
+  });
+
+  it("is undefined for a type with no tier key", () => {
+    const dir = makeTempDir();
+    writeFleetYaml(dir, {
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        frontend: [{ name: "install", run: "pnpm install" }],
+      },
+    });
+    expect(resolveTypeTier("alpha#1", dir, "frontend")).toBeUndefined();
+  });
+
+  it("fails open (no tier, no throw) when fleet.yaml is malformed at session-open time", () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, "fleet.yaml"), "setup: not-a-list-or-map\n");
+    expect(resolveTypeTier("alpha#1", dir, "docs")).toBeUndefined();
   });
 });
