@@ -49,6 +49,7 @@ function open(record: HistoryRecord) {
     url: record.url,
     status: "done",
     priority: null,
+    type: record.ticketType ?? null,
     isPlan: record.isPlan ?? false,
     record,
   });

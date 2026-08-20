@@ -37,6 +37,7 @@ export function synthesizeDoneTickets(
       url: issueUrl(projects, record),
       status: "done" as const,
       priority: null,
+      type: record.ticketType ?? null,
       isPlan: record.isPlan ?? false,
       ...(record.epicNumber !== undefined ? { epicNumber: record.epicNumber } : {}),
       record,

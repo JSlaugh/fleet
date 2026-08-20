@@ -9,6 +9,7 @@ import {
   parseWorkerQuestions,
   priorityOf,
   shortModelName,
+  typeOf,
 } from "./index.ts";
 
 const minimalProject = { name: "alpha", repoPath: "/repo/alpha", githubRepo: "acme/alpha" };
@@ -42,6 +43,16 @@ describe("priorityOf", () => {
 
   it("returns null with no priority label", () => {
     expect(priorityOf(["fleet:ready"])).toBeNull();
+  });
+});
+
+describe("typeOf", () => {
+  it("returns the name part of a fleet:type:<name> label", () => {
+    expect(typeOf(["fleet:ready", "fleet:type:bugfix"])).toBe("bugfix");
+  });
+
+  it("returns null with no type label", () => {
+    expect(typeOf(["fleet:ready"])).toBeNull();
   });
 });
 

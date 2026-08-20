@@ -383,6 +383,16 @@ describe("toBoardTicket — epic linkage", () => {
     const ticket = toBoardTicket(project, fleetIssue({ labels: ["fleet:review", "fleet:plan"], body }));
     expect(ticket?.epicProgress).toEqual({ closed: 1, total: 2 });
   });
+
+  it("derives type from a fleet:type:<name> label", () => {
+    const ticket = toBoardTicket(project, fleetIssue({ labels: ["fleet:ready", "fleet:type:bugfix"] }));
+    expect(ticket?.type).toBe("bugfix");
+  });
+
+  it("leaves type null when there's no fleet:type label", () => {
+    const ticket = toBoardTicket(project, fleetIssue());
+    expect(ticket?.type).toBeNull();
+  });
 });
 
 describe("buildPrFeedback", () => {

@@ -22,6 +22,12 @@ export function typeLabel(name: string): string {
   return `${FLEET_TYPE_LABEL_PREFIX}${name}`;
 }
 
+/** The `<name>` part of a ticket's `fleet:type:<name>` label, or null if it has none. */
+export function typeOf(labels: string[]): string | null {
+  const label = labels.find((l) => l.startsWith(FLEET_TYPE_LABEL_PREFIX));
+  return label ? label.slice(FLEET_TYPE_LABEL_PREFIX.length) : null;
+}
+
 export const ALL_FLEET_LABELS: { name: string; color: string; description: string }[] = [
   { name: FLEET_LABELS.ready, color: "0e8a16", description: "Eligible for pickup by a fleet worker" },
   { name: FLEET_LABELS.inProgress, color: "fbca04", description: "A fleet worker session is on it" },

@@ -57,4 +57,14 @@ describe("synthesizeDoneTickets", () => {
     const tickets = synthesizeDoneTickets([closed(1, "2026-01-01T00:00:00.000Z", { project: "unknown" })], projects);
     expect(tickets[0]!.url).toBe("");
   });
+
+  it("carries the record's ticketType through as the board type", () => {
+    const tickets = synthesizeDoneTickets([closed(1, "2026-01-01T00:00:00.000Z", { ticketType: "bugfix" })], projects);
+    expect(tickets[0]!.type).toBe("bugfix");
+  });
+
+  it("falls back to null type for an archived record predating ticketType", () => {
+    const tickets = synthesizeDoneTickets([closed(1, "2026-01-01T00:00:00.000Z")], projects);
+    expect(tickets[0]!.type).toBeNull();
+  });
 });
