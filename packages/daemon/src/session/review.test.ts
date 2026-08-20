@@ -104,6 +104,24 @@ describe("prompts", () => {
     expect(prompt).toContain("origin/main");
   });
 
+  it("buildMachineReviewPrompt omits the checklist section for untyped tickets", () => {
+    const prompt = buildMachineReviewPrompt({ number: 7, title: "Fix the thing", body: "Details" }, "abc123 fix", "diff --git a b", "main");
+    expect(prompt).not.toContain("Additional review dimensions");
+  });
+
+  it("buildMachineReviewPrompt appends the type's checklist as explicit review dimensions when given one", () => {
+    const prompt = buildMachineReviewPrompt(
+      { number: 7, title: "Fix the thing", body: "Details" },
+      "abc123 fix",
+      "diff --git a b",
+      "main",
+      "- Accessibility: keyboard-reachable controls\n- Dark mode: uses theme tokens",
+    );
+    expect(prompt).toContain("## Additional review dimensions for this ticket's type");
+    expect(prompt).toContain("Accessibility: keyboard-reachable controls");
+    expect(prompt).toContain("Dark mode: uses theme tokens");
+  });
+
   it("buildMachineReviewFixPrompt names each finding with location, severity, and detail, and allows rebuttal", () => {
     const result: MachineReviewResult = {
       verdict: "findings",

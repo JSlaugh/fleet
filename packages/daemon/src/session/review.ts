@@ -94,19 +94,29 @@ export function truncateDiff(diff: string, max: number = DIFF_CHAR_LIMIT): strin
   return `${diff.slice(0, max)}\n[diff truncated at ${max} characters — use Read/Grep to inspect the rest]`;
 }
 
+/**
+ * `checklist` is the claimed ticket type's `review:` markdown from
+ * `fleet.yaml` (#158) — explicit dimensions layered on top of the generic
+ * pass, not a replacement for it. Undefined for untyped tickets or a type
+ * with no declared checklist, in which case the prompt is unchanged.
+ */
 export function buildMachineReviewPrompt(
   issue: { number: number; title: string; body: string },
   commits: string,
   diff: string,
   defaultBranch: string,
+  checklist?: string,
 ): string {
   return [
     `Review the branch diff for GitHub issue #${issue.number}: ${issue.title}`,
     issue.body || "(no description)",
     `## Commits\n\n${commits || "(none)"}`,
     `## Diff (against origin/${defaultBranch})\n\n\`\`\`diff\n${truncateDiff(diff)}\n\`\`\``,
+    checklist ? `## Additional review dimensions for this ticket's type\n\n${checklist}` : "",
     `Judge whether this diff correctly and completely resolves the issue. Finish with your structured verdict.`,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /** A findings verdict with an empty findings list is treated as a pass. */

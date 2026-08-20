@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildSpecSchema, contractForType, profileNames, selectSetupProfile, type BuildSpec } from "./buildspec.ts";
+import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, type BuildSpec } from "./buildspec.ts";
 
 describe("BuildSpecSchema", () => {
   it("accepts a bare step list", () => {
@@ -65,6 +65,31 @@ describe("BuildSpecSchema", () => {
     expect(() =>
       BuildSpecSchema.parse({
         setup: { default: { setup: [{ name: "install", run: "pnpm install" }], contract: "" } },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a profile written as { setup, review } alongside contract and bare-array profiles", () => {
+    const parsed = BuildSpecSchema.parse({
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        dashboard: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          review: "Check accessibility and dark-mode theming.",
+        },
+      },
+    });
+    const profiles = parsed.setup as Record<string, unknown>;
+    expect(profiles.dashboard).toEqual({
+      setup: [{ name: "install", run: "pnpm install" }],
+      review: "Check accessibility and dark-mode theming.",
+    });
+  });
+
+  it("rejects a { setup, review } profile with an empty review string", () => {
+    expect(() =>
+      BuildSpecSchema.parse({
+        setup: { default: { setup: [{ name: "install", run: "pnpm install" }], review: "" } },
       }),
     ).toThrow();
   });
@@ -187,6 +212,36 @@ describe("selectSetupProfile", () => {
       expect(selection.contract).toBeUndefined();
     });
   });
+
+  describe("type and review checklist", () => {
+    const reviewSpec: BuildSpec = {
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        dashboard: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          review: "Check accessibility and dark-mode theming.",
+        },
+        frontend: [{ name: "install", run: "pnpm install" }],
+      },
+    };
+
+    it("a matched type profile with review: reports both type and review", () => {
+      const selection = selectSetupProfile(reviewSpec, ["fleet:type:dashboard"]);
+      expect(selection.type).toBe("dashboard");
+      expect(selection.review).toBe("Check accessibility and dark-mode theming.");
+    });
+
+    it("a matched type profile with no review: reports the type but leaves review undefined", () => {
+      const selection = selectSetupProfile(reviewSpec, ["fleet:type:frontend"]);
+      expect(selection.type).toBe("frontend");
+      expect(selection.review).toBeUndefined();
+    });
+
+    it("no type label: review is undefined even if default declared one", () => {
+      const selection = selectSetupProfile(reviewSpec, ["fleet:ready"]);
+      expect(selection.review).toBeUndefined();
+    });
+  });
 });
 
 describe("contractForType", () => {
@@ -220,5 +275,39 @@ describe("contractForType", () => {
   it("is undefined for list-form specs regardless of type", () => {
     const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
     expect(contractForType(listSpec, "backend")).toBeUndefined();
+  });
+});
+
+describe("checklistForType", () => {
+  const reviewSpec: BuildSpec = {
+    setup: {
+      default: [{ name: "install", run: "pnpm install" }],
+      dashboard: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        review: "Check accessibility and dark-mode theming.",
+      },
+      frontend: [{ name: "install", run: "pnpm install" }],
+    },
+  };
+
+  it("returns a type's declared review checklist", () => {
+    expect(checklistForType(reviewSpec, "dashboard")).toBe("Check accessibility and dark-mode theming.");
+  });
+
+  it("is undefined for a type with no review key", () => {
+    expect(checklistForType(reviewSpec, "frontend")).toBeUndefined();
+  });
+
+  it("is undefined for an unknown type name", () => {
+    expect(checklistForType(reviewSpec, "mobile")).toBeUndefined();
+  });
+
+  it("is undefined when type is undefined", () => {
+    expect(checklistForType(reviewSpec, undefined)).toBeUndefined();
+  });
+
+  it("is undefined for list-form specs regardless of type", () => {
+    const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
+    expect(checklistForType(listSpec, "dashboard")).toBeUndefined();
   });
 });

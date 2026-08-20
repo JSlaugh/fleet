@@ -9,9 +9,10 @@ export type BuildSpecStep = z.infer<typeof BuildSpecStepSchema>;
 
 /**
  * A profile is either the original bare step array, or an object that can
- * also carry keys beyond setup — currently just `contract:`, the markdown
- * appended to the worker's system contract for tickets of this type. Later
- * per-type siblings (review checklist, model tier, verify commands) get their
+ * also carry keys beyond setup — `contract:`, the markdown appended to the
+ * worker's system contract for tickets of this type, and `review:`, the
+ * checklist markdown appended to the machine reviewer's prompt for tickets of
+ * this type. Later per-type siblings (model tier, verify commands) get their
  * own optional keys here without another schema migration.
  */
 const ProfileSchema = z.union([
@@ -19,6 +20,7 @@ const ProfileSchema = z.union([
   z.object({
     setup: z.array(BuildSpecStepSchema),
     contract: z.string().min(1).optional(),
+    review: z.string().min(1).optional(),
   }),
 ]);
 export type Profile = z.infer<typeof ProfileSchema>;
@@ -35,9 +37,9 @@ export const BuildSpecSchema = z.object({
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
 
 /** A profile's steps and (map-object form only) its declared extra keys. */
-function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string } {
+function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string; review?: string } {
   if (Array.isArray(profile)) return { steps: profile };
-  return { steps: profile.setup, contract: profile.contract };
+  return { steps: profile.setup, contract: profile.contract, review: profile.review };
 }
 
 /** Profile names a repo's `fleet.yaml` declares (map form only; `default` excluded since it never gets its own label). */
@@ -53,6 +55,8 @@ export interface SetupSelection {
   type?: string;
   /** The matched type's declared `contract:` markdown, if any — only ever set alongside `type`. */
   contract?: string;
+  /** The matched type's declared `review:` checklist markdown, if any — only ever set alongside `type`. */
+  review?: string;
   warning?: string;
 }
 
@@ -102,6 +106,7 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
     steps: matchedProfile ? matchedProfile.steps : defaultSteps,
     type: matched,
     contract: matchedProfile?.contract,
+    review: matchedProfile?.review,
     warning: warnings.length > 0 ? warnings.join("; ") : undefined,
   };
 }
@@ -117,4 +122,17 @@ export function contractForType(spec: BuildSpec, type: string | undefined): stri
   if (!type || Array.isArray(spec.setup)) return undefined;
   const profile = spec.setup[type];
   return profile ? normalizeProfile(profile).contract : undefined;
+}
+
+/**
+ * A type's declared `review:` checklist markdown, looked up directly by name
+ * — same re-derivation path as `contractForType`, used by the machine
+ * reviewer to append type-specific dimensions to its generic pass. Undefined
+ * for list-form specs, an unknown type name, or a profile that declares no
+ * `review:`.
+ */
+export function checklistForType(spec: BuildSpec, type: string | undefined): string | undefined {
+  if (!type || Array.isArray(spec.setup)) return undefined;
+  const profile = spec.setup[type];
+  return profile ? normalizeProfile(profile).review : undefined;
 }
