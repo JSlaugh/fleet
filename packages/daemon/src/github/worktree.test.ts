@@ -194,6 +194,25 @@ describe("createWorktree with fleet.yaml", () => {
   );
 
   it(
+    "continues past a failing step marked allowFailure, and still runs later steps",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: [
+          { name: "flaky", run: `"${process.execPath}" -e "process.exit(3)"`, allowFailure: true },
+          nodeStep("after", "require('fs').writeFileSync('after.txt','ok')"),
+        ],
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 208, worktreeRoot);
+
+      expect(existsSync(join(wt.path, "after.txt"))).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
     "fails the claim on a malformed fleet.yaml instead of silently falling back to setupCommand",
     async () => {
       const project = setupProject();

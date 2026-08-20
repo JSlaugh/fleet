@@ -7,8 +7,8 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit && pnpm --filter @fleet/dashboard typecheck",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
     "build": "turbo run build",
     "daemon": "pnpm install && turbo run start --filter=@fleet/daemon --",
     "daemon:supervised": "node scripts/fleet-supervisor.mjs",

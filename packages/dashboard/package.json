@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run --root ../.. packages/dashboard"
   },
   "dependencies": {
     "@fleet/shared": "workspace:*",

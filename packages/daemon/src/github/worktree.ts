@@ -47,7 +47,12 @@ export async function createWorktree(
       try {
         await runShell(step.run, path);
       } catch (err) {
-        throw new Error(`setup step "${step.name}" failed: ${err instanceof Error ? err.message : String(err)}`);
+        const message = `setup step "${step.name}" failed: ${err instanceof Error ? err.message : String(err)}`;
+        if (step.allowFailure) {
+          log("worktree", `${project.name}#${issueNumber}: ${message} (allowFailure: true, continuing)`);
+          continue;
+        }
+        throw new Error(message);
       }
     }
   } else if (project.setupCommand) {
