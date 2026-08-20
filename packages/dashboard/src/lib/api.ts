@@ -16,6 +16,7 @@ export interface BoardResponse {
   pausedUntil?: string;
   paused: boolean;
   pausedProjects: string[];
+  dormantProjects: string[];
   runningCount: number;
   budget?: BudgetStatus;
   workHoursReserve?: WorkHoursReserveStatus;
@@ -137,6 +138,17 @@ export async function setProjectPaused(project: string, paused: boolean): Promis
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ paused }),
+    }),
+  );
+}
+
+/** Toggles the board redesign's manual active/dormant pin (#152) — a display-only toggle, distinct from `setProjectPaused`. */
+export async function setProjectDormant(project: string, dormant: boolean): Promise<void> {
+  await json(
+    await fetch(`/api/projects/${encodeURIComponent(project)}/dormant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dormant }),
     }),
   );
 }

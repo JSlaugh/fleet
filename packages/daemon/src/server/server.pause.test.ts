@@ -50,19 +50,21 @@ describe("POST /api/daemon/pause", () => {
 });
 
 describe("GET /api/board", () => {
-  it("includes paused, pausedUntil, pausedProjects, and runningCount", async () => {
+  it("includes paused, pausedUntil, pausedProjects, dormantProjects, and runningCount", async () => {
     const { app } = makeApp();
 
     const board = (await (await app.request("/api/board")).json()) as {
       paused: boolean;
       pausedUntil?: string;
       pausedProjects: string[];
+      dormantProjects: string[];
       runningCount: number;
     };
 
     expect(board.paused).toBe(false);
     expect(board.pausedUntil).toBeUndefined();
     expect(board.pausedProjects).toEqual([]);
+    expect(board.dormantProjects).toEqual([]);
     expect(board.runningCount).toBe(0);
   });
 });
@@ -106,6 +108,50 @@ describe("POST /api/projects/:name/pause", () => {
     const { app } = makeApp();
 
     const res = await postJson(app, "/api/projects/nope/pause", { paused: true });
+
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /api/projects/:name/dormant", () => {
+  const beta = makeProject({ name: "beta", repoPath: "/repo/beta", githubRepo: "acme/beta" });
+
+  it("pins one project dormant and is reflected on GET /api/board without affecting the other", async () => {
+    const { app, state } = makeApp([project, beta]);
+
+    const res = await postJson(app, "/api/projects/alpha/dormant", { dormant: true });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, dormant: true });
+    expect(state.isProjectDormant("alpha")).toBe(true);
+    expect(state.isProjectDormant("beta")).toBe(false);
+
+    const board = (await (await app.request("/api/board")).json()) as { dormantProjects: string[] };
+    expect(board.dormantProjects).toEqual(["alpha"]);
+  });
+
+  it("pins a dormant project back to active", async () => {
+    const { app, state } = makeApp();
+    state.setProjectDormant("alpha", true);
+
+    const res = await postJson(app, "/api/projects/alpha/dormant", { dormant: false });
+
+    expect(res.status).toBe(200);
+    expect(state.isProjectDormant("alpha")).toBe(false);
+  });
+
+  it("rejects a non-boolean dormant value", async () => {
+    const { app } = makeApp();
+
+    const res = await postJson(app, "/api/projects/alpha/dormant", { dormant: "yes" });
+
+    expect(res.status).toBe(400);
+  });
+
+  it("404s for an unknown project", async () => {
+    const { app } = makeApp();
+
+    const res = await postJson(app, "/api/projects/nope/dormant", { dormant: true });
 
     expect(res.status).toBe(404);
   });

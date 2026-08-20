@@ -11,7 +11,7 @@ import type {
   WorkHoursReserveStatus,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { cleanupFinished, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
+import { cleanupFinished, dormantProjectNames, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
 import { budgetStatus } from "./budget.ts";
 import { cycleProject } from "./claim.ts";
 import type { LoopContext, SessionBase } from "./context.ts";
@@ -23,6 +23,7 @@ import { type HistoryQuery, queryHistory } from "../store/history.ts";
 import { logError } from "../log.ts";
 import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
 import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseState } from "./pause.ts";
+import { setProjectDormant } from "./pin.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
 import { workHoursReserveStatus } from "./workHoursReserve.ts";
@@ -141,6 +142,14 @@ export class FleetLoop {
 
   getPausedProjects(): string[] {
     return pausedProjectNames(this.ctx);
+  }
+
+  setProjectDormant(projectName: string, dormant: boolean): void {
+    setProjectDormant(this.ctx, projectName, dormant);
+  }
+
+  getDormantProjects(): string[] {
+    return dormantProjectNames(this.ctx);
   }
 
   getBudgetStatus(): BudgetStatus | undefined {

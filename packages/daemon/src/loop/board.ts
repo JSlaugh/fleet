@@ -63,6 +63,16 @@ export function pausedProjectNames(ctx: LoopContext): string[] {
 }
 
 /**
+ * Operator-pinned-dormant project names, for the board payload — filtered to
+ * projects still in config, same as `pausedProjectNames`. Purely a dashboard
+ * display toggle (#152): dormant projects still claim/resume/poll as normal.
+ */
+export function dormantProjectNames(ctx: LoopContext): string[] {
+  const configured = new Set(ctx.config.projects.map((p) => p.name));
+  return ctx.state.getDormantProjects().filter((name) => configured.has(name));
+}
+
+/**
  * Retires finished tickets: the worktree, local branch and remote branch go
  * away, and the record moves from live state into history so the Done column
  * can still show it. Most tickets need both their PR and issue closed; a plan

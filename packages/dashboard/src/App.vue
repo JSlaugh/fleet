@@ -16,13 +16,15 @@ import {
   resolveApproval,
   restartDaemon,
   setDaemonPaused,
+  setProjectDormant,
   setProjectPaused,
   setTicketPriority,
 } from "./lib/api.ts";
-import { groupByEpic } from "./lib/board.ts";
+import { groupByEpic, projectRollup } from "./lib/board.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
 import DigestPanel from "./components/DigestPanel.vue";
+import DormantProjectRow from "./components/DormantProjectRow.vue";
 import HistoryView from "./components/HistoryView.vue";
 import TicketCard from "./components/TicketCard.vue";
 import TicketDetail from "./components/TicketDetail.vue";
@@ -35,12 +37,14 @@ const view = ref<"board" | "history">("board");
 const pausedUntil = ref<string>();
 const paused = ref(false);
 const pausedProjects = ref<string[]>([]);
+const dormantProjects = ref<string[]>([]);
 const runningCount = ref(0);
 const budget = ref<BudgetStatus>();
 const workHoursReserve = ref<WorkHoursReserveStatus>();
 const pauseToggling = ref(false);
 const restartingDaemon = ref(false);
 const projectPauseToggling = ref<string>();
+const projectPinToggling = ref<string>();
 const error = ref<string>();
 const approvalsError = ref<string>();
 const connected = ref(false);
@@ -65,6 +69,7 @@ async function load() {
     pausedUntil.value = board.pausedUntil;
     paused.value = board.paused;
     pausedProjects.value = board.pausedProjects;
+    dormantProjects.value = board.dormantProjects;
     runningCount.value = board.runningCount;
     budget.value = board.budget;
     workHoursReserve.value = board.workHoursReserve;
@@ -86,9 +91,14 @@ const totalCost = computed(() => {
   return formatCost(sum);
 });
 
-const visibleTickets = computed(() =>
-  projectFilter.value ? tickets.value.filter((t) => t.project === projectFilter.value) : tickets.value,
-);
+// A project filter is an explicit "look at this one" — it bypasses the dormant
+// collapse below so a pinned-dormant project can still be inspected directly.
+// Unfiltered ("All"), dormant projects' tickets are pulled out of the shared
+// board entirely and surface only via their rollup row instead.
+const visibleTickets = computed(() => {
+  if (projectFilter.value) return tickets.value.filter((t) => t.project === projectFilter.value);
+  return tickets.value.filter((t) => !dormantProjects.value.includes(t.project));
+});
 
 const byStatus = computed(() => {
   const groups = new Map<BoardStatus, BoardTicket[]>(BOARD_COLUMNS.map((c) => [c.status, []]));
@@ -97,6 +107,14 @@ const byStatus = computed(() => {
   }
   for (const [status, list] of groups) groups.set(status, groupByEpic(list));
   return groups;
+});
+
+/** Rollup rows for dormant projects — hidden once a project filter narrows the view to one project. */
+const dormantRollups = computed(() => {
+  if (projectFilter.value) return [];
+  return dormantProjects.value.map((project) =>
+    projectRollup(project, tickets.value, approvals.value.filter((a) => a.project === project).length),
+  );
 });
 
 async function loadApprovals() {
@@ -188,6 +206,18 @@ async function toggleProjectPaused(project: string) {
   }
 }
 
+async function toggleProjectDormant(project: string) {
+  projectPinToggling.value = project;
+  try {
+    await setProjectDormant(project, !dormantProjects.value.includes(project));
+    await load();
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err);
+  } finally {
+    projectPinToggling.value = undefined;
+  }
+}
+
 const budgetClass = computed(() => {
   switch (budget.value?.gate) {
     case "blocked":
@@ -242,7 +272,7 @@ onUnmounted(() => {
           v-for="project in projects"
           :key="project"
           class="flex items-center overflow-hidden rounded-full"
-          :class="pausedProjects.includes(project) ? 'bg-amber-50 dark:bg-amber-950' : ''"
+          :class="pausedProjects.includes(project) ? 'bg-amber-50 dark:bg-amber-950' : dormantProjects.includes(project) ? 'bg-neutral-100 dark:bg-neutral-900' : ''"
         >
           <button
             type="button"
@@ -252,11 +282,13 @@ onUnmounted(() => {
                 ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
                 : pausedProjects.includes(project)
                   ? 'text-amber-800 dark:text-amber-200'
-                  : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                  : dormantProjects.includes(project)
+                    ? 'text-neutral-400 dark:text-neutral-500'
+                    : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
             "
             @click="projectFilter = project"
           >
-            {{ project }}<template v-if="pausedProjects.includes(project)"> · paused</template>
+            {{ project }}<template v-if="pausedProjects.includes(project)"> · paused</template><template v-if="dormantProjects.includes(project)"> · dormant</template>
           </button>
           <button
             type="button"
@@ -266,6 +298,15 @@ onUnmounted(() => {
             @click="toggleProjectPaused(project)"
           >
             {{ pausedProjects.includes(project) ? "▶" : "⏸" }}
+          </button>
+          <button
+            type="button"
+            class="px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-200 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            :disabled="projectPinToggling === project"
+            :title="dormantProjects.includes(project) ? `Pin ${project} active` : `Pin ${project} dormant`"
+            @click="toggleProjectDormant(project)"
+          >
+            {{ dormantProjects.includes(project) ? "○" : "●" }}
           </button>
         </span>
       </nav>
@@ -352,24 +393,38 @@ onUnmounted(() => {
     </div>
 
     <div class="flex min-h-0 flex-1">
-      <main v-if="view === 'board'" class="flex min-w-0 flex-1 gap-3 overflow-x-auto p-4" aria-label="Ticket board">
-        <BoardColumn
-          v-for="column in BOARD_COLUMNS"
-          :key="column.status"
-          :title="column.title"
-          :count="byStatus.get(column.status)?.length ?? 0"
-          :accent="ACCENTS[column.status]"
-        >
-          <TicketCard
-            v-for="ticket in byStatus.get(column.status)"
-            :key="`${ticket.project}#${ticket.issueNumber}`"
-            :ticket="ticket"
-            :selected="isSelected(ticket)"
-            :pending-approvals="approvalCounts.get(`${ticket.project}#${ticket.issueNumber}`) ?? 0"
-            @select="selected = isSelected(ticket) ? undefined : ticket"
-            @set-priority="(p) => onSetPriority(ticket, p)"
+      <main v-if="view === 'board'" class="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-4" aria-label="Ticket board">
+        <div v-if="dormantRollups.length > 0" class="flex shrink-0 flex-col gap-1.5" aria-label="Dormant projects">
+          <DormantProjectRow
+            v-for="rollup in dormantRollups"
+            :key="rollup.project"
+            :rollup="rollup"
+            :paused="pausedProjects.includes(rollup.project)"
+            :pause-toggling="projectPauseToggling === rollup.project"
+            :pin-toggling="projectPinToggling === rollup.project"
+            @toggle-pause="toggleProjectPaused(rollup.project)"
+            @activate="toggleProjectDormant(rollup.project)"
           />
-        </BoardColumn>
+        </div>
+        <div class="flex min-h-0 flex-1 gap-3 overflow-x-auto">
+          <BoardColumn
+            v-for="column in BOARD_COLUMNS"
+            :key="column.status"
+            :title="column.title"
+            :count="byStatus.get(column.status)?.length ?? 0"
+            :accent="ACCENTS[column.status]"
+          >
+            <TicketCard
+              v-for="ticket in byStatus.get(column.status)"
+              :key="`${ticket.project}#${ticket.issueNumber}`"
+              :ticket="ticket"
+              :selected="isSelected(ticket)"
+              :pending-approvals="approvalCounts.get(`${ticket.project}#${ticket.issueNumber}`) ?? 0"
+              @select="selected = isSelected(ticket) ? undefined : ticket"
+              @set-priority="(p) => onSetPriority(ticket, p)"
+            />
+          </BoardColumn>
+        </div>
       </main>
       <HistoryView v-else :project-filter="projectFilter" @select="selected = $event" />
       <TicketDetail v-if="selected" :ticket="selected" @close="selected = undefined" />
