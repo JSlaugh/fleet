@@ -5,6 +5,7 @@ import type {
   HistoryResponse,
   PendingApproval,
   TicketDetail,
+  TicketDiff,
   TicketReport,
   TicketTranscript,
   WorkHoursReserveStatus,
@@ -70,6 +71,11 @@ export function fetchTicketTranscript(project: string, issueNumber: number): Pro
   return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/transcript`).then((res) =>
     json<TicketTranscript>(res),
   );
+}
+
+/** 404s when the ticket has no PR yet — callers treat that as "not available" rather than an error. */
+export function fetchTicketDiff(project: string, issueNumber: number): Promise<TicketDiff> {
+  return fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/diff`).then((res) => json<TicketDiff>(res));
 }
 
 export async function setTicketPriority(project: string, issueNumber: number, priority: string | null): Promise<void> {

@@ -11,17 +11,21 @@ import {
   PRIORITY_LABELS,
   type JournalEntry,
   type TicketDetail,
+  type TicketDiff,
   type TicketReport,
   type TicketTranscript,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { bodyWithDependsOn, createIssue, setPriority } from "../github/github.ts";
+import { bodyWithDependsOn, createIssue, getPrDiff, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
 import { isReviewSessionEntry, readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
 import type { StateStore } from "../store/state.ts";
 import { readTicketTranscript } from "../store/transcripts.ts";
+
+/** Diff preview cap (#153): generous enough for a real PR, small enough to keep the dashboard responsive — past this the client is pointed at `prUrl` instead. */
+const MAX_DIFF_CHARS = 200_000;
 
 /**
  * `ready: false` files a plain issue carrying only the priority label, so a
@@ -187,6 +191,35 @@ export function createApp(opts: {
     const files = readTicketTranscript(dataDir, projectName, issueNumber);
     if (!files) return c.json({ error: "no archived transcript for this ticket" }, 404);
     return c.json({ files } satisfies TicketTranscript);
+  });
+
+  // Read-only triage preview (#153): the diff itself isn't cached anywhere,
+  // so this shells `gh pr diff`/`gh pr view` fresh on every request — same
+  // data the machine reviewer reads (session/review.ts), but sourced from the
+  // PR rather than a worktree that may already be gone for a review-stage ticket.
+  app.get("/api/tickets/:project/:issue/diff", async (c) => {
+    const projectName = c.req.param("project");
+    const issueNumber = Number(c.req.param("issue"));
+    const project = loop.getProject(projectName);
+    if (!project || !Number.isInteger(issueNumber)) {
+      return c.json({ error: "unknown project or issue" }, 404);
+    }
+    const record = state.get(projectName, issueNumber) ?? loop.getHistoryRecord(projectName, issueNumber);
+    if (!record?.prUrl) return c.json({ error: "no PR for this ticket" }, 404);
+    try {
+      const { diff, files } = await getPrDiff(project, record.prUrl);
+      const truncated = diff.length > MAX_DIFF_CHARS;
+      const body: TicketDiff = {
+        prUrl: record.prUrl,
+        files,
+        diff: truncated ? diff.slice(0, MAX_DIFF_CHARS) : diff,
+        truncated,
+      };
+      return c.json(body);
+    } catch (err) {
+      logError("server", `fetching PR diff for ${projectName}#${issueNumber}`, err);
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
   });
 
   app.post("/api/tickets/:project/:issue/priority", async (c) => {

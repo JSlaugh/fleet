@@ -10,6 +10,7 @@ import {
   typeLabel,
   type BoardTicket,
   type ProjectConfig,
+  type TicketDiffFile,
 } from "@fleet/shared";
 import { readBuildSpec } from "./buildspec.ts";
 import { run, runJson } from "./exec.ts";
@@ -605,6 +606,25 @@ export async function getPrState(project: ProjectConfig, prUrl: string): Promise
     "--json", "state",
   ]);
   return state;
+}
+
+interface GhPrFilesJson {
+  files: TicketDiffFile[];
+}
+
+/**
+ * Unified diff + per-file stat list for the in-board triage diff preview
+ * (#153). Sourced from the PR itself via `gh pr diff`/`gh pr view --json
+ * files` rather than a local worktree `git diff` (contrast
+ * `collectBranchDiff`, worktree.ts) — a `fleet:review` ticket's worktree may
+ * already be gone, but the PR always has this data.
+ */
+export async function getPrDiff(project: ProjectConfig, prUrl: string): Promise<{ diff: string; files: TicketDiffFile[] }> {
+  const [{ stdout: diff }, { files }] = await Promise.all([
+    run("gh", ["pr", "diff", prUrl, "--repo", project.githubRepo]),
+    runJson<GhPrFilesJson>("gh", ["pr", "view", prUrl, "--repo", project.githubRepo, "--json", "files"]),
+  ]);
+  return { diff, files };
 }
 
 export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
