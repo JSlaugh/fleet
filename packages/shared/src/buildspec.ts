@@ -9,13 +9,17 @@ export const BuildSpecStepSchema = z.object({
 });
 export type BuildSpecStep = z.infer<typeof BuildSpecStepSchema>;
 
+/** Same vocabulary as the `fleet:elevate`/`fleet:light` labels, plus `"default"` for "no override — fall through to the project's `model`". */
+export const TierSchema = z.enum(["light", "default", "elevated"]);
+export type Tier = z.infer<typeof TierSchema>;
+
 /**
  * A profile is either the original bare step array, or an object that can
  * also carry keys beyond setup — `contract:`, the markdown appended to the
- * worker's system contract for tickets of this type, and `review:`, the
+ * worker's system contract for tickets of this type, `review:`, the
  * checklist markdown appended to the machine reviewer's prompt for tickets of
- * this type. Later per-type siblings (model tier, verify commands) get their
- * own optional keys here without another schema migration.
+ * this type, and `tier:`, this type's default model tier (verify commands
+ * etc. get their own optional keys here without another schema migration).
  */
 const ProfileSchema = z.union([
   z.array(BuildSpecStepSchema),
@@ -23,6 +27,7 @@ const ProfileSchema = z.union([
     setup: z.array(BuildSpecStepSchema),
     contract: z.string().min(1).optional(),
     review: z.string().min(1).optional(),
+    tier: TierSchema.optional(),
   }),
 ]);
 export type Profile = z.infer<typeof ProfileSchema>;
@@ -39,9 +44,9 @@ export const BuildSpecSchema = z.object({
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
 
 /** A profile's steps and (map-object form only) its declared extra keys. */
-function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string; review?: string } {
+function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string; review?: string; tier?: Tier } {
   if (Array.isArray(profile)) return { steps: profile };
-  return { steps: profile.setup, contract: profile.contract, review: profile.review };
+  return { steps: profile.setup, contract: profile.contract, review: profile.review, tier: profile.tier };
 }
 
 /** Profile names a repo's `fleet.yaml` declares (map form only; `default` excluded since it never gets its own label). */
@@ -59,6 +64,8 @@ export interface SetupSelection {
   contract?: string;
   /** The matched type's declared `review:` checklist markdown, if any — only ever set alongside `type`. */
   review?: string;
+  /** The matched type's declared `tier:`, if any — only ever set alongside `type`; `"default"` and unset are equivalent (no override). */
+  tier?: Tier;
   warning?: string;
 }
 
@@ -109,6 +116,7 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
     type: matched,
     contract: matchedProfile?.contract,
     review: matchedProfile?.review,
+    tier: matchedProfile?.tier,
     warning: warnings.length > 0 ? warnings.join("; ") : undefined,
   };
 }
@@ -137,4 +145,19 @@ export function checklistForType(spec: BuildSpec, type: string | undefined): str
   if (!type || Array.isArray(spec.setup)) return undefined;
   const profile = spec.setup[type];
   return profile ? normalizeProfile(profile).review : undefined;
+}
+
+/**
+ * A type's declared `tier:`, looked up directly by name — same
+ * re-derivation path as `contractForType`/`checklistForType`, used to
+ * re-resolve a resumed session's model tier from just the type name
+ * `TicketRecord.ticketType` already carries. Undefined for list-form specs,
+ * an unknown type name, or a profile that declares no `tier:` (including
+ * an explicit `tier: default`, which is the same as unset).
+ */
+export function tierForType(spec: BuildSpec, type: string | undefined): Tier | undefined {
+  if (!type || Array.isArray(spec.setup)) return undefined;
+  const profile = spec.setup[type];
+  const tier = profile ? normalizeProfile(profile).tier : undefined;
+  return tier === "default" ? undefined : tier;
 }

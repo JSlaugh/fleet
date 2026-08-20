@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, type BuildSpec } from "./buildspec.ts";
+import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, tierForType, type BuildSpec } from "./buildspec.ts";
 
 describe("BuildSpecSchema", () => {
   it("accepts a bare step list", () => {
@@ -103,6 +103,41 @@ describe("BuildSpecSchema", () => {
     expect(() =>
       BuildSpecSchema.parse({
         setup: { default: { setup: [{ name: "install", run: "pnpm install" }], review: "" } },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a profile written as { setup, tier } alongside contract, review, and bare-array profiles", () => {
+    const parsed = BuildSpecSchema.parse({
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        docs: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          tier: "light",
+        },
+      },
+    });
+    const profiles = parsed.setup as Record<string, unknown>;
+    expect(profiles.docs).toEqual({
+      setup: [{ name: "install", run: "pnpm install" }],
+      tier: "light",
+    });
+  });
+
+  it("accepts all three tier values", () => {
+    for (const tier of ["light", "default", "elevated"]) {
+      expect(() =>
+        BuildSpecSchema.parse({
+          setup: { default: { setup: [{ name: "install", run: "pnpm install" }], tier } },
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects a tier value outside the vocabulary", () => {
+    expect(() =>
+      BuildSpecSchema.parse({
+        setup: { default: { setup: [{ name: "install", run: "pnpm install" }], tier: "medium" } },
       }),
     ).toThrow();
   });
@@ -255,6 +290,36 @@ describe("selectSetupProfile", () => {
       expect(selection.review).toBeUndefined();
     });
   });
+
+  describe("type and tier", () => {
+    const tierSpec: BuildSpec = {
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        docs: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          tier: "light",
+        },
+        frontend: [{ name: "install", run: "pnpm install" }],
+      },
+    };
+
+    it("a matched type profile with tier: reports both type and tier", () => {
+      const selection = selectSetupProfile(tierSpec, ["fleet:type:docs"]);
+      expect(selection.type).toBe("docs");
+      expect(selection.tier).toBe("light");
+    });
+
+    it("a matched type profile with no tier: reports the type but leaves tier undefined", () => {
+      const selection = selectSetupProfile(tierSpec, ["fleet:type:frontend"]);
+      expect(selection.type).toBe("frontend");
+      expect(selection.tier).toBeUndefined();
+    });
+
+    it("no type label: tier is undefined even if default declared one", () => {
+      const selection = selectSetupProfile(tierSpec, ["fleet:ready"]);
+      expect(selection.tier).toBeUndefined();
+    });
+  });
 });
 
 describe("contractForType", () => {
@@ -322,5 +387,52 @@ describe("checklistForType", () => {
   it("is undefined for list-form specs regardless of type", () => {
     const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
     expect(checklistForType(listSpec, "dashboard")).toBeUndefined();
+  });
+});
+
+describe("tierForType", () => {
+  const tierSpec: BuildSpec = {
+    setup: {
+      default: [{ name: "install", run: "pnpm install" }],
+      docs: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        tier: "light",
+      },
+      urgent: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        tier: "elevated",
+      },
+      explicit: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        tier: "default",
+      },
+      frontend: [{ name: "install", run: "pnpm install" }],
+    },
+  };
+
+  it("returns a type's declared tier", () => {
+    expect(tierForType(tierSpec, "docs")).toBe("light");
+    expect(tierForType(tierSpec, "urgent")).toBe("elevated");
+  });
+
+  it("treats an explicit tier: default the same as unset", () => {
+    expect(tierForType(tierSpec, "explicit")).toBeUndefined();
+  });
+
+  it("is undefined for a type with no tier key", () => {
+    expect(tierForType(tierSpec, "frontend")).toBeUndefined();
+  });
+
+  it("is undefined for an unknown type name", () => {
+    expect(tierForType(tierSpec, "mobile")).toBeUndefined();
+  });
+
+  it("is undefined when type is undefined", () => {
+    expect(tierForType(tierSpec, undefined)).toBeUndefined();
+  });
+
+  it("is undefined for list-form specs regardless of type", () => {
+    const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
+    expect(tierForType(listSpec, "docs")).toBeUndefined();
   });
 });
