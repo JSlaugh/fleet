@@ -10,7 +10,7 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { findLimitText, parseLimitReset, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
+import { checkPlanLimit, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -258,10 +258,10 @@ async function runReviewSession<T>(opts: {
         outcome.costUsd = message.total_cost_usd;
         outcome.modelUsage = summarizeModelUsage(message.modelUsage);
       }
-      const limitText = findLimitText(message);
-      if (limitText) {
+      const planLimit = checkPlanLimit(message);
+      if (planLimit) {
         outcome.errorSubtype = "plan_limit";
-        outcome.limitResetAt = parseLimitReset(limitText)?.toISOString();
+        outcome.limitResetAt = planLimit.limitResetAt?.toISOString();
         return outcome;
       }
       if (message.type === "result") {
