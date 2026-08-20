@@ -86,6 +86,23 @@ describe("summarize", () => {
     expect((result.thinking as string).startsWith("a".repeat(700))).toBe(true);
   });
 
+  it("omits thinking when the API returns a signature-only block with no text — the default 'omitted' thinking display on current models, not a capture bug", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "", signature: "Erm3RQBIw..." },
+          { type: "text", text: "here's my plan" },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("thinking");
+    expect(result.text).toBe("here's my plan");
+  });
+
   it("omits thinking when the assistant message has no thinking blocks", () => {
     const message = {
       type: "assistant",
@@ -109,15 +126,67 @@ describe("summarize", () => {
     expect(result).not.toHaveProperty("toolCalls");
   });
 
-  it("captures plain-string user content as text — operator/user steering echoed back through the stream", () => {
+  it("captures plain-string user content as text when it matches a pending send — genuine operator/daemon steering", () => {
     const message = {
       type: "user",
       message: { role: "user", content: "please also update the README" },
     } as unknown as SDKMessage;
+    const pendingSends = ["please also update the README"];
+
+    const result = summarize(message, { pendingSends });
+
+    expect(result.text).toBe("please also update the README");
+    expect(result).not.toHaveProperty("injectedText");
+    expect(pendingSends).toEqual([]);
+  });
+
+  it("marks plain-string user content as injectedText when it doesn't match a pending send — SDK-injected content like Skill loads", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "Base directory for this skill: /some/path" },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message, { pendingSends: ["please also update the README"] });
+
+    expect(result.injectedText).toBe(true);
+    expect(result).not.toHaveProperty("text");
+  });
+
+  it("marks plain-string user content as injectedText when no pendingSends were tracked at all", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "[structured-output-enforce] You MUST call the StructuredOutput tool" },
+    } as unknown as SDKMessage;
 
     const result = summarize(message);
 
-    expect(result.text).toBe("please also update the README");
+    expect(result.injectedText).toBe(true);
+    expect(result).not.toHaveProperty("text");
+  });
+
+  it("consumes only the matching head of pendingSends, in order, leaving later pending sends untouched", () => {
+    const pendingSends = ["first reply", "second reply"];
+
+    const first = summarize(
+      { type: "user", message: { role: "user", content: "first reply" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(first.text).toBe("first reply");
+    expect(pendingSends).toEqual(["second reply"]);
+
+    const injected = summarize(
+      { type: "user", message: { role: "user", content: "some unrelated injected string" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(injected.injectedText).toBe(true);
+    expect(pendingSends).toEqual(["second reply"]);
+
+    const second = summarize(
+      { type: "user", message: { role: "user", content: "second reply" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(second.text).toBe("second reply");
+    expect(pendingSends).toEqual([]);
   });
 
   it("omits text for an empty or whitespace-only string user message", () => {
@@ -129,6 +198,7 @@ describe("summarize", () => {
     const result = summarize(message);
 
     expect(result).not.toHaveProperty("text");
+    expect(result).not.toHaveProperty("injectedText");
   });
 
   it("captures text blocks within an array-content user message", () => {
