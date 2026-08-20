@@ -1,4 +1,4 @@
-import { BOARD_COLUMNS, type BoardStatus, type BoardTicket } from "@fleet/shared";
+import { BOARD_COLUMNS, type BoardStatus, type BoardTicket, type PendingApproval } from "@fleet/shared";
 
 /**
  * Clusters tickets sharing an epic together, preserving each cluster's
@@ -46,4 +46,87 @@ export function projectRollup(project: string, tickets: BoardTicket[], pendingAp
     if (ticket.record?.status === "failed") needsAttention = true;
   }
   return { project, counts, needsAttention };
+}
+
+/** One row in the cross-project "needs me" queue (#161) — see `buildAttentionQueue`. */
+export type AttentionKind = "approval" | "needs-input" | "failed" | "review";
+
+export interface AttentionItem {
+  kind: AttentionKind;
+  project: string;
+  issueNumber: number;
+  title: string;
+  detail: string;
+  /** GitHub issue URL, for the row's external "view issue" link. */
+  url: string;
+  /** GitHub PR URL, present only on a `review` item that has an open PR. */
+  prUrl?: string;
+  /** Set only on `approval` items — the id `resolveApproval`/the approvals panel key on. */
+  approvalId?: string;
+  since: string;
+  waitMs: number;
+}
+
+/**
+ * Builds the cross-project attention queue: parked approvals, `needs-input`
+ * questions, failed tickets (still labeled `fleet:needs-input` on GitHub, but
+ * distinguished here by `record.status === "failed"` — see `TicketCard`'s own
+ * "failed" badge for the same distinction), and `review`-column tickets
+ * awaiting a human (a PR to review, or a plan epic to curate). Deliberately
+ * takes the *unfiltered* ticket/approval lists — dormant projects' items
+ * belong in this queue too (#152 collapses them out of the board columns, not
+ * out of what needs a human).
+ *
+ * Sourced from `record.lastActivityAt`, the same "when did this happen"
+ * timestamp `computeDigest` keys its blocked/failed/review buckets off of.
+ * It's stamped when the ticket's last work turn *started* (`markWorking`),
+ * not when it actually entered the waiting state, so a long-running turn
+ * inflates the reported wait slightly — the closest available proxy without
+ * a daemon-side timestamp dedicated to state entry.
+ */
+export function buildAttentionQueue(tickets: BoardTicket[], approvals: PendingApproval[], now: number): AttentionItem[] {
+  const byTicket = new Map(tickets.map((t) => [`${t.project}#${t.issueNumber}`, t]));
+  const items: AttentionItem[] = [];
+
+  for (const approval of approvals) {
+    const ticket = byTicket.get(`${approval.project}#${approval.issueNumber}`);
+    items.push({
+      kind: "approval",
+      project: approval.project,
+      issueNumber: approval.issueNumber,
+      title: ticket?.title ?? `${approval.project}#${approval.issueNumber}`,
+      detail: approval.kind === "question" ? "Question from the worker" : `Approval needed: ${approval.toolName}`,
+      url: ticket?.url ?? "",
+      approvalId: approval.id,
+      since: approval.createdAt,
+      waitMs: now - Date.parse(approval.createdAt),
+    });
+  }
+
+  for (const ticket of tickets) {
+    if (ticket.status !== "needs-input" && ticket.status !== "review") continue;
+    const since = ticket.record?.lastActivityAt;
+    if (!since) continue;
+    const failed = ticket.record?.status === "failed";
+    const prUrl = ticket.status === "review" ? ticket.record?.prUrl : undefined;
+    const kind: AttentionKind = ticket.status === "review" ? "review" : failed ? "failed" : "needs-input";
+    items.push({
+      kind,
+      project: ticket.project,
+      issueNumber: ticket.issueNumber,
+      title: ticket.title,
+      detail:
+        kind === "review"
+          ? prUrl
+            ? "PR awaiting review"
+            : "Plan awaiting curation"
+          : (ticket.record?.lastSummary ?? (kind === "failed" ? "Run failed" : "Needs input")),
+      url: ticket.url,
+      prUrl,
+      since,
+      waitMs: now - Date.parse(since),
+    });
+  }
+
+  return items.sort((a, b) => b.waitMs - a.waitMs);
 }
