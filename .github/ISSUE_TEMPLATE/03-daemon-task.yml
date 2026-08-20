@@ -1,29 +1,29 @@
-name: Daemon / CLI task
-description: A fleet task scoped to the daemon, MCP server, or shared packages. Files as fleet:ready + fleet:type:daemon.
+name: Fleet task: Daemon
+description: A fleet task scoped to the "daemon" fleet.yaml setup profile. Files as fleet:ready + fleet:type:daemon.
 labels: ["fleet:ready", "fleet:type:daemon"]
 body:
   - type: markdown
     attributes:
       value: |
-        For work in `packages/daemon`, `packages/mcp`, or `packages/shared`.
-        The worker sees only this issue — name the modules involved (e.g. `loop/supervise.ts`, `session/worker.ts`) if you know them.
+        This ticket runs fleet.yaml's "daemon" setup profile. The worker that picks this up sees only this issue (body plus comments) — it has no other context.
+        Name exact file paths wherever you know them.
 
         - **Priority** is a label, not a field: add `fleet:p1` / `fleet:p2` / `fleet:p3` after filing (optional).
-        - **Dependencies:** put a line `Depends-on: #12, #14` anywhere below.
+        - **Dependencies:** put a line `Depends-on: #12, #14` anywhere below and fleet won't claim this until those issues close.
         - **Timeout:** put a line `Timeout: 60m` (or `2h`) anywhere below to override the default per-turn timeout for this ticket, up to a 240m max.
         - Not ready to queue it yet? Remove the `fleet:ready` label after filing.
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What's wrong or missing, and why it matters. Name the daemon modules involved if you know them.
+      description: What's wrong or missing, and why it matters. Name the files involved if you know them.
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: What "done" looks like, as a concrete, checkable list. Note any config-shape changes (schema + example + test move together).
+      description: What "done" looks like, as a concrete, checkable list.
       placeholder: |
         - [ ] ...
     validations:
@@ -36,6 +36,5 @@ body:
       placeholder: |
         - `pnpm typecheck`
         - `pnpm test`
-        - `pnpm daemon -- --dry-run --once` for behavior unit tests don't cover end-to-end.
     validations:
       required: true

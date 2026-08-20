@@ -1,9 +1,9 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeProject } from "./test-support.ts";
-import { mergeMcpConfig, syncTemplates } from "./sync-templates.ts";
+import { issueFormFiles, mergeMcpConfig, syncTemplates } from "./sync-templates.ts";
 
 const FLEET_ENTRY = {
   command: "pnpm",
@@ -70,7 +70,7 @@ describe("syncTemplates", () => {
     }
   });
 
-  it("stamps the skill and both issue forms into a project's working tree", async () => {
+  it("stamps the skill and the generic + epic issue forms into a project with no fleet.yaml", async () => {
     const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
     repoDirs.push(repoPath);
 
@@ -79,14 +79,73 @@ describe("syncTemplates", () => {
     expect(existsSync(join(repoPath, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
-    expect(readdirSync(issueTemplateDir).sort()).toEqual(["fleet-plan.yml", "fleet-task.yml"]);
+    expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
 
-    const taskForm = readFileSync(join(issueTemplateDir, "fleet-task.yml"), "utf8");
+    const taskForm = readFileSync(join(issueTemplateDir, "01-fleet-task.yml"), "utf8");
     expect(taskForm).toContain("name: Fleet task");
     expect(taskForm).toContain("id: problem");
 
-    const planForm = readFileSync(join(issueTemplateDir, "fleet-plan.yml"), "utf8");
-    expect(planForm).toContain("name: Fleet plan (epic)");
+    const epicForm = readFileSync(join(issueTemplateDir, "02-fleet-epic.yml"), "utf8");
+    expect(epicForm).toContain("name: Fleet epic");
+    expect(epicForm).toContain('labels: ["fleet:plan", "fleet:ready"]');
+  });
+
+  it("adds a task form per non-default fleet.yaml profile, in fleet.yaml's declared order", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+    writeFileSync(
+      join(repoPath, "fleet.yaml"),
+      [
+        "setup:",
+        "  default:",
+        "    - name: install",
+        "      run: pnpm install",
+        "  dashboard:",
+        "    setup:",
+        "      - name: install",
+        "        run: pnpm install",
+        "  daemon:",
+        "    setup:",
+        "      - name: install",
+        "        run: pnpm install",
+      ].join("\n"),
+    );
+
+    await syncTemplates([makeProject({ repoPath })]);
+
+    const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
+    expect(readdirSync(issueTemplateDir).sort()).toEqual([
+      "01-fleet-task.yml",
+      "02-dashboard-task.yml",
+      "03-daemon-task.yml",
+      "04-fleet-epic.yml",
+    ]);
+
+    const dashboardForm = readFileSync(join(issueTemplateDir, "02-dashboard-task.yml"), "utf8");
+    expect(dashboardForm).toContain("name: Fleet task: Dashboard");
+    expect(dashboardForm).toContain('labels: ["fleet:ready", "fleet:type:dashboard"]');
+  });
+
+  it("falls back to just the generic + epic forms for a list-form fleet.yaml", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+    writeFileSync(join(repoPath, "fleet.yaml"), "setup:\n  - name: install\n    run: pnpm install\n");
+
+    await syncTemplates([makeProject({ repoPath })]);
+
+    const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
+    expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
+  });
+
+  it("fails open to the generic + epic forms when fleet.yaml is malformed", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+    writeFileSync(join(repoPath, "fleet.yaml"), "setup: not-a-list-or-map\n");
+
+    await expect(syncTemplates([makeProject({ repoPath })])).resolves.toBeUndefined();
+
+    const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
+    expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
   });
 
   it("overwrites previously stamped issue forms on rerun", async () => {
@@ -95,7 +154,7 @@ describe("syncTemplates", () => {
     const project = makeProject({ repoPath });
 
     await syncTemplates([project]);
-    const destPath = join(repoPath, ".github", "ISSUE_TEMPLATE", "fleet-task.yml");
+    const destPath = join(repoPath, ".github", "ISSUE_TEMPLATE", "01-fleet-task.yml");
     const first = readFileSync(destPath, "utf8");
 
     await syncTemplates([project]);
@@ -106,5 +165,34 @@ describe("syncTemplates", () => {
 
   it("skips a project whose repoPath does not exist", async () => {
     await expect(syncTemplates([makeProject({ repoPath: join(tmpdir(), "fleet-sync-missing-project") })])).resolves.toBeUndefined();
+  });
+});
+
+describe("issueFormFiles", () => {
+  it("generates only the generic task and epic forms when there is no fleet.yaml", () => {
+    const files = issueFormFiles(undefined);
+    expect(files.map((f) => f.fileName)).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
+  });
+
+  it("numbers a type form per non-default profile, ahead of the epic form", () => {
+    const files = issueFormFiles({
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        frontend: [{ name: "install", run: "pnpm install" }],
+        backend: [{ name: "install", run: "pnpm install" }],
+      },
+    });
+    expect(files.map((f) => f.fileName)).toEqual([
+      "01-fleet-task.yml",
+      "02-frontend-task.yml",
+      "03-backend-task.yml",
+      "04-fleet-epic.yml",
+    ]);
+    expect(files[1]?.content).toContain('labels: ["fleet:ready", "fleet:type:frontend"]');
+  });
+
+  it("ignores a list-form spec (no profiles to label)", () => {
+    const files = issueFormFiles({ setup: [{ name: "install", run: "pnpm install" }] });
+    expect(files.map((f) => f.fileName)).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
   });
 });
