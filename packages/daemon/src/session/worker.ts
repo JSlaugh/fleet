@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   PlanResultSchema,
   WorkerResultSchema,
+  type Effort,
   type ModelUsageSummary,
   type PlanResult,
   type ProjectConfig,
@@ -299,6 +300,7 @@ export class WorkerSession {
   costUsd = 0;
   model?: string;
   modelUsage?: Record<string, ModelUsageSummary>;
+  readonly effort?: Effort;
 
   constructor(
     private readonly opts: {
@@ -311,6 +313,8 @@ export class WorkerSession {
       claudeExecutable?: string;
       resumeSessionId?: string;
       model?: string;
+      /** Reasoning effort for this session — see `selectEffort` in loop/runner.ts. Unset leaves the SDK's own default in place. */
+      effort?: Effort;
       kind?: SessionKind;
       /** The claimed ticket's type-specific `contract:` markdown, if any — see `buildSystemPromptAppend`. */
       contract?: string;
@@ -319,11 +323,13 @@ export class WorkerSession {
     },
   ) {
     this.kind = opts.kind ?? "code";
+    this.effort = opts.effort;
     const q = query({
       prompt: this.input,
       options: {
         cwd: opts.worktreePath,
         model: opts.model ?? opts.project.model,
+        effort: opts.effort,
         abortController: this.abortController,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         resume: opts.resumeSessionId,
@@ -375,7 +381,8 @@ export class WorkerSession {
         if (message.type === "system" && message.subtype === "init") {
           this.sessionId = message.session_id;
           this.model = message.model;
-          log("worker", `${this.opts.scope}: session ${this.sessionId} started (${message.model})`);
+          log("worker", `${this.opts.scope}: session ${this.sessionId} started (${message.model}${this.effort ? `, effort ${this.effort}` : ""})`);
+          this.opts.journal.append({ type: "fleet", event: "session-started", model: message.model, effort: this.effort });
         }
         if (message.type === "result") {
           this.costUsd = message.total_cost_usd;

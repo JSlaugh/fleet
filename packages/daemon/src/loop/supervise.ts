@@ -16,6 +16,7 @@ import {
   isPlanActionable,
   runMachineReview,
   runPlanReview,
+  selectReviewEffort,
   selectReviewModel,
   shouldMachineReview,
   shouldReviewPlan,
@@ -45,6 +46,7 @@ export async function supervise(
       sessionId: session.sessionId,
       costUsd: newCostUsd,
       model: session.model,
+      effort: session.effort,
       modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
     });
 
@@ -168,6 +170,7 @@ export async function machineReviewGate(
   if (!(await hasCommits(project, worktree.path))) return { action: "proceed" };
 
   const model = selectReviewModel(project);
+  const effort = selectReviewEffort(project);
   // Persisted before the reviewer starts so a crash mid-review fails open
   // (the resumed completion sees the field set and skips straight to review).
   ctx.state.update(project.name, issue.number, {
@@ -177,8 +180,8 @@ export async function machineReviewGate(
   });
   ctx.emitBoard();
   const journal = new Journal(ctx.dataDirPath, project.name, issue.number);
-  journal.append({ type: "fleet", event: "machine-review-started", model });
-  log("loop", `${scope}: machine review running${model ? ` on ${model}` : ""}`);
+  journal.append({ type: "fleet", event: "machine-review-started", model, effort });
+  log("loop", `${scope}: machine review running${model ? ` on ${model}` : ""}${effort ? ` (effort ${effort})` : ""}`);
 
   let outcome;
   try {
@@ -189,6 +192,7 @@ export async function machineReviewGate(
       scope,
       worktreePath: worktree.path,
       model,
+      effort,
       prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch, checklist, verify),
       claudeExecutable: ctx.config.claudeExecutable,
       journal,
@@ -275,6 +279,7 @@ export async function planReviewGate(
   if (ctx.dryRun || !shouldReviewPlan(project, record)) return { action: "proceed" };
 
   const model = selectReviewModel(project);
+  const effort = selectReviewEffort(project);
   // Persisted before the reviewer starts so a crash mid-review fails open
   // (the resumed completion sees the field set and skips straight to filing).
   ctx.state.update(project.name, issue.number, {
@@ -284,8 +289,8 @@ export async function planReviewGate(
   });
   ctx.emitBoard();
   const journal = new Journal(ctx.dataDirPath, project.name, issue.number);
-  journal.append({ type: "fleet", event: "plan-review-started", model });
-  log("loop", `${scope}: plan review running${model ? ` on ${model}` : ""}`);
+  journal.append({ type: "fleet", event: "plan-review-started", model, effort });
+  log("loop", `${scope}: plan review running${model ? ` on ${model}` : ""}${effort ? ` (effort ${effort})` : ""}`);
 
   let outcome;
   try {
@@ -293,6 +298,7 @@ export async function planReviewGate(
       scope,
       worktreePath: worktree.path,
       model,
+      effort,
       prompt: buildPlanReviewPrompt(issue, result),
       claudeExecutable: ctx.config.claudeExecutable,
       journal,

@@ -1,3 +1,5 @@
+import type { Effort } from "./config.ts";
+
 export type TicketStatus =
   | "running"
   | "stalled"
@@ -22,6 +24,8 @@ export interface TicketRecord {
   lastSummary?: string;
   sessionLive?: boolean;
   model?: string;
+  /** Reasoning effort the live/last session ran with — see `selectEffort` in the daemon's loop/runner.ts. Unset means the SDK's own default (no override configured). */
+  effort?: Effort;
   modelUsage?: Record<string, ModelUsageSummary>;
   lastActivityNote?: string;
   elevated?: boolean;
