@@ -1,29 +1,29 @@
-name: Dashboard / UI task
-description: A fleet task scoped to the Vue dashboard. Files as fleet:ready + fleet:type:dashboard.
+name: Fleet task: Dashboard
+description: A fleet task scoped to the "dashboard" fleet.yaml setup profile. Files as fleet:ready + fleet:type:dashboard.
 labels: ["fleet:ready", "fleet:type:dashboard"]
 body:
   - type: markdown
     attributes:
       value: |
-        For work in `packages/dashboard` (Vue 3 + Tailwind 4 + Vite) and the `/api` surface it consumes.
-        The worker sees only this issue — name the components/views involved if you know them.
+        This ticket runs fleet.yaml's "dashboard" setup profile. The worker that picks this up sees only this issue (body plus comments) — it has no other context.
+        Name exact file paths wherever you know them.
 
         - **Priority** is a label, not a field: add `fleet:p1` / `fleet:p2` / `fleet:p3` after filing (optional).
-        - **Dependencies:** put a line `Depends-on: #12, #14` anywhere below.
+        - **Dependencies:** put a line `Depends-on: #12, #14` anywhere below and fleet won't claim this until those issues close.
         - **Timeout:** put a line `Timeout: 60m` (or `2h`) anywhere below to override the default per-turn timeout for this ticket, up to a 240m max.
         - Not ready to queue it yet? Remove the `fleet:ready` label after filing.
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What's wrong or missing in the UI, and why it matters. Name the component/view files if you know them.
+      description: What's wrong or missing, and why it matters. Name the files involved if you know them.
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
       label: Acceptance criteria
-      description: What "done" looks like, including how the change should behave at both desktop and narrow widths where relevant.
+      description: What "done" looks like, as a concrete, checkable list.
       placeholder: |
         - [ ] ...
     validations:
@@ -35,7 +35,6 @@ body:
       description: The commands or checks the worker should run to confirm the change.
       placeholder: |
         - `pnpm typecheck`
-        - `pnpm dashboard:build`
-        - Describe what to visually confirm against a running daemon (`pnpm dashboard:dev`).
+        - `pnpm test`
     validations:
       required: true

@@ -24,7 +24,7 @@ pnpm daemon init-labels                          # creates fleet:* labels in eac
 pnpm daemon sync-templates                       # stamps the fleet skill, issue forms, + .mcp.json into each repo
 ```
 
-`templates/` in this repo (the fleet-backlog skill, the `templates/issue-forms/` issue forms, and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file and issue forms as-is (issue forms land in `.github/ISSUE_TEMPLATE/`) and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates that touch the templates.
+`templates/` in this repo (the fleet-backlog skill and `.mcp.json` registration) is the source of truth for what each registered project carries; `sync-templates` copies the skill file as-is and merges only the `mcpServers.fleet` entry into each project's `.mcp.json`, leaving other servers untouched. Issue forms are generated rather than copied: a generic task form and an epic form land in every project's `.github/ISSUE_TEMPLATE/`, plus one task form per non-default profile in that project's own `fleet.yaml` (labeled `fleet:ready` + `fleet:type:<name>`) — a project with no `fleet.yaml` gets just the generic + epic forms. It only writes into working trees — review the diff and commit it in each project yourself. Rerun it after pulling fleet updates or after changing a project's `fleet.yaml` profiles.
 
 ## Deploying updates
 
