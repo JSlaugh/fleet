@@ -86,6 +86,49 @@ describe("summarize", () => {
     expect((result.thinking as string).startsWith("a".repeat(700))).toBe(true);
   });
 
+  it("omits thinking when the API returns a signature-only block with no text — the default 'omitted' thinking display on current models, not a capture bug", () => {
+    // Content block shape reproduced verbatim from a live probe of the
+    // installed SDK (0.1.77) against claude-sonnet-5: thinking runs by
+    // default (no maxThinkingTokens needed), but the API never streams a
+    // thinking_delta for it, so `thinking` arrives empty with only
+    // `signature` populated. See fleet#177 for making this configurable.
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "thinking",
+            thinking: "",
+            signature:
+              "ErwCCqUBCBAYAipAytRy9GQ1vPHjoFm1JHCmYxgmkkFoVmUxUh9ND7+B9k+PZefCARfL8ZSNFo0AX8QzJBb2KkznPb9WMMZZJN/MGDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ2ZTJjZTBiYi03MjBiLTQ3YjYtOTI1Ni05YTU2NjY2MjIxNjVyEIOZX5qpMDF6Ml61A9doNvOIAQGoAdvYmdQGEgxKLQzc",
+          },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("thinking");
+    expect(result.text).toBe("");
+  });
+
+  it("omits thinking but keeps real text when a thinking block is signature-only and a text block on the same message carries content", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "", signature: "sig" },
+          { type: "text", text: "here's my plan" },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("thinking");
+    expect(result.text).toBe("here's my plan");
+  });
+
   it("omits thinking when the assistant message has no thinking blocks", () => {
     const message = {
       type: "assistant",
@@ -109,15 +152,72 @@ describe("summarize", () => {
     expect(result).not.toHaveProperty("toolCalls");
   });
 
-  it("captures plain-string user content as text — operator/user steering echoed back through the stream", () => {
+  // A live probe of the installed SDK found that today, `send()`-pushed text
+  // never actually produces a matching `type: "user"` message at all (it
+  // reaches the model but isn't echoed) — so pendingSends never matches in
+  // practice yet. These cases exercise the matching logic directly so it's
+  // correct if/when a future SDK version starts echoing steering back.
+  it("captures plain-string user content as text when it matches a pending send — genuine operator/daemon steering", () => {
     const message = {
       type: "user",
       message: { role: "user", content: "please also update the README" },
     } as unknown as SDKMessage;
+    const pendingSends = ["please also update the README"];
+
+    const result = summarize(message, { pendingSends });
+
+    expect(result.text).toBe("please also update the README");
+    expect(result).not.toHaveProperty("injectedText");
+    expect(pendingSends).toEqual([]);
+  });
+
+  it("marks plain-string user content as injectedText when it doesn't match a pending send — SDK-injected content like Skill loads", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "Base directory for this skill: /some/path" },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message, { pendingSends: ["please also update the README"] });
+
+    expect(result.injectedText).toBe(true);
+    expect(result).not.toHaveProperty("text");
+  });
+
+  it("marks plain-string user content as injectedText when no pendingSends were tracked at all", () => {
+    const message = {
+      type: "user",
+      message: { role: "user", content: "[structured-output-enforce] You MUST call the StructuredOutput tool" },
+    } as unknown as SDKMessage;
 
     const result = summarize(message);
 
-    expect(result.text).toBe("please also update the README");
+    expect(result.injectedText).toBe(true);
+    expect(result).not.toHaveProperty("text");
+  });
+
+  it("consumes only the matching head of pendingSends, in order, leaving later pending sends untouched", () => {
+    const pendingSends = ["first reply", "second reply"];
+
+    const first = summarize(
+      { type: "user", message: { role: "user", content: "first reply" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(first.text).toBe("first reply");
+    expect(pendingSends).toEqual(["second reply"]);
+
+    const injected = summarize(
+      { type: "user", message: { role: "user", content: "some unrelated injected string" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(injected.injectedText).toBe(true);
+    expect(pendingSends).toEqual(["second reply"]);
+
+    const second = summarize(
+      { type: "user", message: { role: "user", content: "second reply" } } as unknown as SDKMessage,
+      { pendingSends },
+    );
+    expect(second.text).toBe("second reply");
+    expect(pendingSends).toEqual([]);
   });
 
   it("omits text for an empty or whitespace-only string user message", () => {
@@ -129,6 +229,7 @@ describe("summarize", () => {
     const result = summarize(message);
 
     expect(result).not.toHaveProperty("text");
+    expect(result).not.toHaveProperty("injectedText");
   });
 
   it("captures text blocks within an array-content user message", () => {

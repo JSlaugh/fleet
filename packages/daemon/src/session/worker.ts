@@ -244,6 +244,24 @@ export class WorkerSession {
   private readonly iterator: AsyncIterator<SDKMessage>;
   private readonly kind: SessionKind;
   private readonly toolTimings: ToolTimings = new Map();
+  /**
+   * FIFO of texts pushed via `send()`, not yet observed echoed back through
+   * the message stream. Ground truth for which `type: "user"` plain-string
+   * messages are genuine operator/daemon steering versus SDK-injected content
+   * (skill loads, structured-output enforcement) — `summarize()` consumes it
+   * to tell the two apart instead of assuming every plain string is ours.
+   *
+   * Verified against a live probe of the installed SDK (0.1.77, streaming
+   * `prompt` input, claude-sonnet-5): a mid-session `send()`-equivalent push
+   * reaches the model (the next turn's reply reflected it) but never once
+   * produces a `type: "user"` message in the output iterator to match
+   * against — so today this queue never actually finds a match, and every
+   * observed plain-string "user" message really is SDK-injected. That's not
+   * a bug in the matching; it's this SDK version's behavior. Kept as the
+   * correct ground-truth mechanism (not content-sniffing) in case a future
+   * SDK version starts echoing steering back.
+   */
+  private readonly pendingSends: string[] = [];
   sessionId?: string;
   costUsd = 0;
   model?: string;
@@ -300,6 +318,7 @@ export class WorkerSession {
   }
 
   send(text: string): void {
+    this.pendingSends.push(text);
     this.input.push({
       type: "user",
       message: { role: "user", content: text },
@@ -314,7 +333,7 @@ export class WorkerSession {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
         if (done || !message) return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
-        const entry = summarize(message, { toolTimings: this.toolTimings });
+        const entry = summarize(message, { toolTimings: this.toolTimings, pendingSends: this.pendingSends });
         this.opts.onActivity(activityNote(entry));
         this.opts.journal.append(entry);
         if (message.type === "system" && message.subtype === "init") {
@@ -522,7 +541,10 @@ function extractToolResultText(content: unknown): string {
  */
 export type ToolTimings = Map<string, number>;
 
-export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings; now?: number } = {}): Record<string, unknown> {
+export function summarize(
+  message: SDKMessage,
+  opts: { toolTimings?: ToolTimings; now?: number; pendingSends?: string[] } = {},
+): Record<string, unknown> {
   const now = opts.now ?? Date.now();
   const base: Record<string, unknown> = { type: message.type };
   if ("subtype" in message) base.subtype = message.subtype;
@@ -549,7 +571,19 @@ export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings
           typeof block === "object" && block !== null && (block as { type?: string }).type === "thinking",
       );
       if (thinkingBlocks.length > 0) {
-        base.thinking = thinkingBlocks.map((block) => block.thinking).join("\n").slice(0, 1000);
+        // The API returns thinking blocks with an empty `thinking` string
+        // (only `signature` populated) whenever thinking display is
+        // "omitted" — the default for current models — so a present-but-
+        // empty block is a legitimate response, not a capture bug: verified
+        // with a live probe of the installed SDK (0.1.77) against
+        // claude-sonnet-5, which reliably produced a lone
+        // {type:"thinking", thinking:"", signature:"<real signature>"}
+        // content block (thinking runs by default; no maxThinkingTokens
+        // needed) with no thinking_delta text ever streamed for it. The SDK
+        // has no option to request "summarized" display — see fleet#177.
+        // Only attach the field when there's real text to show.
+        const thinkingText = thinkingBlocks.map((block) => block.thinking).join("\n").slice(0, 1000);
+        if (thinkingText.trim()) base.thinking = thinkingText;
       }
       const toolUseBlocks = content.filter(
         (block): block is { type: "tool_use"; id: string; name: string; input: unknown } =>
@@ -570,12 +604,22 @@ export function summarize(message: SDKMessage, opts: { toolTimings?: ToolTimings
   }
   if (message.type === "user") {
     const content = message.message.content;
-    // Operator/user steering text (`session.send()` pushes a plain string;
-    // the SDK echoes it back through the message stream this way) — the only
-    // shape a "user" message takes other than the SDK's own tool-result
-    // replies below, so plain text here is always operator/user-authored.
+    // Plain-string "user" messages aren't necessarily operator/daemon
+    // steering: the SDK also injects its own strings this way (Skill content
+    // loads, structured-output enforcement). `pendingSends` is the ground
+    // truth for what `session.send()` actually pushed — match against it
+    // instead of trusting message content, which is fragile and would let
+    // SDK-injected text masquerade as operator steering.
     if (typeof content === "string") {
-      if (content.trim()) base.text = content.slice(0, 1000);
+      if (content.trim()) {
+        const pending = opts.pendingSends;
+        if (pending && pending[0] === content) {
+          pending.shift();
+          base.text = content.slice(0, 1000);
+        } else {
+          base.injectedText = true;
+        }
+      }
     } else if (Array.isArray(content)) {
       const textBlocks = content.filter(
         (block): block is { type: "text"; text: string } =>
