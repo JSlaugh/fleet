@@ -223,6 +223,22 @@ export interface TicketTranscript {
   files: TicketTranscriptFile[];
 }
 
+/** Per-file stat line from `gh pr view --json files`, for the diff preview's file list. */
+export interface TicketDiffFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+/** `GET /api/tickets/:project/:issue/diff` response — 404 when the ticket has no PR yet. */
+export interface TicketDiff {
+  prUrl: string;
+  files: TicketDiffFile[];
+  /** Unified diff text, cut short at the server's size cap when `truncated` is true. */
+  diff: string;
+  truncated: boolean;
+}
+
 /** One resumption of the worker: from a `claimed`/`resumed` fleet event through the next `result` entry. */
 export interface SessionSegmentReport {
   numTurns: number | null;

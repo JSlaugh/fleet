@@ -18,6 +18,7 @@ const {
   dependencyStatus,
   escalateLabelArgs,
   getPrChecks,
+  getPrDiff,
   getPrOutcome,
   getStatusCommentInfo,
   issueNumberFromUrl,
@@ -544,6 +545,29 @@ describe("getPrChecks", () => {
   it("throws when stdout is present but not valid JSON", async () => {
     vi.mocked(exec.run).mockResolvedValue({ stdout: "not json", stderr: "" });
     await expect(getPrChecks(project, "https://github.com/acme/alpha/pull/7")).rejects.toThrow();
+  });
+});
+
+describe("getPrDiff", () => {
+  it("fetches the unified diff and file stat list via gh, keyed off the PR URL", async () => {
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "diff --git a/foo.ts b/foo.ts\n+added", stderr: "" });
+    vi.mocked(exec.runJson).mockResolvedValue({ files: [{ path: "foo.ts", additions: 1, deletions: 0 }] });
+
+    const result = await getPrDiff(project, "https://github.com/acme/alpha/pull/7");
+
+    expect(result).toEqual({
+      diff: "diff --git a/foo.ts b/foo.ts\n+added",
+      files: [{ path: "foo.ts", additions: 1, deletions: 0 }],
+    });
+    expect(exec.run).toHaveBeenCalledWith("gh", [
+      "pr", "diff", "https://github.com/acme/alpha/pull/7",
+      "--repo", "acme/alpha",
+    ]);
+    expect(exec.runJson).toHaveBeenCalledWith("gh", [
+      "pr", "view", "https://github.com/acme/alpha/pull/7",
+      "--repo", "acme/alpha",
+      "--json", "files",
+    ]);
   });
 });
 
