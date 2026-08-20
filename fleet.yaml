@@ -3,13 +3,18 @@
 # The profile map's real job here is declaring this repo's ticket types:
 # `pnpm daemon init-labels` mints a fleet:type:<name> label per non-default
 # profile, and the issue forms in .github/ISSUE_TEMPLATE apply those labels.
-# Setup is identical for every type today; the per-type keys grow siblings
-# (contract appendix, tier, verify commands) as B4 lands.
+# Setup is identical for every type today; contract/review/verify are the
+# per-type siblings declared below, keyed by type name.
 #
 # The warm-* steps prime turbo's cache so a worker's first `pnpm typecheck`/
 # `pnpm test`/`pnpm build` in the worktree replays instead of running cold.
 # allowFailure: true because a red baseline on main (the ticket being claimed
 # might be the fix for it) must not block worktree creation.
+#
+# verify: commands are what the worker is told it must run before finishing
+# `completed`, and what the machine reviewer checks the diff/evidence for —
+# scoped to each type's own package so they stay fast (turbo's cache already
+# warmed them at claim time above).
 setup:
   default:
     - name: install
@@ -41,6 +46,10 @@ setup:
       - Responsive behavior: layout doesn't break or clip content at narrow widths; nothing assumes a fixed viewport.
       - Dark mode / theming: new UI uses the existing theme tokens/classes rather than hardcoded colors, and reads correctly in both light and dark.
       - Loading/empty/error states are handled, not just the happy path with data present.
+    verify:
+      - pnpm --filter @fleet/dashboard typecheck
+      - pnpm --filter @fleet/dashboard test
+      - pnpm --filter @fleet/dashboard build
   daemon:
     setup:
       - name: install
@@ -59,3 +68,6 @@ setup:
       - Test coverage: new or changed loop/session behavior has a colocated `*.test.ts` covering it, not just the happy path.
       - Windows path handling: paths are built with `node:path` (or otherwise forward/back-slash agnostic), not string-concatenated — this daemon runs on Windows.
       - State model invariant: GitHub labels stay the source of truth for ticket status; `fleet.db` changes are cache only and don't diverge from what the labels say.
+    verify:
+      - pnpm --filter @fleet/daemon typecheck
+      - pnpm --filter @fleet/daemon test

@@ -6,7 +6,7 @@ import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { extendPause, handlePlanLimit } from "./pause.ts";
 import { recordSpend } from "./budget.ts";
-import { resolveTypeChecklist } from "../github/buildspec.ts";
+import { resolveTypeChecklist, resolveTypeVerify } from "../github/buildspec.ts";
 import {
   buildMachineReviewFixPrompt,
   buildMachineReviewPrompt,
@@ -184,11 +184,12 @@ export async function machineReviewGate(
   try {
     const { diff, commits } = await collectBranchDiff(project, worktree.path);
     const checklist = resolveTypeChecklist(scope, worktree.path, record?.ticketType);
+    const verify = resolveTypeVerify(scope, worktree.path, record?.ticketType);
     outcome = await runMachineReview({
       scope,
       worktreePath: worktree.path,
       model,
-      prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch, checklist),
+      prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch, checklist, verify),
       claudeExecutable: ctx.config.claudeExecutable,
       journal,
     });

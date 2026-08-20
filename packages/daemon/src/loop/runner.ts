@@ -2,7 +2,7 @@ import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { contractForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
-import { readBuildSpec } from "../github/buildspec.ts";
+import { readBuildSpec, resolveTypeVerify } from "../github/buildspec.ts";
 import { getIssueLabels, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
@@ -135,6 +135,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     log("loop", `${scope}: running light on ${project.lightModel}`);
   }
   const contract = resolveTypeContract(scope, worktree.path, opts.ticketType);
+  const verify = resolveTypeVerify(scope, worktree.path, opts.ticketType);
   const session = new WorkerSession({
     project,
     scope,
@@ -143,6 +144,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     model,
     kind: opts.kind,
     contract,
+    verify,
     onActivity: (note) => {
       const record = ctx.state.get(project.name, issue.number);
       ctx.state.update(project.name, issue.number, {

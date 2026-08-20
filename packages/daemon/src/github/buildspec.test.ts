@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseBuildSpec, readBuildSpec, resolveTypeChecklist } from "./buildspec.ts";
+import { parseBuildSpec, readBuildSpec, resolveTypeChecklist, resolveTypeVerify } from "./buildspec.ts";
 
 const dirs: string[] = [];
 
@@ -121,5 +121,53 @@ describe("resolveTypeChecklist", () => {
     const dir = makeTempDir();
     writeFileSync(join(dir, "fleet.yaml"), "setup: not-a-list-or-map\n");
     expect(resolveTypeChecklist("alpha#1", dir, "dashboard")).toBeUndefined();
+  });
+});
+
+describe("resolveTypeVerify", () => {
+  it("is undefined when ticketType is undefined, without touching the filesystem", () => {
+    expect(resolveTypeVerify("alpha#1", "/does/not/exist", undefined)).toBeUndefined();
+  });
+
+  it("is undefined when the worktree has no fleet.yaml", () => {
+    const dir = makeTempDir();
+    expect(resolveTypeVerify("alpha#1", dir, "daemon")).toBeUndefined();
+  });
+
+  it("returns the matched type's declared verify commands", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "fleet.yaml"),
+      JSON.stringify({
+        setup: {
+          default: [{ name: "install", run: "pnpm install" }],
+          daemon: {
+            setup: [{ name: "install", run: "pnpm install" }],
+            verify: ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+          },
+        },
+      }),
+    );
+    expect(resolveTypeVerify("alpha#1", dir, "daemon")).toEqual(["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"]);
+  });
+
+  it("is undefined for a type with no verify key", () => {
+    const dir = makeTempDir();
+    writeFileSync(
+      join(dir, "fleet.yaml"),
+      JSON.stringify({
+        setup: {
+          default: [{ name: "install", run: "pnpm install" }],
+          frontend: [{ name: "install", run: "pnpm install" }],
+        },
+      }),
+    );
+    expect(resolveTypeVerify("alpha#1", dir, "frontend")).toBeUndefined();
+  });
+
+  it("fails open (no verify commands, no throw) when fleet.yaml is malformed at session-open time", () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, "fleet.yaml"), "setup: not-a-list-or-map\n");
+    expect(resolveTypeVerify("alpha#1", dir, "daemon")).toBeUndefined();
   });
 });
