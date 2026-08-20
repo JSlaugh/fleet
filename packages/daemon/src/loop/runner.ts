@@ -1,5 +1,5 @@
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import { contractForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord } from "@fleet/shared";
+import { contractForType, tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type ProjectConfig, type TicketRecord, type Tier } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { readBuildSpec, resolveTypeVerify } from "../github/buildspec.ts";
@@ -11,17 +11,21 @@ import { WorkerSession, type SessionKind } from "../session/worker.ts";
 import type { Worktree } from "../github/worktree.ts";
 
 /**
- * Which model a ticket's session should run on. `fleet:elevate` wins over
- * `fleet:light` when both are present — elevation is an escalation signal.
- * Either label falls through to the project default when its matching tier
- * model isn't configured.
+ * Which model a ticket's session should run on, most specific wins:
+ * `fleet:elevate`/`fleet:light` labels (elevate wins when both are present —
+ * elevation is an escalation signal) beat the ticket's `fleet.yaml` type's
+ * declared `tier:`, which in turn beats the project default. Every tier
+ * falls through to the project default when its matching tier model isn't
+ * configured.
  */
 export function selectModel(
   project: { model?: string; elevatedModel?: string; lightModel?: string },
-  opts: { elevated: boolean; light: boolean },
+  opts: { elevated: boolean; light: boolean; typeTier?: Tier },
 ): string | undefined {
   if (opts.elevated) return project.elevatedModel ?? project.model;
   if (opts.light) return project.lightModel ?? project.model;
+  if (opts.typeTier === "elevated") return project.elevatedModel ?? project.model;
+  if (opts.typeTier === "light") return project.lightModel ?? project.model;
   return project.model;
 }
 
@@ -117,6 +121,24 @@ export function resolveTypeContract(scope: string, worktreePath: string, ticketT
   }
 }
 
+/**
+ * Same re-read-fresh, fail-open posture as `resolveTypeContract`, for the
+ * type's declared `tier:` instead of its `contract:` — a resumed session
+ * picks up a since-edited tier same as a fresh claim would, and a
+ * missing/malformed spec at session-open time falls back to no tier override
+ * (project default) rather than blocking the session.
+ */
+export function resolveTypeTier(scope: string, worktreePath: string, ticketType: string | undefined): Tier | undefined {
+  if (!ticketType) return undefined;
+  try {
+    const spec = readBuildSpec(worktreePath);
+    return spec ? tierForType(spec, ticketType) : undefined;
+  } catch (err) {
+    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its tier override`, err);
+    return undefined;
+  }
+}
+
 /** Opens one worker session, supervises it to a terminal state, and tears it down. */
 export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Promise<void> {
   const { project, issue, worktree, journal, elevated, light } = opts;
@@ -125,7 +147,8 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   // `total_cost_usd`/`modelUsage` restart at zero for every resumed session, so
   // remember what the ticket had already spent and add to it.
   const base: SessionBase = { costUsd: existing?.costUsd ?? 0, modelUsage: existing?.modelUsage };
-  const model = selectModel(project, { elevated, light });
+  const typeTier = resolveTypeTier(scope, worktree.path, opts.ticketType);
+  const model = selectModel(project, { elevated, light, typeTier });
   if (elevated && light) {
     log("loop", `${scope}: both ${ELEVATE_LABEL} and ${LIGHT_LABEL} are present — elevate wins`);
   }
@@ -133,6 +156,12 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
     log("loop", `${scope}: running elevated on ${project.elevatedModel}`);
   } else if (!elevated && light && project.lightModel) {
     log("loop", `${scope}: running light on ${project.lightModel}`);
+  } else if (!elevated && !light && typeTier === "elevated" && project.elevatedModel) {
+    log("loop", `${scope}: running fleet.yaml type "${opts.ticketType}"'s tier "elevated" on ${project.elevatedModel}`);
+    journal.append({ type: "fleet", event: "type-tier-applied", ticketType: opts.ticketType, tier: typeTier, model });
+  } else if (!elevated && !light && typeTier === "light" && project.lightModel) {
+    log("loop", `${scope}: running fleet.yaml type "${opts.ticketType}"'s tier "light" on ${project.lightModel}`);
+    journal.append({ type: "fleet", event: "type-tier-applied", ticketType: opts.ticketType, tier: typeTier, model });
   }
   const contract = resolveTypeContract(scope, worktree.path, opts.ticketType);
   const verify = resolveTypeVerify(scope, worktree.path, opts.ticketType);
