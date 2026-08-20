@@ -1,4 +1,4 @@
-import type { ModelUsageSummary, TicketRecord } from "./tickets.ts";
+import type { ModelTier, ModelUsageSummary, TicketRecord } from "./tickets.ts";
 
 export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review" | "done";
 
@@ -70,11 +70,39 @@ export interface HistoryAggregates {
   machineReviewOutcomeCounts: Record<"pending" | "passed" | "findings" | "skipped" | "none", number>;
 }
 
-/** `GET /api/history` response: a newest-first page of archived tickets plus aggregates over the full filtered set. */
+/** Per-tier breakdown for a weekly bucket metric — keyed by `ModelTier`. */
+export type TierTotals<T> = Record<ModelTier, T>;
+
+/**
+ * One ISO week (UTC Monday-start) slice of history, broken down by the tier
+ * each ticket ran on — see `computeWeeklyBuckets`. Weeks with no closed
+ * tickets are simply absent, not zero-filled.
+ */
+export interface HistoryWeeklyBucket {
+  /** UTC Monday of the week, as `YYYY-MM-DD`. */
+  weekStart: string;
+  spendUsd: TierTotals<number>;
+  completed: TierTotals<number>;
+  failed: TierTotals<number>;
+  /**
+   * Sum of `costUsd` for cleanly-merged PRs (`prState: "MERGED"` and
+   * `humanPushedAfterOpen === false`) — divide by the matching
+   * `cleanMergeCount` slot for cost per cleanly-merged PR. A record whose
+   * `humanPushedAfterOpen` is undefined (predates #146, or the PR-outcome
+   * fetch failed at cleanup) is excluded from both rather than counted as
+   * "dirty".
+   */
+  cleanMergeCostUsd: TierTotals<number>;
+  cleanMergeCount: TierTotals<number>;
+}
+
+/** `GET /api/history` response: a newest-first page of archived tickets plus aggregates/weekly rollups over the full filtered set. */
 export interface HistoryResponse {
   records: HistoryRecord[];
   total: number;
   aggregates: HistoryAggregates;
+  /** Weekly rollups over the full filtered set — ignores `limit`/`offset`, same as `aggregates`. */
+  weeklyBuckets: HistoryWeeklyBucket[];
 }
 
 export type BudgetGateLevel = "none" | "light-only" | "blocked";

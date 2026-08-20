@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import type { BoardTicket, HistoryAggregates, HistoryRecord } from "@fleet/shared";
+import type { BoardTicket, HistoryAggregates, HistoryRecord, HistoryWeeklyBucket } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
 import { fetchHistory, formatCost } from "../lib/api.ts";
+import HistoryCharts from "./HistoryCharts.vue";
 
 const PAGE_SIZE = 50;
 
@@ -12,6 +13,7 @@ const emit = defineEmits<{ select: [ticket: BoardTicket] }>();
 const records = ref<HistoryRecord[]>([]);
 const total = ref(0);
 const aggregates = ref<HistoryAggregates>();
+const weeklyBuckets = ref<HistoryWeeklyBucket[]>([]);
 const offset = ref(0);
 const loading = ref(false);
 const error = ref<string>();
@@ -23,6 +25,7 @@ async function load() {
     records.value = res.records;
     total.value = res.total;
     aggregates.value = res.aggregates;
+    weeklyBuckets.value = res.weeklyBuckets;
     error.value = undefined;
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -95,6 +98,8 @@ function nextPage() {
 <template>
   <div class="flex min-w-0 flex-1 flex-col overflow-y-auto p-4">
     <p v-if="error" class="mb-3 text-xs text-red-600 dark:text-red-400">{{ error }}</p>
+
+    <HistoryCharts :buckets="weeklyBuckets" />
 
     <div v-if="aggregates" class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <div class="rounded border border-neutral-200 p-2 dark:border-neutral-700">

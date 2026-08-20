@@ -1,4 +1,13 @@
-import type { ApprovalLatencyStats, ClosedTicketRecord, HistoryAggregates, ModelUsageSummary } from "@fleet/shared";
+import type {
+  ApprovalLatencyStats,
+  ClosedTicketRecord,
+  HistoryAggregates,
+  HistoryWeeklyBucket,
+  ModelTier,
+  ModelUsageSummary,
+  TierTotals,
+} from "@fleet/shared";
+import { tierOf } from "@fleet/shared";
 
 const DEFAULT_LIMIT = 50;
 
@@ -16,6 +25,7 @@ export interface HistoryPage {
   records: ClosedTicketRecord[];
   total: number;
   aggregates: HistoryAggregates;
+  weeklyBuckets: HistoryWeeklyBucket[];
 }
 
 function matchesQuery(record: ClosedTicketRecord, query: HistoryQuery): boolean {
@@ -114,10 +124,60 @@ export function computeHistoryAggregates(records: ClosedTicketRecord[]): History
   };
 }
 
+function emptyTierTotals(): TierTotals<number> {
+  return { elevated: 0, light: 0, base: 0 };
+}
+
+/** UTC Monday of the week containing `iso`, as `YYYY-MM-DD` — bucketing key for `computeWeeklyBuckets`. */
+function weekStartOf(iso: string): string {
+  const d = new Date(iso);
+  const daysSinceMonday = (d.getUTCDay() + 6) % 7;
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - daysSinceMonday));
+  return monday.toISOString().slice(0, 10);
+}
+
+/**
+ * Buckets records by the UTC week of `closedAt`, split by the tier each
+ * ticket ran on (see `tierOf`) — the source data for the history view's
+ * weekly spend/outcome/cost-per-merged-PR charts. Weeks with no closed
+ * tickets are simply absent from the result, not zero-filled, and a record
+ * missing `humanPushedAfterOpen` (predates #146) contributes to
+ * `spendUsd`/`completed`/`failed` but is excluded from the
+ * clean-merge-cost tally.
+ */
+export function computeWeeklyBuckets(records: ClosedTicketRecord[]): HistoryWeeklyBucket[] {
+  const byWeek = new Map<string, HistoryWeeklyBucket>();
+  for (const record of records) {
+    const weekStart = weekStartOf(record.closedAt);
+    let bucket = byWeek.get(weekStart);
+    if (!bucket) {
+      bucket = {
+        weekStart,
+        spendUsd: emptyTierTotals(),
+        completed: emptyTierTotals(),
+        failed: emptyTierTotals(),
+        cleanMergeCostUsd: emptyTierTotals(),
+        cleanMergeCount: emptyTierTotals(),
+      };
+      byWeek.set(weekStart, bucket);
+    }
+    const tier: ModelTier = tierOf(record);
+    bucket.spendUsd[tier] += record.costUsd;
+    if (record.prState === "MERGED") bucket.completed[tier] += 1;
+    else if (record.prState === "CLOSED") bucket.failed[tier] += 1;
+    if (record.prState === "MERGED" && record.humanPushedAfterOpen === false) {
+      bucket.cleanMergeCostUsd[tier] += record.costUsd;
+      bucket.cleanMergeCount[tier] += 1;
+    }
+  }
+  return [...byWeek.values()].sort((a, b) => a.weekStart.localeCompare(b.weekStart));
+}
+
 /**
  * Filters `all` by project/date range, sorts newest-first, and pages the
- * result — aggregates are computed over the *filtered* set (not just the
- * returned page), so the rollups stay accurate across pagination.
+ * result — aggregates and weekly buckets are computed over the *filtered*
+ * set (not just the returned page), so the rollups stay accurate across
+ * pagination.
  */
 export function queryHistory(all: ClosedTicketRecord[], query: HistoryQuery = {}): HistoryPage {
   const filtered = [...all]
@@ -129,5 +189,6 @@ export function queryHistory(all: ClosedTicketRecord[], query: HistoryQuery = {}
     records: filtered.slice(offset, offset + limit),
     total: filtered.length,
     aggregates: computeHistoryAggregates(filtered),
+    weeklyBuckets: computeWeeklyBuckets(filtered),
   };
 }

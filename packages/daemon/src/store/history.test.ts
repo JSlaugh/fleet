@@ -1,7 +1,7 @@
 import type { ClosedTicketRecord } from "@fleet/shared";
 import { describe, expect, it } from "vitest";
 import { makeRecord } from "../test-support.ts";
-import { computeHistoryAggregates, queryHistory } from "./history.ts";
+import { computeHistoryAggregates, computeWeeklyBuckets, queryHistory } from "./history.ts";
 
 function closedRecord(patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
   const record = makeRecord({
@@ -146,6 +146,84 @@ describe("computeHistoryAggregates", () => {
       "claude-sonnet-5": { inputTokens: 30, outputTokens: 15, costUsd: 4, cacheReadTokens: 6, cacheCreationTokens: 3 },
       "claude-opus-5": { inputTokens: 5, outputTokens: 2, costUsd: 0.5, cacheReadTokens: 1, cacheCreationTokens: 0 },
     });
+  });
+});
+
+describe("computeWeeklyBuckets", () => {
+  it("returns [] for empty history", () => {
+    expect(computeWeeklyBuckets([])).toEqual([]);
+  });
+
+  it("buckets by the UTC Monday of closedAt and splits by tier", () => {
+    const records = [
+      // Wednesday 2026-01-07 -> week of Monday 2026-01-05
+      closedRecord({ issueNumber: 1, closedAt: "2026-01-07T12:00:00.000Z", costUsd: 2, elevated: true, prState: "MERGED" }),
+      // Monday 2026-01-05 itself -> same week
+      closedRecord({ issueNumber: 2, closedAt: "2026-01-05T00:00:00.000Z", costUsd: 1, prState: "CLOSED" }),
+      // Sunday 2026-01-11 -> still the week of 2026-01-05 (Mon-Sun)
+      closedRecord({ issueNumber: 3, closedAt: "2026-01-11T23:00:00.000Z", costUsd: 3, light: true, prState: "MERGED" }),
+      // Monday 2026-01-12 -> a new week
+      closedRecord({ issueNumber: 4, closedAt: "2026-01-12T00:00:00.000Z", costUsd: 4, prState: "MERGED" }),
+    ];
+
+    const buckets = computeWeeklyBuckets(records);
+    expect(buckets.map((b) => b.weekStart)).toEqual(["2026-01-05", "2026-01-12"]);
+
+    const [week1, week2] = buckets;
+    expect(week1?.spendUsd).toEqual({ elevated: 2, light: 3, base: 1 });
+    expect(week1?.completed).toEqual({ elevated: 1, light: 1, base: 0 });
+    expect(week1?.failed).toEqual({ elevated: 0, light: 0, base: 1 });
+    expect(week2?.spendUsd).toEqual({ elevated: 0, light: 0, base: 4 });
+    expect(week2?.completed).toEqual({ elevated: 0, light: 0, base: 1 });
+  });
+
+  it("sorts buckets oldest-first regardless of input order", () => {
+    const records = [
+      closedRecord({ issueNumber: 1, closedAt: "2026-02-01T00:00:00.000Z" }),
+      closedRecord({ issueNumber: 2, closedAt: "2026-01-01T00:00:00.000Z" }),
+    ];
+    const buckets = computeWeeklyBuckets(records);
+    expect(buckets.map((b) => b.weekStart)).toEqual(["2025-12-29", "2026-01-26"]);
+  });
+
+  it("tallies clean-merge cost/count only for MERGED records with humanPushedAfterOpen === false", () => {
+    const records = [
+      closedRecord({
+        issueNumber: 1,
+        closedAt: "2026-01-05T00:00:00.000Z",
+        costUsd: 10,
+        prState: "MERGED",
+        humanPushedAfterOpen: false,
+      }),
+      // human reworked it after opening -> not a clean merge
+      closedRecord({
+        issueNumber: 2,
+        closedAt: "2026-01-05T00:00:00.000Z",
+        costUsd: 5,
+        prState: "MERGED",
+        humanPushedAfterOpen: true,
+      }),
+      // predates #146 (no humanPushedAfterOpen) -> excluded, not counted as dirty
+      closedRecord({
+        issueNumber: 3,
+        closedAt: "2026-01-05T00:00:00.000Z",
+        costUsd: 7,
+        prState: "MERGED",
+        humanPushedAfterOpen: undefined,
+      }),
+      // not merged at all -> never a clean merge
+      closedRecord({
+        issueNumber: 4,
+        closedAt: "2026-01-05T00:00:00.000Z",
+        costUsd: 1,
+        prState: "CLOSED",
+        humanPushedAfterOpen: false,
+      }),
+    ];
+
+    const [bucket] = computeWeeklyBuckets(records);
+    expect(bucket?.cleanMergeCostUsd).toEqual({ elevated: 0, light: 0, base: 10 });
+    expect(bucket?.cleanMergeCount).toEqual({ elevated: 0, light: 0, base: 1 });
   });
 });
 
