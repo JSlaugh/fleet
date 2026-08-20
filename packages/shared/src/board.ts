@@ -101,6 +101,8 @@ export interface BoardTicket {
   url: string;
   status: BoardStatus;
   priority: string | null;
+  /** The `<name>` part of a `fleet:type:<name>` label, or null when untyped or unknown (e.g. an archived record predating this field). */
+  type: string | null;
   isPlan: boolean;
   /** Unsatisfied `Depends-on` issue numbers — only set while they're still open. */
   blockedBy?: number[];

@@ -78,6 +78,12 @@ const blurb = computed(() => {
         {{ ticket.project }}#{{ ticket.issueNumber }}
       </span>
       <span
+        v-if="ticket.type"
+        class="rounded bg-indigo-100 px-1.5 py-0.5 font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+      >
+        {{ ticket.type }}
+      </span>
+      <span
         v-if="ticket.isPlan"
         class="rounded bg-teal-100 px-1.5 py-0.5 font-medium text-teal-800 dark:bg-teal-900 dark:text-teal-200"
       >

@@ -11,6 +11,7 @@ function makeTicket(): BoardTicket {
     url: "https://github.com/owner/repo/issues/7",
     status: "review",
     priority: null,
+    type: null,
     isPlan: false,
   };
 }

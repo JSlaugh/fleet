@@ -9,6 +9,7 @@ function ticket(patch: Partial<BoardTicket> & { issueNumber: number }): BoardTic
     url: `https://github.com/acme/alpha/issues/${patch.issueNumber}`,
     status: "ready",
     priority: null,
+    type: null,
     isPlan: false,
     ...patch,
   };
