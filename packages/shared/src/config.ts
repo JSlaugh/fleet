@@ -1,5 +1,24 @@
 import { z } from "zod";
 
+export const NOTIFICATION_EVENTS = [
+  "needs-input",
+  "pr-opened",
+  "failed",
+  "paused",
+  "auto-merged",
+  "stale-released",
+] as const;
+export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
+
+export const NotificationsConfigSchema = z.object({
+  discordUrl: z.string().url(),
+  /** Which events to post; unset (default) posts every event above. */
+  events: z.array(z.enum(NOTIFICATION_EVENTS)).optional(),
+  /** Local machine time, 24h HH:MM, to post the daily digest. Unset falls back to `workHoursReserve.workStart`; if neither is set, the digest is never posted (the dashboard panel works regardless). Ignored on a per-project override — the digest is daemon-wide and always posts to the root webhook. */
+  digestTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM").optional(),
+});
+export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
+
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   repoPath: z.string().min(1),
@@ -30,6 +49,13 @@ export const ProjectConfigSchema = z.object({
   /** GitHub logins whose approval authorizes an auto-merge, case-insensitive. Unset defaults to the account the daemon's `gh` is logged in as. */
   approvers: z.array(z.string()).optional(),
   mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
+  /**
+   * Per-project Discord webhook override, same shape as the global `notifications` block.
+   * Resolved per-field against the global config — `discordUrl` and `events` each fall back
+   * independently when unset here, so a project can redirect just the URL and still inherit
+   * the global event filter. Unset entirely behaves exactly like the global config.
+   */
+  notifications: NotificationsConfigSchema.optional(),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -44,25 +70,6 @@ export const WorkHoursReserveSchema = z.object({
   reserveHours: z.number().min(0),
 });
 export type WorkHoursReserveConfig = z.infer<typeof WorkHoursReserveSchema>;
-
-export const NOTIFICATION_EVENTS = [
-  "needs-input",
-  "pr-opened",
-  "failed",
-  "paused",
-  "auto-merged",
-  "stale-released",
-] as const;
-export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
-
-export const NotificationsConfigSchema = z.object({
-  discordUrl: z.string().url(),
-  /** Which events to post; unset (default) posts every event above. */
-  events: z.array(z.enum(NOTIFICATION_EVENTS)).optional(),
-  /** Local machine time, 24h HH:MM, to post the daily digest. Unset falls back to `workHoursReserve.workStart`; if neither is set, the digest is never posted (the dashboard panel works regardless). */
-  digestTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "expected HH:MM").optional(),
-});
-export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 
 export const FleetConfigSchema = z.object({
   pollIntervalSeconds: z.number().int().min(10).default(60),

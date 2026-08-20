@@ -45,6 +45,21 @@ export function shouldNotify(config: FleetConfig["notifications"], event: Notifi
   return !config.events || config.events.includes(event);
 }
 
+/**
+ * Per-field, project-first resolution of the effective webhook config for one project:
+ * `discordUrl` and `events` each independently fall back to the global config when the
+ * project doesn't override them, so a project can redirect just the URL and still inherit
+ * the global event filter. A project with no `notifications` override resolves to exactly
+ * the global config.
+ */
+function resolveNotifications(ctx: NotifyContext, project: ProjectConfig): FleetConfig["notifications"] {
+  const global = ctx.config.notifications;
+  const override = project.notifications;
+  const discordUrl = override?.discordUrl ?? global?.discordUrl;
+  if (!discordUrl) return undefined;
+  return { discordUrl, events: override?.events ?? global?.events };
+}
+
 /** `project#issue` for an issue-scoped detail, or just `project` for a project-wide one. */
 function scopeLabel(project: { name: string }, detail: NotifyDetail): string {
   return detail.issueNumber === undefined ? project.name : `${project.name}#${detail.issueNumber}`;
@@ -75,7 +90,7 @@ export async function notify(
   detail: NotifyDetail,
 ): Promise<void> {
   if (ctx.dryRun || ctx.once) return;
-  const config = ctx.config.notifications;
+  const config = resolveNotifications(ctx, project);
   if (!shouldNotify(config, event)) return;
   const scope = scopeLabel(project, detail);
   try {

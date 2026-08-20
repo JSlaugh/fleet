@@ -44,7 +44,11 @@
       "intakeLint": true,
       "autoMerge": false,
       "approvers": ["j"],
-      "mergeMethod": "squash"
+      "mergeMethod": "squash",
+      "notifications": {
+        "discordUrl": "https://discord.com/api/webhooks/111111111111111111/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+        "events": ["needs-input", "pr-opened", "failed"]
+      }
     }
   ]
 }
