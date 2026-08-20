@@ -10,6 +10,9 @@ vi.mock("../github/github.ts", async (importActual) => ({
   createIssue: vi.fn(async () => ({ number: 1, url: "https://github.com/acme/alpha/issues/1" })),
   createPullRequest: vi.fn(async () => "https://github.com/acme/alpha/pull/7"),
   escalateToElevated: vi.fn(async () => {}),
+  findChildIssues: vi.fn(async () => []),
+  findOpenPrUrlForBranch: vi.fn(async () => undefined),
+  getIssue: vi.fn(async () => ({ number: 7, title: "issue 7", body: "body", labels: [] })),
   getIssueComments: vi.fn(async () => []),
   getIssueLabels: vi.fn(async () => []),
   getPrState: vi.fn(),
@@ -76,6 +79,11 @@ beforeEach(() => {
   vi.mocked(worktreeMod.hasCommits).mockResolvedValue(true);
   vi.mocked(worktreeMod.pushBranch).mockResolvedValue(undefined);
   vi.mocked(github.createPullRequest).mockResolvedValue("https://github.com/acme/alpha/pull/7");
+  vi.mocked(github.swapLabel).mockResolvedValue(undefined);
+  vi.mocked(github.upsertStatusComment).mockResolvedValue(undefined);
+  vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "issue 7", body: "body", labels: [] });
+  vi.mocked(github.findChildIssues).mockResolvedValue([]);
+  vi.mocked(github.findOpenPrUrlForBranch).mockResolvedValue(undefined);
 });
 
 describe("finishCompleted — status comment error policy", () => {
@@ -122,7 +130,7 @@ describe("finishCompleted — post-completion pipeline failures", () => {
 
   it("wraps a gh pr create failure in a PostCompletionError", async () => {
     vi.mocked(github.createPullRequest).mockRejectedValue(
-      new Error("gh pr create --repo acme/alpha ... failed (exit 1): pull request create failed: a pull request for branch \"fleet/7\" already exists"),
+      new Error("gh pr create --repo acme/alpha ... failed (exit 1): GraphQL: something went wrong"),
     );
     const { internals } = makeLoop(record());
 
@@ -131,8 +139,32 @@ describe("finishCompleted — post-completion pipeline failures", () => {
       .catch((err: unknown) => err);
 
     expect(failure).toBeInstanceOf(PostCompletionError);
-    expect((failure as Error).message).toContain("already exists");
+    expect((failure as Error).message).toContain("something went wrong");
     expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  it("adopts the existing open PR when gh pr create reports one already exists for the branch", async () => {
+    vi.mocked(github.createPullRequest).mockRejectedValue(
+      new Error('gh pr create failed (exit 1): a pull request for branch "fleet/7" already exists'),
+    );
+    vi.mocked(github.findOpenPrUrlForBranch).mockResolvedValue("https://github.com/acme/alpha/pull/9");
+    const { state, internals } = makeLoop(record());
+
+    await internals.finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult);
+
+    expect(state.get("alpha", 7)?.prUrl).toBe("https://github.com/acme/alpha/pull/9");
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+  });
+
+  it("persists prUrl before the label swap, so a swap failure can't orphan the created PR", async () => {
+    vi.mocked(github.swapLabel).mockRejectedValue(new Error("gh: rate limited"));
+    const { state, internals } = makeLoop(record());
+
+    await internals
+      .finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult)
+      .catch(() => undefined);
+
+    expect(state.get("alpha", 7)?.prUrl).toBe("https://github.com/acme/alpha/pull/7");
   });
 });
 
@@ -262,6 +294,9 @@ describe("finishPlanned — epic linkage", () => {
       nextNumber += 1;
       return { number: nextNumber, url: `https://github.com/acme/alpha/issues/${nextNumber}` };
     });
+    // The Children stamp re-reads the live epic body before overwriting it.
+    vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "epic 7", body: "epic body", labels: [] });
+    vi.mocked(github.findChildIssues).mockResolvedValue([]);
   });
 
   it("stamps a Part-of line onto every filed child", async () => {
@@ -301,6 +336,48 @@ describe("finishPlanned — epic linkage", () => {
 
     const calls = vi.mocked(github.createIssue).mock.calls;
     expect(calls[1]?.[1]?.body).toBe("use it\n\nPart-of: #7\n\nDepends-on: #101");
+  });
+
+  it("skips filing entirely when the live epic body already carries a Children list", async () => {
+    vi.mocked(github.getIssue).mockResolvedValue({
+      number: 7,
+      title: "epic 7",
+      body: "epic body\n\n## Children\n- [ ] #41 earlier child",
+      labels: [],
+    });
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = { status: "completed", summary: "epic summary", confidence: "high", tickets: [{ title: "a", body: "b" }] };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.createIssue).not.toHaveBeenCalled();
+    expect(github.updateIssueBody).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+  });
+
+  it("skips filing when Part-of children exist even though the Children stamp never landed", async () => {
+    vi.mocked(github.findChildIssues).mockResolvedValue([41, 42]);
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = { status: "completed", summary: "epic summary", confidence: "high", tickets: [{ title: "a", body: "b" }] };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.createIssue).not.toHaveBeenCalled();
+  });
+
+  it("skips the Children stamp (never overwrites blind) when the live epic body can't be re-read", async () => {
+    vi.mocked(github.getIssue).mockResolvedValue(undefined);
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = { status: "completed", summary: "epic summary", confidence: "high", tickets: [{ title: "a", body: "b" }] };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(github.createIssue).toHaveBeenCalledOnce();
+    expect(github.updateIssueBody).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
   });
 
   it("stamps a Children task list onto the epic body once children are filed", async () => {

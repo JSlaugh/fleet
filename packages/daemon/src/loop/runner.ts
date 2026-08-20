@@ -3,7 +3,7 @@ import { contractForType, tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, m
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
 import { readBuildSpec, resolveTypeVerify } from "../github/buildspec.ts";
-import { getIssueLabels, type ReadyIssue } from "../github/github.ts";
+import { getIssue, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { supervise } from "./supervise.ts";
@@ -253,12 +253,19 @@ export async function resumeTicket(
     let light = record.light ?? false;
     let isPlan = record.isPlan ?? false;
     try {
-      const labels = await getIssueLabels(project, record.issueNumber);
-      elevated = labels.includes(ELEVATE_LABEL);
-      light = labels.includes(LIGHT_LABEL);
-      isPlan = labels.includes(PLAN_LABEL);
+      // One fetch for labels *and* body: the tier labels drive model selection,
+      // and the real body keeps per-ticket `Timeout:` overrides working on a
+      // resumed session — and keeps downstream consumers (the plan path's epic
+      // body stamp) from ever seeing a synthesized-empty body.
+      const live = await getIssue(project, record.issueNumber);
+      if (live) {
+        issue.body = live.body;
+        elevated = live.labels.includes(ELEVATE_LABEL);
+        light = live.labels.includes(LIGHT_LABEL);
+        isPlan = live.labels.includes(PLAN_LABEL);
+      }
     } catch {
-      // label check is best-effort; fall back to the recorded flags
+      // best-effort; fall back to the recorded flags and an empty body
     }
     ctx.state.update(project.name, record.issueNumber, { elevated, light, isPlan });
     await markWorking(ctx, project, record.issueNumber);

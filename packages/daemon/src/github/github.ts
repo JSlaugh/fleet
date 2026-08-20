@@ -14,11 +14,18 @@ import {
   type TicketDiffFile,
 } from "@fleet/shared";
 import { readBuildSpec } from "./buildspec.ts";
-import { run, runJson } from "./exec.ts";
+import { run, runJson, runJsonPaginated } from "./exec.ts";
 import { log, logError } from "../log.ts";
 
 const STATUS_MARKER = "<!-- fleet-status -->";
 const HEARTBEAT_LINE_REGEX = /^<!--\s*fleet-heartbeat:\s*(\S+)\s+owner:\s*(\S+)\s*-->$/m;
+
+/** GitHub rejects issue/comment/PR bodies over 65,536 chars with a 422 — clamp with a visible marker instead of failing the whole call. */
+const MAX_BODY_CHARS = 65_000;
+function clampBody(body: string): string {
+  if (body.length <= MAX_BODY_CHARS) return body;
+  return `${body.slice(0, MAX_BODY_CHARS)}\n\n…(truncated: body exceeded GitHub's length limit)`;
+}
 
 export interface ReadyIssue {
   number: number;
@@ -58,7 +65,10 @@ interface RestComment {
 }
 
 function listComments(project: ProjectConfig, issueNumber: number): Promise<RestComment[]> {
-  return runJson<RestComment[]>("gh", ["api", `repos/${project.githubRepo}/issues/${issueNumber}/comments`]);
+  // Paginated: the daemon's own status comment can sit past the first page on a
+  // chatty issue, and a missed find would make `upsertStatusComment` post a
+  // duplicate comment every update instead of patching the existing one.
+  return runJsonPaginated<RestComment>("gh", ["api", `repos/${project.githubRepo}/issues/${issueNumber}/comments`]);
 }
 
 export function priorityRank(labels: string[]): number {
@@ -72,8 +82,11 @@ export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssu
     "--repo", project.githubRepo,
     "--state", "open",
     "--json", "number,title,body,labels,url,author,assignees",
-    "--limit", "100",
+    "--limit", "1000",
   ]);
+  if (issues.length >= 1000) {
+    log("github", `WARNING: ${project.githubRepo} returned 1000 open issues — the listing may be truncated and older fleet tickets invisible`);
+  }
   return issues
     .map((issue) => ({
       number: issue.number,
@@ -246,8 +259,11 @@ export async function listIssueStates(project: ProjectConfig): Promise<{ open: S
     "--repo", project.githubRepo,
     "--state", "all",
     "--json", "number,state",
-    "--limit", "500",
+    "--limit", "1000",
   ]);
+  if (issues.length >= 1000) {
+    log("github", `WARNING: ${project.githubRepo} has 1000+ total issues — dependency/epic state checks may miss older open issues`);
+  }
   return {
     open: new Set(issues.filter((i) => i.state === "OPEN").map((i) => i.number)),
     all: new Set(issues.map((i) => i.number)),
@@ -272,17 +288,17 @@ export async function createIssue(
     "issue", "create",
     "--repo", project.githubRepo,
     "--title", opts.title,
-    "--body", opts.body,
+    "--body-file", "-",
   ];
   for (const label of opts.labels) args.push("--label", label);
-  const { stdout } = await run("gh", args);
+  const { stdout } = await run("gh", args, { stdin: clampBody(opts.body) });
   const url = stdout.trim().split("\n").pop()?.trim() ?? "";
   return { number: issueNumberFromUrl(url), url };
 }
 
 /** Overwrites an issue's body — used to stamp the `## Children` task list onto a freshly-planned epic. */
 export async function updateIssueBody(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
-  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--body", body]);
+  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--body-file", "-"], { stdin: clampBody(body) });
 }
 
 /**
@@ -290,16 +306,35 @@ export async function updateIssueBody(project: ProjectConfig, issueNumber: numbe
  * (deleted issue, transient `gh` error) — callers that use this for prompt
  * framing treat a miss as "skip the context" rather than failing the ticket.
  */
-export async function getIssue(project: ProjectConfig, issueNumber: number): Promise<{ number: number; title: string; body: string } | undefined> {
+export async function getIssue(project: ProjectConfig, issueNumber: number): Promise<{ number: number; title: string; body: string; labels: string[] } | undefined> {
   try {
-    return await runJson<{ number: number; title: string; body: string }>("gh", [
+    const raw = await runJson<{ number: number; title: string; body: string | null; labels: { name: string }[] }>("gh", [
       "issue", "view", String(issueNumber),
       "--repo", project.githubRepo,
-      "--json", "number,title,body",
+      "--json", "number,title,body,labels",
     ]);
+    return { number: raw.number, title: raw.title, body: raw.body ?? "", labels: raw.labels.map((l) => l.name) };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Issue numbers whose body carries this epic's `Part-of: #<n>` stamp — the
+ * GitHub-side "were children already filed?" check `finishPlanned` gates on,
+ * which survives crashes and state-record wipes where a local marker wouldn't.
+ * Searches all states: a closed child still proves filing happened.
+ */
+export async function findChildIssues(project: ProjectConfig, epicNumber: number): Promise<number[]> {
+  const issues = await runJson<{ number: number }[]>("gh", [
+    "issue", "list",
+    "--repo", project.githubRepo,
+    "--search", `"Part-of: #${epicNumber}" in:body`,
+    "--state", "all",
+    "--json", "number",
+    "--limit", "100",
+  ]);
+  return issues.map((i) => i.number).filter((n) => n !== epicNumber);
 }
 
 export async function setPriority(project: ProjectConfig, issueNumber: number, priority: string | null): Promise<void> {
@@ -358,9 +393,8 @@ const pushCollaboratorsCache = new Map<string, Promise<Set<string>>>();
 export function getPushCollaborators(project: ProjectConfig): Promise<Set<string>> {
   const cached = pushCollaboratorsCache.get(project.githubRepo);
   if (cached) return cached;
-  const promise = runJson<GhCollaborator[]>("gh", [
+  const promise = runJsonPaginated<GhCollaborator>("gh", [
     "api", `repos/${project.githubRepo}/collaborators`,
-    "--paginate",
   ]).then((collaborators) => new Set(collaborators.filter((c) => c.permissions?.push).map((c) => c.login)));
   promise.catch(() => pushCollaboratorsCache.delete(project.githubRepo));
   pushCollaboratorsCache.set(project.githubRepo, promise);
@@ -372,13 +406,21 @@ export function getPushCollaborators(project: ProjectConfig): Promise<Set<string
  * decides what to do with a ticket by reading its label — so a failed swap
  * genuinely changes what should happen next. Callers let it throw rather than
  * swallow it into a ticket whose label and recorded status disagree.
+ *
+ * Add before remove, as two separate calls: a crash between them leaves the
+ * issue with *both* fleet labels (visible on the board, fixable by a human)
+ * instead of neither (invisible to every recovery path).
  */
 export async function swapLabel(project: ProjectConfig, issueNumber: number, from: string, to: string): Promise<void> {
   await run("gh", [
     "issue", "edit", String(issueNumber),
     "--repo", project.githubRepo,
-    "--remove-label", from,
     "--add-label", to,
+  ]);
+  await run("gh", [
+    "issue", "edit", String(issueNumber),
+    "--repo", project.githubRepo,
+    "--remove-label", from,
   ]);
 }
 
@@ -494,8 +536,26 @@ function withFreshHeartbeat(body: string, heartbeat: StatusHeartbeat): string {
   return body.replace(STATUS_MARKER, `${STATUS_MARKER}\n${line}`);
 }
 
-function findStatusComment(project: ProjectConfig, issueNumber: number): Promise<RestComment | undefined> {
-  return listComments(project, issueNumber).then((comments) => comments.find((c) => c.body.startsWith(STATUS_MARKER)));
+/**
+ * The status comment is only trusted from `trustedAuthors` — anyone can post a
+ * marker-bearing comment on a public repo, and adopting it would let a
+ * drive-by account own the comment the daemon PATCHes (403s forever) or, worse,
+ * feed a spoofed heartbeat into a peer daemon's stale-claim release.
+ */
+function findStatusComment(
+  project: ProjectConfig,
+  issueNumber: number,
+  trustedAuthors: ReadonlySet<string>,
+): Promise<RestComment | undefined> {
+  return listComments(project, issueNumber).then((comments) =>
+    comments.find((c) => c.body.startsWith(STATUS_MARKER) && trustedAuthors.has(c.user.login)),
+  );
+}
+
+/** The daemon's own status comment — the one it writes and PATCHes. */
+async function findOwnStatusComment(project: ProjectConfig, issueNumber: number): Promise<RestComment | undefined> {
+  const login = await getAuthenticatedLogin();
+  return findStatusComment(project, issueNumber, new Set([login]));
 }
 
 async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Promise<void> {
@@ -503,8 +563,8 @@ async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Pr
   const full = withFreshHeartbeat(existing.body, { timestamp: new Date().toISOString(), owner });
   await run("gh", [
     "api", `repos/${project.githubRepo}/issues/comments/${existing.id}`,
-    "-X", "PATCH", "-f", `body=${full}`,
-  ]);
+    "-X", "PATCH", "-F", "body=@-",
+  ], { stdin: full });
 }
 
 /**
@@ -522,25 +582,25 @@ async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Pr
  */
 export async function upsertStatusComment(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
   const owner = await getAuthenticatedLogin();
-  const full = withFreshHeartbeat(`${STATUS_MARKER}\n${body}`, { timestamp: new Date().toISOString(), owner });
-  const existing = await findStatusComment(project, issueNumber);
+  const full = withFreshHeartbeat(clampBody(`${STATUS_MARKER}\n${body}`), { timestamp: new Date().toISOString(), owner });
+  const existing = await findStatusComment(project, issueNumber, new Set([owner]));
   if (existing) {
     await run("gh", [
       "api", `repos/${project.githubRepo}/issues/comments/${existing.id}`,
-      "-X", "PATCH", "-f", `body=${full}`,
-    ]);
+      "-X", "PATCH", "-F", "body=@-",
+    ], { stdin: full });
   } else {
     await run("gh", [
       "issue", "comment", String(issueNumber),
       "--repo", project.githubRepo,
-      "--body", full,
-    ]);
+      "--body-file", "-",
+    ], { stdin: full });
   }
 }
 
 /** Unconditionally stamps a fresh heartbeat onto the existing status comment; a no-op when there isn't one yet. */
 export async function refreshHeartbeat(project: ProjectConfig, issueNumber: number): Promise<void> {
-  const existing = await findStatusComment(project, issueNumber);
+  const existing = await findOwnStatusComment(project, issueNumber);
   if (!existing) return;
   await patchHeartbeat(project, existing);
 }
@@ -551,7 +611,7 @@ export async function refreshHeartbeat(project: ProjectConfig, issueNumber: numb
  * call) every single cycle for every ticket this daemon is actively working.
  */
 export async function refreshHeartbeatIfStale(project: ProjectConfig, issueNumber: number, maxAgeMs: number): Promise<void> {
-  const existing = await findStatusComment(project, issueNumber);
+  const existing = await findOwnStatusComment(project, issueNumber);
   if (!existing) return;
   const heartbeat = parseHeartbeat(existing.body);
   if (heartbeat && Date.now() - Date.parse(heartbeat.timestamp) < maxAgeMs) return;
@@ -570,7 +630,11 @@ export interface StatusCommentInfo {
  * (possibly none, for a pre-heartbeat claim).
  */
 export async function getStatusCommentInfo(project: ProjectConfig, issueNumber: number): Promise<StatusCommentInfo | undefined> {
-  const existing = await findStatusComment(project, issueNumber);
+  // Peer daemons run under accounts with push access, so the collaborator set
+  // is the trust boundary here (same one comment-steering uses) — a drive-by
+  // account's marker comment must not feed `isClaimStale`.
+  const collaborators = await getPushCollaborators(project);
+  const existing = await findStatusComment(project, issueNumber, collaborators);
   if (!existing) return undefined;
   return { createdAt: existing.created_at, heartbeat: parseHeartbeat(existing.body) };
 }
@@ -587,9 +651,31 @@ export async function createPullRequest(
     "--head", branch,
     "--base", project.defaultBranch,
     "--title", title,
-    "--body", body,
+    "--body-file", "-",
+  ], { stdin: clampBody(body) });
+  const url = stdout.trim().split("\n").pop()?.trim() ?? "";
+  if (!/\/pull\/\d+$/.test(url)) {
+    throw new Error(`could not parse a PR URL from gh pr create output: ${stdout.trim().slice(-200)}`);
+  }
+  return url;
+}
+
+/** The open PR for `branch`, if one exists — the adopt-existing fallback when `gh pr create` reports a PR already open for the head. */
+export async function findOpenPrUrlForBranch(project: ProjectConfig, branch: string): Promise<string | undefined> {
+  const prs = await runJson<{ url: string }[]>("gh", [
+    "pr", "list",
+    "--repo", project.githubRepo,
+    "--head", branch,
+    "--state", "open",
+    "--json", "url",
+    "--limit", "1",
   ]);
-  return stdout.trim().split("\n").pop()?.trim() ?? "";
+  return prs[0]?.url;
+}
+
+/** Close a PR with an explanatory comment — used when an operator restart supersedes the previous attempt's PR. */
+export async function closePullRequest(project: ProjectConfig, prUrl: string, comment: string): Promise<void> {
+  await run("gh", ["pr", "close", prUrl, "--repo", project.githubRepo, "--comment", comment]);
 }
 
 export async function getIssueLabels(project: ProjectConfig, issueNumber: number): Promise<string[]> {
@@ -732,8 +818,8 @@ export async function getPrFeedback(
 ): Promise<PrFeedback> {
   const prNumber = issueNumberFromUrl(prUrl);
   const [rawReviews, rawComments] = await Promise.all([
-    runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
-    runJson<GhReviewComment[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
+    runJsonPaginated<GhReview>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
+    runJsonPaginated<GhReviewComment>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
   ]);
   return buildPrFeedback(rawReviews, rawComments, since);
 }
@@ -786,9 +872,8 @@ export interface PrApprovalReview {
  */
 export async function getPrReviews(project: ProjectConfig, prUrl: string): Promise<PrApprovalReview[]> {
   const prNumber = issueNumberFromUrl(prUrl);
-  const rawReviews = await runJson<GhReview[]>("gh", [
+  const rawReviews = await runJsonPaginated<GhReview>("gh", [
     "api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`,
-    "--paginate",
   ]);
   return rawReviews.map((r) => ({ author: r.user?.login ?? "unknown", state: r.state, submittedAt: r.submitted_at }));
 }
@@ -832,8 +917,8 @@ export async function getPrOutcome(project: ProjectConfig, prUrl: string): Promi
       "--repo", project.githubRepo,
       "--json", "createdAt,mergedAt,commits",
     ]),
-    runJson<GhReview[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
-    runJson<GhReviewComment[]>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
+    runJsonPaginated<GhReview>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/reviews`]),
+    runJsonPaginated<GhReviewComment>("gh", ["api", `repos/${project.githubRepo}/pulls/${prNumber}/comments`]),
     getAuthenticatedLogin(),
   ]);
 

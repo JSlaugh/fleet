@@ -22,15 +22,19 @@ const github = await import("../github/github.ts");
 
 describe("shouldAutoElevate", () => {
   it("escalates a first failure when an elevated model is configured", () => {
-    expect(shouldAutoElevate({ elevatedModel: "claude-opus-5" }, undefined)).toBe(true);
+    expect(shouldAutoElevate({ elevatedModel: "claude-opus-5" }, {})).toBe(true);
+  });
+
+  it("does not escalate a failure with no record — a claim-phase infrastructure failure a stronger model can't fix", () => {
+    expect(shouldAutoElevate({ elevatedModel: "claude-opus-5" }, undefined)).toBe(false);
   });
 
   it("does not escalate without an elevated model configured", () => {
-    expect(shouldAutoElevate({}, undefined)).toBe(false);
+    expect(shouldAutoElevate({}, {})).toBe(false);
   });
 
   it("does not escalate when the project opts out", () => {
-    expect(shouldAutoElevate({ elevatedModel: "claude-opus-5", autoElevateOnFailure: false }, undefined)).toBe(false);
+    expect(shouldAutoElevate({ elevatedModel: "claude-opus-5", autoElevateOnFailure: false }, {})).toBe(false);
   });
 
   it("does not escalate a run that was already elevated (manual fleet:elevate)", () => {

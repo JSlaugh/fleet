@@ -101,6 +101,14 @@ describe("POST /api/approvals/:id", () => {
     await expect(outcome).resolves.toEqual({ allowed: false, message: "use option A", reason: "answered" });
   });
 
+  it("400s (not 500) on an empty body", async () => {
+    const { app } = makeApp();
+
+    const res = await app.request("/api/approvals/whatever", { method: "POST" });
+
+    expect(res.status).toBe(400);
+  });
+
   it("400s on an invalid decision", async () => {
     const { app } = makeApp();
     const res = await postJson(app, "/api/approvals/whatever", { decision: "maybe" });

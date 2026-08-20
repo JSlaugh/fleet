@@ -124,8 +124,28 @@ async function park(
   fallbackReason: string,
 ): Promise<"replied" | "closed"> {
   const scope = key(project.name, issue.number);
-  await finishBlocked(ctx, project, issue, result.blockedReason ?? fallbackReason, result.summary);
-  const reply = await waitForReply(ctx, scope, ctx.config.replyWaitMinutes * 60_000);
+  // Registered *before* `finishBlocked` announces the ticket as reply-able
+  // (status comment, board emit, notify): a reply landing mid-announcement
+  // must be captured here — the live-session branch it would otherwise take
+  // sends into a session whose results nothing is consuming, silently
+  // discarding both the reply and the turn it steers.
+  const waiter = registerReplyWaiter(ctx, scope);
+  try {
+    await finishBlocked(ctx, project, issue, result.blockedReason ?? fallbackReason, result.summary);
+  } catch (err) {
+    waiter.close();
+    throw err;
+  }
+  if (ctx.once) {
+    // Same reasoning as `makeCanUseTool`: --once has no dashboard, so no reply
+    // can ever arrive — don't hold the run open for `replyWaitMinutes`.
+    waiter.close();
+    log("loop", `${scope}: blocked in --once mode — not waiting for a reply; session closed, resumable later`);
+    return "closed";
+  }
+  const timer = setTimeout(() => waiter.close(), ctx.config.replyWaitMinutes * 60_000);
+  const reply = await waiter.promise;
+  clearTimeout(timer);
   if (reply === undefined) {
     log("loop", `${scope}: no reply within ${ctx.config.replyWaitMinutes}m — session closed, resumable from the dashboard`);
     return "closed";
@@ -135,18 +155,23 @@ async function park(
   return "replied";
 }
 
-function waitForReply(ctx: LoopContext, scope: string, timeoutMs: number): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      ctx.replyWaiters.delete(scope);
-      resolve(undefined);
-    }, timeoutMs);
-    ctx.replyWaiters.set(scope, (message) => {
-      clearTimeout(timer);
-      ctx.replyWaiters.delete(scope);
-      resolve(message);
-    });
+/** The parked-reply slot, split so registration is synchronous (see `park`) while the timeout starts later. `close()` is idempotent and resolves `undefined`. */
+function registerReplyWaiter(ctx: LoopContext, scope: string): { promise: Promise<string | undefined>; close: () => void } {
+  let settle!: (value: string | undefined) => void;
+  const promise = new Promise<string | undefined>((resolve) => {
+    settle = resolve;
   });
+  ctx.replyWaiters.set(scope, (message) => {
+    ctx.replyWaiters.delete(scope);
+    settle(message);
+  });
+  return {
+    promise,
+    close: () => {
+      ctx.replyWaiters.delete(scope);
+      settle(undefined);
+    },
+  };
 }
 
 /**

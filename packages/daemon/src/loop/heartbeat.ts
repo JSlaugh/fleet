@@ -83,6 +83,55 @@ export async function refreshStalledHeartbeatsOnBoot(ctx: LoopContext): Promise<
 const RELEASABLE_STATUS_LABELS = [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput];
 
 /**
+ * Recovery for this daemon's *own* orphaned claims — the gap `releaseStaleClaims`
+ * below deliberately can't cover. A hard process death between `processTicket`'s
+ * label swap and its state upsert (a window that spans worktree setup) leaves an
+ * issue labeled in-progress, assigned to this daemon, with no status comment and
+ * **no TicketRecord** — so boot recovery (records only) never sees it, the own-
+ * assignee check below skips it, and a peer's `isClaimStale` refuses to act with
+ * no comment. In-progress/needs-input + assigned only to me (or nobody) + no
+ * record + not currently being claimed = orphan; release it back to the pool,
+ * where a fresh claim is safe and free.
+ */
+export async function healOrphanedClaims(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issues: ReadyIssue[],
+  myLogin: string,
+): Promise<void> {
+  for (const issue of issues) {
+    if (ctx.isShuttingDown()) return;
+    if (!RELEASABLE_STATUS_LABELS.some((label) => issue.labels.includes(label))) continue;
+    if ((issue.assignees ?? []).some((login) => login !== myLogin)) continue;
+    if (ctx.state.get(project.name, issue.number)) continue;
+    const scope = key(project.name, issue.number);
+    if (ctx.running.has(scope)) continue;
+
+    log("loop", `${scope}: labeled in-flight but this daemon has no record of it (claim died mid-flight) — releasing to the pool`);
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: released**`,
+          `A previous claim was interrupted before any work was recorded — returned to the pool for a fresh claim.`,
+        ].join("\n\n"),
+      );
+      for (const login of issue.assignees ?? []) await removeAssignee(project, issue.number, login);
+      await markReady(project, issue.number);
+      new Journal(ctx.dataDirPath, project.name, issue.number).append({ type: "fleet", event: "orphaned-claim-released" });
+      ctx.state.appendEvent("orphaned-claim-released", {
+        project: project.name,
+        issueNumber: issue.number,
+        data: { title: issue.title },
+      });
+    } catch (err) {
+      logError("loop", `${scope}: could not release the orphaned claim`, err);
+    }
+  }
+}
+
+/**
  * Releases `project`'s open `fleet:in-progress`/`fleet:needs-input` issues
  * that are assigned to someone other than this daemon and whose status
  * comment's heartbeat has gone stale — the dead-daemon recovery path.

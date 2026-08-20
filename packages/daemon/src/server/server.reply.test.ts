@@ -52,6 +52,14 @@ describe("POST /api/tickets/:project/:issue/reply", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s (not 500) on an empty body", async () => {
+    const { app } = makeApp();
+
+    const res = await app.request("/api/tickets/alpha/7/reply", { method: "POST" });
+
+    expect(res.status).toBe(400);
+  });
+
   it("400s on a blank message", async () => {
     const { app } = makeApp();
     const res = await postJson(app, "/api/tickets/alpha/7/reply", { message: "   " });

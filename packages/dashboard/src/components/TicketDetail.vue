@@ -162,21 +162,34 @@ async function submitReply() {
   }
 }
 
+/** Guards concurrent load()s (3s poll + action-triggered refetches): only the latest request's responses are applied. */
+let loadSeq = 0;
+
 async function load() {
+  const seq = ++loadSeq;
   try {
-    detail.value = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
+    const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
+    if (seq !== loadSeq) return;
+    detail.value = fetched;
     error.value = undefined;
   } catch (err) {
+    if (seq !== loadSeq) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
   try {
-    report.value = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
+    const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
+    if (seq !== loadSeq) return;
+    report.value = fetched;
   } catch {
+    if (seq !== loadSeq) return;
     report.value = undefined;
   }
   try {
-    transcript.value = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
+    const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
+    if (seq !== loadSeq) return;
+    transcript.value = fetched;
   } catch {
+    if (seq !== loadSeq) return;
     transcript.value = undefined;
   }
   const prUrl = detail.value?.record?.prUrl;
@@ -185,9 +198,12 @@ async function load() {
     if (key !== lastDiffFetchKey) {
       lastDiffFetchKey = key;
       try {
-        diff.value = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
+        const fetched = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
+        if (seq !== loadSeq) return;
+        diff.value = fetched;
         diffError.value = undefined;
       } catch (err) {
+        if (seq !== loadSeq) return;
         diff.value = undefined;
         diffError.value = err instanceof Error ? err.message : String(err);
       }

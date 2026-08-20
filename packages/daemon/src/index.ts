@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "sync-templates") {
-    await syncTemplates(config.projects);
+    await syncTemplates(config.projects, { port: config.dashboardPort });
     return;
   }
 

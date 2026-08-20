@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { selectSetupProfile, type ProjectConfig } from "@fleet/shared";
 import { readBuildSpec } from "./buildspec.ts";
-import { run, runShell } from "./exec.ts";
+import { run, runShell, type RunResult } from "./exec.ts";
 import { log } from "../log.ts";
 
 export interface Worktree {
@@ -62,8 +62,9 @@ export async function createWorktree(
   return { path, branch, type };
 }
 
-export async function removeWorktree(project: ProjectConfig, worktreePath: string): Promise<void> {
-  await run("git", ["-C", project.repoPath, "worktree", "remove", "--force", worktreePath], { allowFailure: true });
+/** Best-effort (allowFailure) — callers that care whether it actually worked read the returned stderr. */
+export function removeWorktree(project: ProjectConfig, worktreePath: string): Promise<RunResult> {
+  return run("git", ["-C", project.repoPath, "worktree", "remove", "--force", worktreePath], { allowFailure: true });
 }
 
 /** Best-effort: the remote branch may already be gone (GitHub auto-delete, manual prune). */

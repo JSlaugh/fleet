@@ -644,6 +644,7 @@ describe("processTicket", () => {
         number: 7,
         title: "the epic",
         body: ["epic description", "", "## Children", "- [ ] #62 child ticket"].join("\n"),
+        labels: [],
       });
       const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
       const childIssue = issue(62, ["fleet:ready"], { body: "Part-of: #7" });

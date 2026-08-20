@@ -54,6 +54,15 @@ describe("POST /api/tickets/:project/:issue/priority", () => {
     expect(res.status).toBe(404);
   });
 
+  it("400s (not 500) on an empty body", async () => {
+    const app = makeApp();
+
+    const res = await app.request("/api/tickets/alpha/7/priority", { method: "POST" });
+
+    expect(res.status).toBe(400);
+    expect(github.setPriority).not.toHaveBeenCalled();
+  });
+
   it("400s on a priority label that doesn't exist", async () => {
     const app = makeApp();
     const res = await postJson(app, "/api/tickets/alpha/7/priority", { priority: "urgent" });

@@ -15,8 +15,17 @@ function stripBom(raw: string): string {
   return raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
 }
 
-function loadFleetServerEntry(): Record<string, unknown> {
-  const raw = stripBom(readFileSync(MCP_TEMPLATE_PATH, "utf8"));
+/**
+ * The template carries `{{FLEET_DIR}}`/`{{FLEET_URL}}` placeholders rather
+ * than literal values: the fleet checkout's path differs per machine and the
+ * port is config, and a stamped-verbatim absolute path silently breaks the
+ * MCP server in every registered repo on any other clone.
+ */
+function loadFleetServerEntry(port: number): Record<string, unknown> {
+  const fleetDir = join(TEMPLATES_DIR, "..").replace(/\\/g, "/");
+  const raw = stripBom(readFileSync(MCP_TEMPLATE_PATH, "utf8"))
+    .replaceAll("{{FLEET_DIR}}", fleetDir)
+    .replaceAll("{{FLEET_URL}}", `http://localhost:${port}`);
   const parsed = JSON.parse(raw) as { mcpServers: { fleet: Record<string, unknown> } };
   return parsed.mcpServers.fleet;
 }
@@ -229,8 +238,8 @@ function syncMcpJson(project: ProjectConfig, fleetEntryTemplate: Record<string, 
   return destPath;
 }
 
-export async function syncTemplates(projects: ProjectConfig[]): Promise<void> {
-  const fleetEntryTemplate = loadFleetServerEntry();
+export async function syncTemplates(projects: ProjectConfig[], opts: { port?: number } = {}): Promise<void> {
+  const fleetEntryTemplate = loadFleetServerEntry(opts.port ?? 4400);
   for (const project of projects) {
     if (!existsSync(project.repoPath)) {
       log("sync-templates", `WARNING: skipping ${project.name} — repoPath ${project.repoPath} does not exist`);

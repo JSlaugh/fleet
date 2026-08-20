@@ -109,11 +109,22 @@ export async function addressReviews(
       .filter((part): part is string => part !== undefined)
       .join("\n\n---\n\n");
 
-    // Watermarks set before resuming so a crash can't reprocess the same feedback/conflict.
-    if (hasFeedback) ctx.state.update(project.name, record.issueNumber, { lastReviewHandledAt: (feedback as PrFeedback).latestAt });
-    if (isConflicting) ctx.state.update(project.name, record.issueNumber, { conflictHandled: true });
+    // An operator reply can cold-resume this same ticket while the fetches
+    // above were in flight — bail rather than double-starting a session on
+    // the same worktree. Checked again after the swap below, where only
+    // synchronous code separates the check from `track()`.
+    if (ctx.running.has(scope)) continue;
 
     await swapLabel(project, record.issueNumber, FLEET_LABELS.review, FLEET_LABELS.inProgress);
+    if (ctx.running.has(scope)) continue;
+
+    // Watermarks set only after the swap succeeds: a failed swap must retry
+    // next cycle rather than silently dropping the human's feedback (or
+    // wedging `conflictHandled` on a PR that can never report MERGEABLE).
+    // The remaining crash window (swap done, watermark not yet written) costs
+    // at worst one duplicate steer — at-least-once is the right side to err on.
+    if (hasFeedback) ctx.state.update(project.name, record.issueNumber, { lastReviewHandledAt: (feedback as PrFeedback).latestAt });
+    if (isConflicting) ctx.state.update(project.name, record.issueNumber, { conflictHandled: true });
     const reason = hasFeedback && isConflicting
       ? "PR review feedback and a merge conflict arrived"
       : isConflicting
