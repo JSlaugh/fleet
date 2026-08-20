@@ -250,6 +250,16 @@ export class WorkerSession {
    * messages are genuine operator/daemon steering versus SDK-injected content
    * (skill loads, structured-output enforcement) — `summarize()` consumes it
    * to tell the two apart instead of assuming every plain string is ours.
+   *
+   * Verified against a live probe of the installed SDK (0.1.77, streaming
+   * `prompt` input, claude-sonnet-5): a mid-session `send()`-equivalent push
+   * reaches the model (the next turn's reply reflected it) but never once
+   * produces a `type: "user"` message in the output iterator to match
+   * against — so today this queue never actually finds a match, and every
+   * observed plain-string "user" message really is SDK-injected. That's not
+   * a bug in the matching; it's this SDK version's behavior. Kept as the
+   * correct ground-truth mechanism (not content-sniffing) in case a future
+   * SDK version starts echoing steering back.
    */
   private readonly pendingSends: string[] = [];
   sessionId?: string;
@@ -564,8 +574,14 @@ export function summarize(
         // The API returns thinking blocks with an empty `thinking` string
         // (only `signature` populated) whenever thinking display is
         // "omitted" — the default for current models — so a present-but-
-        // empty block is a legitimate response, not a capture bug. Only
-        // attach the field when there's real text to show.
+        // empty block is a legitimate response, not a capture bug: verified
+        // with a live probe of the installed SDK (0.1.77) against
+        // claude-sonnet-5, which reliably produced a lone
+        // {type:"thinking", thinking:"", signature:"<real signature>"}
+        // content block (thinking runs by default; no maxThinkingTokens
+        // needed) with no thinking_delta text ever streamed for it. The SDK
+        // has no option to request "summarized" display — see fleet#177.
+        // Only attach the field when there's real text to show.
         const thinkingText = thinkingBlocks.map((block) => block.thinking).join("\n").slice(0, 1000);
         if (thinkingText.trim()) base.thinking = thinkingText;
       }

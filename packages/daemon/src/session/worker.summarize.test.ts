@@ -87,11 +87,37 @@ describe("summarize", () => {
   });
 
   it("omits thinking when the API returns a signature-only block with no text — the default 'omitted' thinking display on current models, not a capture bug", () => {
+    // Content block shape reproduced verbatim from a live probe of the
+    // installed SDK (0.1.77) against claude-sonnet-5: thinking runs by
+    // default (no maxThinkingTokens needed), but the API never streams a
+    // thinking_delta for it, so `thinking` arrives empty with only
+    // `signature` populated. See fleet#177 for making this configurable.
     const message = {
       type: "assistant",
       message: {
         content: [
-          { type: "thinking", thinking: "", signature: "Erm3RQBIw..." },
+          {
+            type: "thinking",
+            thinking: "",
+            signature:
+              "ErwCCqUBCBAYAipAytRy9GQ1vPHjoFm1JHCmYxgmkkFoVmUxUh9ND7+B9k+PZefCARfL8ZSNFo0AX8QzJBb2KkznPb9WMMZZJN/MGDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ2ZTJjZTBiYi03MjBiLTQ3YjYtOTI1Ni05YTU2NjY2MjIxNjVyEIOZX5qpMDF6Ml61A9doNvOIAQGoAdvYmdQGEgxKLQzc",
+          },
+        ],
+      },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("thinking");
+    expect(result.text).toBe("");
+  });
+
+  it("omits thinking but keeps real text when a thinking block is signature-only and a text block on the same message carries content", () => {
+    const message = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "", signature: "sig" },
           { type: "text", text: "here's my plan" },
         ],
       },
@@ -126,6 +152,11 @@ describe("summarize", () => {
     expect(result).not.toHaveProperty("toolCalls");
   });
 
+  // A live probe of the installed SDK found that today, `send()`-pushed text
+  // never actually produces a matching `type: "user"` message at all (it
+  // reaches the model but isn't echoed) — so pendingSends never matches in
+  // practice yet. These cases exercise the matching logic directly so it's
+  // correct if/when a future SDK version starts echoing steering back.
   it("captures plain-string user content as text when it matches a pending send — genuine operator/daemon steering", () => {
     const message = {
       type: "user",
