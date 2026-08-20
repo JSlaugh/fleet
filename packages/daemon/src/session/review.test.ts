@@ -122,6 +122,26 @@ describe("prompts", () => {
     expect(prompt).toContain("Dark mode: uses theme tokens");
   });
 
+  it("buildMachineReviewPrompt omits the verify section for untyped tickets or types with no verify commands", () => {
+    const prompt = buildMachineReviewPrompt({ number: 7, title: "Fix the thing", body: "Details" }, "abc123 fix", "diff --git a b", "main", undefined, []);
+    expect(prompt).not.toContain("Required verification");
+  });
+
+  it("buildMachineReviewPrompt tells the read-only reviewer to check for evidence the type's verify commands ran", () => {
+    const prompt = buildMachineReviewPrompt(
+      { number: 7, title: "Fix the thing", body: "Details" },
+      "abc123 fix",
+      "diff --git a b",
+      "main",
+      undefined,
+      ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+    );
+    expect(prompt).toContain("## Required verification for this ticket type");
+    expect(prompt).toContain("- `pnpm --filter @fleet/daemon typecheck`");
+    expect(prompt).toContain("- `pnpm --filter @fleet/daemon test`");
+    expect(prompt).toContain("You cannot run them yourself");
+  });
+
   it("buildMachineReviewFixPrompt names each finding with location, severity, and detail, and allows rebuttal", () => {
     const result: MachineReviewResult = {
       verdict: "findings",

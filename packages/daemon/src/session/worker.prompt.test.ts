@@ -117,4 +117,27 @@ describe("buildSystemPromptAppend", () => {
     expect(plain).toContain("You are a fleet planning agent");
     expect(buildSystemPromptAppend("plan", "some type contract")).toBe(plain);
   });
+
+  it("a code session with no verify commands is unaffected by an empty list", () => {
+    expect(buildSystemPromptAppend("code", undefined, [])).toBe(buildSystemPromptAppend("code"));
+  });
+
+  it("a code session with verify commands appends them as required before completion", () => {
+    const appendix = buildSystemPromptAppend("code", undefined, ["pnpm typecheck", "pnpm test"]);
+    expect(appendix).toContain("Required verification for this ticket type");
+    expect(appendix).toContain("- `pnpm typecheck`");
+    expect(appendix).toContain("- `pnpm test`");
+    expect(appendix).toContain('status "completed"');
+  });
+
+  it("a code session with both a type contract and verify commands appends both, contract first", () => {
+    const appendix = buildSystemPromptAppend("code", "Run the backend test suite before declaring done.", ["pnpm test"]);
+    expect(appendix.indexOf("Run the backend test suite")).toBeLessThan(appendix.indexOf("Required verification"));
+    expect(appendix).toContain("- `pnpm test`");
+  });
+
+  it("a plan session ignores verify commands entirely — untyped and typed planners are byte-for-byte identical", () => {
+    const plain = buildSystemPromptAppend("plan");
+    expect(buildSystemPromptAppend("plan", undefined, ["pnpm test"])).toBe(plain);
+  });
 });

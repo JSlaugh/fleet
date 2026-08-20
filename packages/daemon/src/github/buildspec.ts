@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BuildSpecSchema, checklistForType, type BuildSpec } from "@fleet/shared";
+import { BuildSpecSchema, checklistForType, verifyForType, type BuildSpec } from "@fleet/shared";
 import { parse } from "yaml";
 import { logError } from "../log.ts";
 
@@ -47,6 +47,24 @@ export function resolveTypeChecklist(scope: string, worktreePath: string, ticket
     return spec ? checklistForType(spec, ticketType) : undefined;
   } catch (err) {
     logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its review checklist`, err);
+    return undefined;
+  }
+}
+
+/**
+ * Re-reads `fleet.yaml` fresh (rather than trusting anything cached from
+ * claim time) to find `ticketType`'s declared `verify:` commands — same
+ * fail-open posture as `resolveTypeChecklist`: a missing/malformed spec at
+ * session-open or review time falls back to no verify commands rather than
+ * blocking.
+ */
+export function resolveTypeVerify(scope: string, worktreePath: string, ticketType: string | undefined): string[] | undefined {
+  if (!ticketType) return undefined;
+  try {
+    const spec = readBuildSpec(worktreePath);
+    return spec ? verifyForType(spec, ticketType) : undefined;
+  } catch (err) {
+    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its verify commands`, err);
     return undefined;
   }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, tierForType, type BuildSpec } from "./buildspec.ts";
+import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, tierForType, verifyForType, type BuildSpec } from "./buildspec.ts";
 
 describe("BuildSpecSchema", () => {
   it("accepts a bare step list", () => {
@@ -103,6 +103,39 @@ describe("BuildSpecSchema", () => {
     expect(() =>
       BuildSpecSchema.parse({
         setup: { default: { setup: [{ name: "install", run: "pnpm install" }], review: "" } },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts a profile written as { setup, verify } alongside contract, review, and bare-array profiles", () => {
+    const parsed = BuildSpecSchema.parse({
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        daemon: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          verify: ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+        },
+      },
+    });
+    const profiles = parsed.setup as Record<string, unknown>;
+    expect(profiles.daemon).toEqual({
+      setup: [{ name: "install", run: "pnpm install" }],
+      verify: ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+    });
+  });
+
+  it("accepts { setup, verify } with an empty verify list", () => {
+    expect(() =>
+      BuildSpecSchema.parse({
+        setup: { default: { setup: [{ name: "install", run: "pnpm install" }], verify: [] } },
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a { setup, verify } profile with an empty command string in the list", () => {
+    expect(() =>
+      BuildSpecSchema.parse({
+        setup: { default: { setup: [{ name: "install", run: "pnpm install" }], verify: [""] } },
       }),
     ).toThrow();
   });
@@ -291,6 +324,36 @@ describe("selectSetupProfile", () => {
     });
   });
 
+  describe("type and verify commands", () => {
+    const verifySpec: BuildSpec = {
+      setup: {
+        default: [{ name: "install", run: "pnpm install" }],
+        daemon: {
+          setup: [{ name: "install", run: "pnpm install" }],
+          verify: ["pnpm --filter @fleet/daemon test"],
+        },
+        frontend: [{ name: "install", run: "pnpm install" }],
+      },
+    };
+
+    it("a matched type profile with verify: reports both type and verify", () => {
+      const selection = selectSetupProfile(verifySpec, ["fleet:type:daemon"]);
+      expect(selection.type).toBe("daemon");
+      expect(selection.verify).toEqual(["pnpm --filter @fleet/daemon test"]);
+    });
+
+    it("a matched type profile with no verify: reports the type but leaves verify undefined", () => {
+      const selection = selectSetupProfile(verifySpec, ["fleet:type:frontend"]);
+      expect(selection.type).toBe("frontend");
+      expect(selection.verify).toBeUndefined();
+    });
+
+    it("no type label: verify is undefined even if default declared one", () => {
+      const selection = selectSetupProfile(verifySpec, ["fleet:ready"]);
+      expect(selection.verify).toBeUndefined();
+    });
+  });
+
   describe("type and tier", () => {
     const tierSpec: BuildSpec = {
       setup: {
@@ -387,6 +450,40 @@ describe("checklistForType", () => {
   it("is undefined for list-form specs regardless of type", () => {
     const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
     expect(checklistForType(listSpec, "dashboard")).toBeUndefined();
+  });
+});
+
+describe("verifyForType", () => {
+  const verifySpec: BuildSpec = {
+    setup: {
+      default: [{ name: "install", run: "pnpm install" }],
+      daemon: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        verify: ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+      },
+      frontend: [{ name: "install", run: "pnpm install" }],
+    },
+  };
+
+  it("returns a type's declared verify commands", () => {
+    expect(verifyForType(verifySpec, "daemon")).toEqual(["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"]);
+  });
+
+  it("is undefined for a type with no verify key", () => {
+    expect(verifyForType(verifySpec, "frontend")).toBeUndefined();
+  });
+
+  it("is undefined for an unknown type name", () => {
+    expect(verifyForType(verifySpec, "mobile")).toBeUndefined();
+  });
+
+  it("is undefined when type is undefined", () => {
+    expect(verifyForType(verifySpec, undefined)).toBeUndefined();
+  });
+
+  it("is undefined for list-form specs regardless of type", () => {
+    const listSpec: BuildSpec = { setup: [{ name: "install", run: "pnpm install" }] };
+    expect(verifyForType(listSpec, "daemon")).toBeUndefined();
   });
 });
 

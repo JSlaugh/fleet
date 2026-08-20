@@ -62,16 +62,28 @@ Contract:
 /**
  * The system prompt appendix for one session: the fixed per-kind contract,
  * plus (code sessions only) the claimed ticket's type-specific `contract:`
- * markdown, if its `fleet.yaml` profile declares one. Pulled out as a pure
- * function so the appendix text is unit-testable without spinning up the SDK
- * `query()` call the constructor makes. A planner never gets a type appendix
- * — `contract:` describes coding-contract nuance (verify commands, review
- * focus), not something a read-only decomposition pass needs.
+ * markdown and `verify:` commands, if its `fleet.yaml` profile declares them.
+ * Pulled out as a pure function so the appendix text is unit-testable without
+ * spinning up the SDK `query()` call the constructor makes. A planner never
+ * gets a type appendix — a read-only decomposition pass doesn't write code to
+ * verify.
  */
-export function buildSystemPromptAppend(kind: SessionKind, typeContract?: string): string {
+export function buildSystemPromptAppend(kind: SessionKind, typeContract?: string, verifyCommands?: string[]): string {
   const base = kind === "plan" ? PLANNER_CONTRACT : WORKER_CONTRACT;
-  if (kind === "plan" || !typeContract) return base;
-  return `${base}\n\n${typeContract}`;
+  if (kind === "plan") return base;
+  const parts = [base];
+  if (typeContract) parts.push(typeContract);
+  if (verifyCommands && verifyCommands.length > 0) {
+    parts.push(
+      [
+        "## Required verification for this ticket type",
+        "",
+        `This ticket's type requires the following commands to pass before you finish with status "completed":`,
+        ...verifyCommands.map((c) => `- \`${c}\``),
+      ].join("\n"),
+    );
+  }
+  return parts.join("\n\n");
 }
 
 export const FORBIDDEN_BASH_REASON =
@@ -302,6 +314,8 @@ export class WorkerSession {
       kind?: SessionKind;
       /** The claimed ticket's type-specific `contract:` markdown, if any — see `buildSystemPromptAppend`. */
       contract?: string;
+      /** The claimed ticket's type-specific `verify:` commands, if any — see `buildSystemPromptAppend`. */
+      verify?: string[];
     },
   ) {
     this.kind = opts.kind ?? "code";
@@ -327,7 +341,7 @@ export class WorkerSession {
         systemPrompt: {
           type: "preset",
           preset: "claude_code",
-          append: buildSystemPromptAppend(this.kind, opts.contract),
+          append: buildSystemPromptAppend(this.kind, opts.contract, opts.verify),
         },
         outputFormat: {
           type: "json_schema",

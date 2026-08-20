@@ -99,6 +99,10 @@ export function truncateDiff(diff: string, max: number = DIFF_CHAR_LIMIT): strin
  * `fleet.yaml` (#158) — explicit dimensions layered on top of the generic
  * pass, not a replacement for it. Undefined for untyped tickets or a type
  * with no declared checklist, in which case the prompt is unchanged.
+ *
+ * `verifyCommands` is the type's declared `verify:` commands (#160). The
+ * reviewer is read-only, so it can't run them itself — it's asked to check
+ * the diff and commit history for evidence they were run instead.
  */
 export function buildMachineReviewPrompt(
   issue: { number: number; title: string; body: string },
@@ -106,6 +110,7 @@ export function buildMachineReviewPrompt(
   diff: string,
   defaultBranch: string,
   checklist?: string,
+  verifyCommands?: string[],
 ): string {
   return [
     `Review the branch diff for GitHub issue #${issue.number}: ${issue.title}`,
@@ -113,6 +118,15 @@ export function buildMachineReviewPrompt(
     `## Commits\n\n${commits || "(none)"}`,
     `## Diff (against origin/${defaultBranch})\n\n\`\`\`diff\n${truncateDiff(diff)}\n\`\`\``,
     checklist ? `## Additional review dimensions for this ticket's type\n\n${checklist}` : "",
+    verifyCommands && verifyCommands.length > 0
+      ? [
+          "## Required verification for this ticket type",
+          "",
+          "This ticket's type requires the following commands to have been run before completion. You cannot run them yourself — check the diff and commit history for evidence they were run, and raise a finding if there's no such evidence:",
+          "",
+          ...verifyCommands.map((c) => `- \`${c}\``),
+        ].join("\n")
+      : "",
     `Judge whether this diff correctly and completely resolves the issue. Finish with your structured verdict.`,
   ]
     .filter(Boolean)
