@@ -66,6 +66,7 @@ const detail = ref<TicketDetail>();
 const report = ref<TicketReport>();
 const transcript = ref<TicketTranscript>();
 const diff = ref<TicketDiff>();
+const diffError = ref<string>();
 const error = ref<string>();
 const reply = ref("");
 const sending = ref(false);
@@ -73,6 +74,8 @@ const replyStatus = ref<string>();
 const restarting = ref(false);
 const restartStatus = ref<string>();
 let timer: ReturnType<typeof setInterval> | undefined;
+/** The diff only changes when new commits land, so re-fetching it every 3s poll tick (like the journal) would be a wasted `gh` shell-out — this tracks what's already been fetched so a refetch only fires when `lastActivityAt` actually moves. */
+let lastDiffFetchKey: string | undefined;
 
 const accepting = ref(false);
 const acceptStatus = ref<string>();
@@ -176,14 +179,23 @@ async function load() {
   } catch {
     transcript.value = undefined;
   }
-  if (detail.value?.record?.prUrl) {
-    try {
-      diff.value = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
-    } catch {
-      diff.value = undefined;
+  const prUrl = detail.value?.record?.prUrl;
+  if (prUrl) {
+    const key = `${props.ticket.project}#${props.ticket.issueNumber}|${prUrl}|${detail.value?.record?.lastActivityAt ?? ""}`;
+    if (key !== lastDiffFetchKey) {
+      lastDiffFetchKey = key;
+      try {
+        diff.value = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
+        diffError.value = undefined;
+      } catch (err) {
+        diff.value = undefined;
+        diffError.value = err instanceof Error ? err.message : String(err);
+      }
     }
   } else {
+    lastDiffFetchKey = undefined;
     diff.value = undefined;
+    diffError.value = undefined;
   }
 }
 
@@ -325,6 +337,7 @@ onUnmounted(() => clearInterval(timer));
           Diff
         </h3>
         <PrDiff v-if="diff" :diff="diff" />
+        <p v-else-if="diffError" class="text-xs text-red-600 dark:text-red-400">{{ diffError }}</p>
         <p v-else class="text-xs text-neutral-400 dark:text-neutral-500">Loading diff…</p>
       </section>
 
