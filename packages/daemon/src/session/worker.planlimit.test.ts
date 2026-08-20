@@ -1,5 +1,6 @@
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
-import { parseLimitReset } from "./worker.ts";
+import { checkPlanLimit, parseLimitReset } from "./worker.ts";
 
 describe("parseLimitReset", () => {
   it("parses the historical epoch-seconds suffix format", () => {
@@ -31,5 +32,76 @@ describe("parseLimitReset", () => {
   it("is case-insensitive when detecting the limit phrase", () => {
     const reset = parseLimitReset("CLAUDE AI USAGE LIMIT REACHED|1735689600");
     expect(reset).toEqual(new Date(1735689600 * 1000));
+  });
+});
+
+describe("checkPlanLimit", () => {
+  it("reports a plan limit from a rejected rate_limit_event, converting resetsAt from epoch seconds", () => {
+    const message = {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", resetsAt: 1735689600, rateLimitType: "five_hour" },
+    } as unknown as SDKMessage;
+
+    expect(checkPlanLimit(message)).toEqual({ limitResetAt: new Date(1735689600 * 1000) });
+  });
+
+  it("reports a plan limit with no reset time when a rejected event carries none", () => {
+    const message = {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected" },
+    } as unknown as SDKMessage;
+
+    expect(checkPlanLimit(message)).toEqual({ limitResetAt: undefined });
+  });
+
+  it("ignores allowed and allowed_warning rate_limit_events", () => {
+    for (const status of ["allowed", "allowed_warning"]) {
+      const message = {
+        type: "rate_limit_event",
+        rate_limit_info: { status, utilization: 0.8 },
+      } as unknown as SDKMessage;
+
+      expect(checkPlanLimit(message)).toBeUndefined();
+    }
+  });
+
+  it("falls back to the legacy text-based detection when no structured event fires", () => {
+    const message = {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "Claude AI usage limit reached|1735689600" }] },
+    } as unknown as SDKMessage;
+
+    expect(checkPlanLimit(message)).toEqual({ limitResetAt: new Date(1735689600 * 1000) });
+  });
+
+  it("returns undefined for a message matching neither signal", () => {
+    const message = {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "just talking" }] },
+    } as unknown as SDKMessage;
+
+    expect(checkPlanLimit(message)).toBeUndefined();
+  });
+
+  it("dedups across a stream: the structured event wins and a later legacy-text match on the same limit hit is never reached", () => {
+    // Mirrors how nextResult/runReviewSession consume a message stream: iterate,
+    // call checkPlanLimit per message, and stop at the first hit — so one limit
+    // hit can never produce two plan-limit turn results even if both signals
+    // eventually appear.
+    const messages = [
+      { type: "rate_limit_event", rate_limit_info: { status: "rejected", resetsAt: 1735689600 } },
+      { type: "assistant", message: { content: [{ type: "text", text: "Claude AI usage limit reached|1735776000" }] } },
+    ] as unknown as SDKMessage[];
+
+    const hits: { limitResetAt?: Date }[] = [];
+    for (const message of messages) {
+      const hit = checkPlanLimit(message);
+      if (hit) {
+        hits.push(hit);
+        break;
+      }
+    }
+
+    expect(hits).toEqual([{ limitResetAt: new Date(1735689600 * 1000) }]);
   });
 });

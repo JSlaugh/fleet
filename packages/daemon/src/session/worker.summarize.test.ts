@@ -372,4 +372,36 @@ describe("summarize", () => {
     expect(result.durationMs).toBe(99999);
     expect(result).not.toHaveProperty("structuredOutput");
   });
+
+  it("captures a rate_limit_event's status, type, utilization, and resetsAt for journaling", () => {
+    const message = {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "rejected", rateLimitType: "five_hour", utilization: 1, resetsAt: 1735689600 },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.rateLimitInfo).toEqual({
+      status: "rejected",
+      rateLimitType: "five_hour",
+      utilization: 1,
+      resetsAt: 1735689600,
+    });
+  });
+
+  it("captures a rate_limit_event with only status set", () => {
+    const message = {
+      type: "rate_limit_event",
+      rate_limit_info: { status: "allowed_warning" },
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.rateLimitInfo).toEqual({
+      status: "allowed_warning",
+      rateLimitType: undefined,
+      utilization: undefined,
+      resetsAt: undefined,
+    });
+  });
 });

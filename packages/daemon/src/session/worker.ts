@@ -238,6 +238,27 @@ export function findLimitText(message: SDKMessage): string | undefined {
   return undefined;
 }
 
+/**
+ * The one signal `WorkerSession.nextResult`/`runReviewSession` act on for a plan
+ * usage-limit hit: the SDK's structured `rate_limit_event` (`status: "rejected"`,
+ * added in the SDK bump for fleet#177) when present, falling back to the older
+ * `findLimitText`/`parseLimitReset` text heuristic otherwise. A `rate_limit_event`
+ * and a legacy text match can never both fire off the *same* message — they key off
+ * disjoint `message.type`s — so a caller that returns as soon as this returns
+ * non-undefined can't double-report one limit hit, even across a stream where both
+ * signals eventually appear.
+ */
+export function checkPlanLimit(message: SDKMessage): { limitResetAt?: Date } | undefined {
+  if (message.type === "rate_limit_event") {
+    if (message.rate_limit_info.status !== "rejected") return undefined;
+    const resetsAt = message.rate_limit_info.resetsAt;
+    return { limitResetAt: resetsAt !== undefined ? new Date(resetsAt * 1000) : undefined };
+  }
+  const limitText = findLimitText(message);
+  if (!limitText) return undefined;
+  return { limitResetAt: parseLimitReset(limitText) };
+}
+
 export class WorkerSession {
   readonly abortController = new AbortController();
   private readonly input = new MessageQueue<SDKUserMessage>();
@@ -346,9 +367,9 @@ export class WorkerSession {
           this.costUsd = message.total_cost_usd;
           this.modelUsage = summarizeModelUsage(message.modelUsage);
         }
-        const limitText = findLimitText(message);
-        if (limitText) {
-          const limitResetAt = parseLimitReset(limitText);
+        const planLimit = checkPlanLimit(message);
+        if (planLimit) {
+          const { limitResetAt } = planLimit;
           log("worker", `${this.opts.scope}: plan usage limit reached${limitResetAt ? ` — resets ${limitResetAt.toISOString()}` : " — no reset time parsed"}`);
           return { kind: this.kind, errorSubtype: "plan_limit", limitResetAt: limitResetAt?.toISOString() } as TurnResult;
         }
@@ -655,6 +676,15 @@ export function summarize(
     if (message.subtype === "success") {
       base.structuredOutput = (message as { structured_output?: unknown }).structured_output;
     }
+  }
+  if (message.type === "rate_limit_event") {
+    const info = message.rate_limit_info;
+    base.rateLimitInfo = {
+      status: info.status,
+      rateLimitType: info.rateLimitType,
+      utilization: info.utilization,
+      resetsAt: info.resetsAt,
+    };
   }
   return base;
 }
