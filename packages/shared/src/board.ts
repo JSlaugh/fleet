@@ -32,11 +32,22 @@ export interface ClosedTicketRecord extends TicketRecord {
   reviewRounds?: number;
   /** Total inline PR review comments. Undefined when the PR outcome fetch failed at cleanup. */
   reviewCommentCount?: number;
+  /** Total `bash-denied` PreToolUse hook firings across this ticket's full journal — see `denyForbiddenBash`. Computed once at cleanup time. */
+  bashDeniedCount?: number;
+  /** Approval-request wait-time stats across this ticket's full journal (`approval-decided` events). Computed once at cleanup time. */
+  approvalLatency?: ApprovalLatencyStats;
 }
 
 /** A `ClosedTicketRecord` enriched with the GitHub issue URL, for the history view's table rows. */
 export interface HistoryRecord extends ClosedTicketRecord {
   url: string;
+}
+
+/** Summable approval/bash-denial wait-time stats — `count`/`totalWaitMs` sum cleanly across tickets; divide to get a mean at render time. */
+export interface ApprovalLatencyStats {
+  count: number;
+  totalWaitMs: number;
+  maxWaitMs: number;
 }
 
 /** Cross-ticket rollups over a (possibly filtered) slice of history — see `computeHistoryAggregates`. */
@@ -51,6 +62,12 @@ export interface HistoryAggregates {
   autoResumedRate: number;
   planRate: number;
   modelTotals: Record<string, ModelUsageSummary>;
+  /** Total `bash-denied` firings per ticket's assigned model (`record.model`, falling back to `"unknown"`) — a rising rate is early warning a worker is going off-contract. */
+  bashDeniedByModel: Record<string, number>;
+  /** Approval-request wait times across every ticket in the filtered set — the human-bottleneck number `approvalTimeoutMinutes` papers over. */
+  approvalLatency: ApprovalLatencyStats;
+  /** Machine-review/plan-review outcome counts across the filtered set (`"none"` = no review ran, e.g. opted out or still a live ticket) — whether the gate catches real defects or burns fix rounds on noise. */
+  machineReviewOutcomeCounts: Record<"pending" | "passed" | "findings" | "skipped" | "none", number>;
 }
 
 /** `GET /api/history` response: a newest-first page of archived tickets plus aggregates over the full filtered set. */
@@ -213,6 +230,25 @@ export interface SessionSegmentReport {
   costUsd: number;
 }
 
+/** One machine/plan-review finding, as journaled — `file`/`line` on a code-review finding, `ticketIndex` on a plan-review finding. */
+export interface TicketReportFinding {
+  file?: string;
+  line?: number;
+  ticketIndex?: number;
+  severity?: "blocker" | "major" | "minor";
+  summary?: string;
+  detail?: string;
+}
+
+/** The one (once-per-ticket-capped) machine-review or plan-review attempt this ticket's journal recorded, if any. */
+export interface TicketReportMachineReview {
+  kind: "code" | "plan";
+  outcome: "pending" | "passed" | "findings" | "error";
+  model?: string;
+  findings: TicketReportFinding[];
+  errorSubtype?: string;
+}
+
 /** Server-side aggregation of a ticket's full journal — derived and read-only, tolerant of journals written before any per-tool digest/error/turn enrichment existed. */
 export interface TicketReport {
   toolCounts: Record<string, number>;
@@ -226,4 +262,14 @@ export interface TicketReport {
     durationMs: number;
     costUsd: number;
   };
+  /** Every `denyForbiddenBash` firing across the journal — a rising count is early warning the worker is going off-contract. */
+  bashDeniedCount: number;
+  /** Wait-time stats across every `approval-decided` journal event. */
+  approvalLatency: ApprovalLatencyStats;
+  /** Total per-message cache-read tokens across the ticket's own worker turn (excludes the machine-review sub-session, same as `toolCounts`). */
+  cacheReadTokens: number;
+  /** Total per-message cache-creation (cache-write) tokens across the ticket's own worker turn. */
+  cacheCreationTokens: number;
+  /** Present once a machine-review or plan-review pass has started for this ticket. */
+  machineReview?: TicketReportMachineReview;
 }

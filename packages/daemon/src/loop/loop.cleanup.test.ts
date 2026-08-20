@@ -1,6 +1,7 @@
 import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { Journal } from "../store/journal.ts";
 import { FleetLoop } from "./loop.ts";
 
 vi.mock("../github/github.ts", () => ({
@@ -57,7 +58,7 @@ function makeLoop(seed?: TicketRecord) {
   const internals = loop as unknown as {
     cleanupFinished: (p: ProjectConfig, openIssues: { number: number }[]) => Promise<void>;
   };
-  return { loop, state, internals };
+  return { loop, state, internals, dataDir };
 }
 
 beforeEach(() => {
@@ -181,6 +182,32 @@ describe("cleanupFinished", () => {
     const archived = loop.getHistoryRecord("alpha", 7);
     expect(archived?.prState).toBe("MERGED");
     expect(archived?.timeToMergeMs).toBeUndefined();
+  });
+
+  it("archives bash-denied count and approval-latency stats summarized from the ticket's journal", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    const { dataDir, loop, internals } = makeLoop(record());
+    const journal = new Journal(dataDir, "alpha", 7);
+    journal.append({ type: "fleet", event: "bash-denied", command: "git push" });
+    journal.append({ type: "fleet", event: "approval-decided", toolName: "Bash", outcome: "allowed", waitMs: 1000 });
+    journal.append({ type: "fleet", event: "approval-decided", toolName: "Write", outcome: "denied", waitMs: 3000 });
+
+    await internals.cleanupFinished(project, []);
+
+    const archived = loop.getHistoryRecord("alpha", 7);
+    expect(archived?.bashDeniedCount).toBe(1);
+    expect(archived?.approvalLatency).toEqual({ count: 2, totalWaitMs: 4000, maxWaitMs: 3000 });
+  });
+
+  it("archives zeroed bash-denied/approval-latency stats when the journal has neither event", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    const { loop, internals } = makeLoop(record());
+
+    await internals.cleanupFinished(project, []);
+
+    const archived = loop.getHistoryRecord("alpha", 7);
+    expect(archived?.bashDeniedCount).toBe(0);
+    expect(archived?.approvalLatency).toEqual({ count: 0, totalWaitMs: 0, maxWaitMs: 0 });
   });
 
   it("does not fetch a PR outcome for a PR-less plan record", async () => {

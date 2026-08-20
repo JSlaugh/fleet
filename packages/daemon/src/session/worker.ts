@@ -442,12 +442,23 @@ export function activityNote(entry: Record<string, unknown>): string | undefined
 }
 
 export function summarizeModelUsage(
-  usage: Record<string, { inputTokens: number; outputTokens: number; costUSD: number }> | undefined,
+  usage:
+    | Record<
+        string,
+        { inputTokens: number; outputTokens: number; costUSD: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number }
+      >
+    | undefined,
 ): Record<string, ModelUsageSummary> | undefined {
   if (!usage) return undefined;
   const out: Record<string, ModelUsageSummary> = {};
   for (const [model, u] of Object.entries(usage)) {
-    out[model] = { inputTokens: u.inputTokens, outputTokens: u.outputTokens, costUsd: u.costUSD };
+    out[model] = {
+      inputTokens: u.inputTokens,
+      outputTokens: u.outputTokens,
+      costUsd: u.costUSD,
+      cacheReadTokens: u.cacheReadInputTokens ?? 0,
+      cacheCreationTokens: u.cacheCreationInputTokens ?? 0,
+    };
   }
   return out;
 }

@@ -77,6 +77,10 @@ export interface ModelUsageSummary {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** Absent on usage recorded before this field existed — treat as 0. */
+  cacheReadTokens?: number;
+  /** Absent on usage recorded before this field existed — treat as 0. */
+  cacheCreationTokens?: number;
 }
 
 /**
@@ -97,6 +101,8 @@ export function mergeModelUsage(
           inputTokens: prev.inputTokens + usage.inputTokens,
           outputTokens: prev.outputTokens + usage.outputTokens,
           costUsd: prev.costUsd + usage.costUsd,
+          cacheReadTokens: (prev.cacheReadTokens ?? 0) + (usage.cacheReadTokens ?? 0),
+          cacheCreationTokens: (prev.cacheCreationTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
         }
       : { ...usage };
   }

@@ -65,6 +65,15 @@ function formatPct(rate: number): string {
   return `${Math.round(rate * 100)}%`;
 }
 
+function formatApprovalWait(latency: { count: number; totalWaitMs: number; maxWaitMs: number } | undefined): string {
+  if (!latency || latency.count === 0) return "—";
+  return `${formatDuration(latency.totalWaitMs / latency.count) || "0s"} / ${formatDuration(latency.maxWaitMs) || "0s"}`;
+}
+
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
 const hasPrev = computed(() => offset.value > 0);
 const hasNext = computed(() => offset.value + PAGE_SIZE < total.value);
 const rangeStart = computed(() => (total.value === 0 ? 0 : offset.value + 1));
@@ -117,11 +126,22 @@ function nextPage() {
           {{ formatPct(aggregates.autoResumedRate) }} / {{ formatPct(aggregates.planRate) }}
         </div>
       </div>
+      <div class="rounded border border-neutral-200 p-2 dark:border-neutral-700">
+        <div class="text-[11px] uppercase tracking-wide text-neutral-400">Approval wait (mean/max)</div>
+        <div class="text-sm font-semibold">{{ formatApprovalWait(aggregates.approvalLatency) }}</div>
+      </div>
+      <div class="rounded border border-neutral-200 p-2 dark:border-neutral-700">
+        <div class="text-[11px] uppercase tracking-wide text-neutral-400">Review pass / findings / skipped</div>
+        <div class="text-sm font-semibold">
+          {{ aggregates.machineReviewOutcomeCounts.passed }} / {{ aggregates.machineReviewOutcomeCounts.findings }} /
+          {{ aggregates.machineReviewOutcomeCounts.skipped }}
+        </div>
+      </div>
     </div>
 
     <div
       v-if="aggregates && Object.keys(aggregates.modelTotals).length > 0"
-      class="mb-4 flex flex-wrap gap-2 text-xs text-neutral-500 dark:text-neutral-400"
+      class="mb-2 flex flex-wrap gap-2 text-xs text-neutral-500 dark:text-neutral-400"
     >
       <span
         v-for="(usage, model) in aggregates.modelTotals"
@@ -130,6 +150,8 @@ function nextPage() {
       >
         <strong class="text-neutral-700 dark:text-neutral-200">{{ shortModelName(String(model)) }}</strong>
         · {{ formatCost(usage.costUsd) || "<$0.01" }}
+        · {{ formatTokens(usage.cacheReadTokens ?? 0) }} cache read / {{ formatTokens(usage.cacheCreationTokens ?? 0) }} write
+        <template v-if="aggregates.bashDeniedByModel[model]"> · {{ aggregates.bashDeniedByModel[model] }} bash-denied</template>
       </span>
     </div>
 
