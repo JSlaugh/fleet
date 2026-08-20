@@ -25,6 +25,7 @@ import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import BoardColumn from "./components/BoardColumn.vue";
 import DigestPanel from "./components/DigestPanel.vue";
 import DormantProjectRow from "./components/DormantProjectRow.vue";
+import FileTicketPanel from "./components/FileTicketPanel.vue";
 import HistoryView from "./components/HistoryView.vue";
 import TicketCard from "./components/TicketCard.vue";
 import TicketDetail from "./components/TicketDetail.vue";
@@ -45,6 +46,7 @@ const pauseToggling = ref(false);
 const restartingDaemon = ref(false);
 const projectPauseToggling = ref<string>();
 const projectPinToggling = ref<string>();
+const fileTicketProject = ref<string>();
 const error = ref<string>();
 const approvalsError = ref<string>();
 const connected = ref(false);
@@ -308,6 +310,14 @@ onUnmounted(() => {
           >
             {{ dormantProjects.includes(project) ? "○" : "●" }}
           </button>
+          <button
+            type="button"
+            class="px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            :title="`File a ticket in ${project}`"
+            @click="fileTicketProject = project"
+          >
+            +
+          </button>
         </span>
       </nav>
       <button
@@ -428,6 +438,12 @@ onUnmounted(() => {
       </main>
       <HistoryView v-else :project-filter="projectFilter" @select="selected = $event" />
       <TicketDetail v-if="selected" :ticket="selected" @close="selected = undefined" />
+      <FileTicketPanel
+        v-if="fileTicketProject"
+        :project="fileTicketProject"
+        @close="fileTicketProject = undefined"
+        @created="load"
+      />
       <DigestPanel v-if="showDigest" @close="showDigest = false" />
       <ApprovalsPanel
         v-if="showApprovals"
