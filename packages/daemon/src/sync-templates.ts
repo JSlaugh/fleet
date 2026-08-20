@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FLEET_LABELS, PLAN_LABEL, profileNames, typeLabel, type BuildSpec, type ProjectConfig } from "@fleet/shared";
@@ -139,6 +139,15 @@ body:
 }
 
 /**
+ * Every filename `issueFormFiles` can produce matches this — the numeric
+ * chooser-ordering prefix plus a `fleet-task`/`fleet-epic` stem that no
+ * hand-authored issue form would plausibly collide with. `syncIssueForms`
+ * uses it to find its own previously-generated files (and only those) when
+ * reconciling the directory against the current `fleet.yaml`.
+ */
+const GENERATED_FORM_PATTERN = /^\d{2}-fleet-(task(-.+)?|epic)\.yml$/;
+
+/**
  * One generic task form, one task form per non-default `fleet.yaml` profile
  * (numbered in the order the profile appears in the spec, matching how
  * `ensureLabels` mints their `fleet:type:*` labels), and the epic form last —
@@ -151,10 +160,30 @@ export function issueFormFiles(spec: BuildSpec | undefined): { fileName: string;
   const profiles = spec ? profileNames(spec) : [];
   const files = [{ fileName: "01-fleet-task.yml", content: genericTaskForm() }];
   profiles.forEach((name, i) => {
-    files.push({ fileName: `${String(i + 2).padStart(2, "0")}-${name}-task.yml`, content: typeTaskForm(name) });
+    files.push({ fileName: `${String(i + 2).padStart(2, "0")}-fleet-task-${name}.yml`, content: typeTaskForm(name) });
   });
   files.push({ fileName: `${String(profiles.length + 2).padStart(2, "0")}-fleet-epic.yml`, content: epicForm() });
   return files;
+}
+
+/**
+ * Removes previously-generated issue forms that the current `fleet.yaml` no
+ * longer produces — e.g. a renamed or removed setup profile — so a shrinking
+ * profile set doesn't leave a defunct form (and its `fleet:type:*` label)
+ * sitting in GitHub's issue-template chooser forever. Only touches files
+ * matching `GENERATED_FORM_PATTERN`; anything else in the directory (a
+ * repo's own issue forms, `config.yml`) is left alone.
+ */
+function pruneStaleIssueForms(destDir: string, keep: Set<string>): string[] {
+  const removed: string[] = [];
+  for (const fileName of readdirSync(destDir)) {
+    if (GENERATED_FORM_PATTERN.test(fileName) && !keep.has(fileName)) {
+      const destPath = join(destDir, fileName);
+      rmSync(destPath);
+      removed.push(destPath);
+    }
+  }
+  return removed;
 }
 
 function syncSkill(project: ProjectConfig): string {
@@ -176,8 +205,13 @@ function syncIssueForms(project: ProjectConfig): string[] {
     logError("sync-templates", `${project.name}: fleet.yaml is invalid — generating issue forms without type profiles`, err);
   }
 
+  const files = issueFormFiles(spec);
+  for (const removedPath of pruneStaleIssueForms(destDir, new Set(files.map((f) => f.fileName)))) {
+    log("sync-templates", `removed stale ${removedPath}`);
+  }
+
   const written: string[] = [];
-  for (const { fileName, content } of issueFormFiles(spec)) {
+  for (const { fileName, content } of files) {
     const destPath = join(destDir, fileName);
     writeFileSync(destPath, content);
     written.push(destPath);

@@ -116,14 +116,64 @@ describe("syncTemplates", () => {
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual([
       "01-fleet-task.yml",
-      "02-dashboard-task.yml",
-      "03-daemon-task.yml",
+      "02-fleet-task-dashboard.yml",
+      "03-fleet-task-daemon.yml",
       "04-fleet-epic.yml",
     ]);
 
-    const dashboardForm = readFileSync(join(issueTemplateDir, "02-dashboard-task.yml"), "utf8");
+    const dashboardForm = readFileSync(join(issueTemplateDir, "02-fleet-task-dashboard.yml"), "utf8");
     expect(dashboardForm).toContain("name: Fleet task: Dashboard");
     expect(dashboardForm).toContain('labels: ["fleet:ready", "fleet:type:dashboard"]');
+  });
+
+  it("prunes forms left over from a profile that was renamed or removed since the last run", async () => {
+    const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
+    repoDirs.push(repoPath);
+    const fleetYamlPath = join(repoPath, "fleet.yaml");
+    const project = makeProject({ repoPath });
+
+    writeFileSync(
+      fleetYamlPath,
+      [
+        "setup:",
+        "  default:",
+        "    - name: install",
+        "      run: pnpm install",
+        "  dashboard:",
+        "    setup:",
+        "      - name: install",
+        "        run: pnpm install",
+        "  daemon:",
+        "    setup:",
+        "      - name: install",
+        "        run: pnpm install",
+      ].join("\n"),
+    );
+    await syncTemplates([project]);
+    const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
+    expect(readdirSync(issueTemplateDir).sort()).toEqual([
+      "01-fleet-task.yml",
+      "02-fleet-task-dashboard.yml",
+      "03-fleet-task-daemon.yml",
+      "04-fleet-epic.yml",
+    ]);
+
+    // A repo maintainer's own, non-generated form must survive the reconcile.
+    writeFileSync(join(issueTemplateDir, "05-bug-report.yml"), "name: Bug report\n");
+
+    // "daemon" is renamed to "backend"; "dashboard" is dropped entirely.
+    writeFileSync(
+      fleetYamlPath,
+      ["setup:", "  default:", "    - name: install", "      run: pnpm install", "  backend:", "    setup:", "      - name: install", "        run: pnpm install"].join("\n"),
+    );
+    await syncTemplates([project]);
+
+    expect(readdirSync(issueTemplateDir).sort()).toEqual([
+      "01-fleet-task.yml",
+      "02-fleet-task-backend.yml",
+      "03-fleet-epic.yml",
+      "05-bug-report.yml",
+    ]);
   });
 
   it("falls back to just the generic + epic forms for a list-form fleet.yaml", async () => {
@@ -184,8 +234,8 @@ describe("issueFormFiles", () => {
     });
     expect(files.map((f) => f.fileName)).toEqual([
       "01-fleet-task.yml",
-      "02-frontend-task.yml",
-      "03-backend-task.yml",
+      "02-fleet-task-frontend.yml",
+      "03-fleet-task-backend.yml",
       "04-fleet-epic.yml",
     ]);
     expect(files[1]?.content).toContain('labels: ["fleet:ready", "fleet:type:frontend"]');
