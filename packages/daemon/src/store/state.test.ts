@@ -235,6 +235,35 @@ describe("StateStore", () => {
     });
   });
 
+  describe("project dormant pin (#152)", () => {
+    it("defaults to active, and setProjectDormant/isProjectDormant/getDormantProjects round-trip and persist", () => {
+      const dataDir = tempDataDir();
+      const store = new StateStore(dataDir);
+      expect(store.isProjectDormant("alpha")).toBe(false);
+      expect(store.getDormantProjects()).toEqual([]);
+
+      store.setProjectDormant("alpha", true);
+      expect(store.isProjectDormant("alpha")).toBe(true);
+      expect(store.isProjectDormant("beta")).toBe(false);
+      expect(store.getDormantProjects()).toEqual(["alpha"]);
+      expect(new StateStore(dataDir).getDormantProjects()).toEqual(["alpha"]);
+
+      store.setProjectDormant("beta", true);
+      expect(new StateStore(dataDir).getDormantProjects().sort()).toEqual(["alpha", "beta"]);
+
+      store.setProjectDormant("alpha", false);
+      expect(store.isProjectDormant("alpha")).toBe(false);
+      expect(new StateStore(dataDir).getDormantProjects()).toEqual(["beta"]);
+    });
+
+    it("is idempotent — pinning an already-dormant project doesn't duplicate it", () => {
+      const store = new StateStore(tempDataDir());
+      store.setProjectDormant("alpha", true);
+      store.setProjectDormant("alpha", true);
+      expect(store.getDormantProjects()).toEqual(["alpha"]);
+    });
+  });
+
   describe("clearLiveFlags", () => {
     it("downgrades running tickets to stalled and clears sessionLive, as crash recovery on daemon restart", () => {
       const dataDir = tempDataDir();

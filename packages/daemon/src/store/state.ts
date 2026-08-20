@@ -81,6 +81,22 @@ export class StateStore {
     setMeta(this.db, "pausedProjects", [...projects]);
   }
 
+  /** Operator-pinned-dormant project names — the board redesign's manual active/dormant toggle (#152), unrelated to claim/resume pausing above. */
+  getDormantProjects(): string[] {
+    return [...(getMeta<string[]>(this.db, "dormantProjects") ?? [])];
+  }
+
+  isProjectDormant(project: string): boolean {
+    return this.getDormantProjects().includes(project);
+  }
+
+  setProjectDormant(project: string, dormant: boolean): void {
+    const projects = new Set(getMeta<string[]>(this.db, "dormantProjects") ?? []);
+    if (dormant) projects.add(project);
+    else projects.delete(project);
+    setMeta(this.db, "dormantProjects", [...projects]);
+  }
+
   /**
    * Sums ledger entries within the trailing `windowHours`, pruning anything
    * older off the stored ledger first so it never grows past what the widest

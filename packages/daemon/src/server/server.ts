@@ -62,6 +62,7 @@ export function createApp(opts: {
       pausedUntil: state.getPausedUntil(),
       paused: state.getPaused(),
       pausedProjects: loop.getPausedProjects(),
+      dormantProjects: loop.getDormantProjects(),
       runningCount: loop.activeCount,
       budget: loop.getBudgetStatus(),
       workHoursReserve: loop.getWorkHoursReserveStatus(),
@@ -108,6 +109,17 @@ export function createApp(opts: {
     if (typeof paused !== "boolean") return c.json({ error: "paused must be a boolean" }, 400);
     loop.setProjectPaused(name, paused);
     return c.json({ ok: true, paused });
+  });
+
+  // The board redesign's manual active/dormant pin (#152) — a dashboard
+  // display toggle only, unrelated to the claim/resume pause above.
+  app.post("/api/projects/:name/dormant", async (c) => {
+    const name = c.req.param("name");
+    if (!loop.getProject(name)) return c.json({ error: `unknown project ${name}` }, 404);
+    const { dormant } = await c.req.json<{ dormant: boolean }>().catch(() => ({ dormant: undefined }));
+    if (typeof dormant !== "boolean") return c.json({ error: "dormant must be a boolean" }, 400);
+    loop.setProjectDormant(name, dormant);
+    return c.json({ ok: true, dormant });
   });
 
   // Terminal: the process exits once the requested mode's work finishes, so

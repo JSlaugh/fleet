@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { BoardTicket } from "@fleet/shared";
-import { groupByEpic } from "./board.ts";
+import type { BoardTicket, TicketRecord } from "@fleet/shared";
+import { groupByEpic, projectRollup } from "./board.ts";
 
 function ticket(patch: Partial<BoardTicket> & { issueNumber: number }): BoardTicket {
   return {
@@ -51,5 +51,37 @@ describe("groupByEpic", () => {
     const bareplan = ticket({ issueNumber: 7, isPlan: true });
     const unrelated = ticket({ issueNumber: 8 });
     expect(groupByEpic([bareplan, unrelated]).map((t) => t.issueNumber)).toEqual([7, 8]);
+  });
+});
+
+describe("projectRollup", () => {
+  it("counts only the named project's tickets per column, ignoring other projects", () => {
+    const list = [
+      ticket({ issueNumber: 1, project: "alpha", status: "ready" }),
+      ticket({ issueNumber: 2, project: "alpha", status: "ready" }),
+      ticket({ issueNumber: 3, project: "alpha", status: "review" }),
+      ticket({ issueNumber: 4, project: "beta", status: "ready" }),
+    ];
+
+    const rollup = projectRollup("alpha", list, 0);
+
+    expect(rollup.project).toBe("alpha");
+    expect(rollup.counts.ready).toBe(2);
+    expect(rollup.counts.review).toBe(1);
+    expect(rollup.counts["in-progress"]).toBe(0);
+    expect(rollup.counts.done).toBe(0);
+  });
+
+  it("needs attention when a ticket is needs-input, when a record failed, or when approvals are pending — otherwise not", () => {
+    expect(projectRollup("alpha", [ticket({ issueNumber: 1, project: "alpha", status: "ready" })], 0).needsAttention).toBe(false);
+    expect(projectRollup("alpha", [ticket({ issueNumber: 1, project: "alpha", status: "needs-input" })], 0).needsAttention).toBe(true);
+    expect(
+      projectRollup(
+        "alpha",
+        [ticket({ issueNumber: 1, project: "alpha", status: "review", record: { status: "failed" } as unknown as TicketRecord })],
+        0,
+      ).needsAttention,
+    ).toBe(true);
+    expect(projectRollup("alpha", [ticket({ issueNumber: 1, project: "alpha", status: "ready" })], 2).needsAttention).toBe(true);
   });
 });
