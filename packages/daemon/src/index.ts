@@ -4,7 +4,7 @@ import { ApprovalManager } from "./session/approvals.ts";
 import { loadConfig } from "./config.ts";
 import { ensureLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
-import { log, logError } from "./log.ts";
+import { log, logError, suppressCanUseToolShadowedWarning } from "./log.ts";
 import { startServer } from "./server/server.ts";
 import { StateStore } from "./store/state.ts";
 import { syncTemplates } from "./sync-templates.ts";
@@ -24,6 +24,8 @@ Options:
 `;
 
 async function main(): Promise<void> {
+  suppressCanUseToolShadowedWarning();
+
   // `pnpm daemon -- <args>` forwards the `--` separator through turbo verbatim; drop it
   // so subcommand dispatch below still sees the subcommand as args[0].
   const args = process.argv.slice(2).filter((arg) => arg !== "--");
