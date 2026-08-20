@@ -1,6 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describe, expect, it } from "vitest";
-import { summarize } from "./worker.ts";
+import { shouldJournal, summarize } from "./worker.ts";
 
 describe("summarize", () => {
   it("captures tool_use blocks as toolCalls alongside the existing tools list", () => {
@@ -373,6 +373,69 @@ describe("summarize", () => {
     expect(result).not.toHaveProperty("structuredOutput");
   });
 
+  it("captures a result message's terminal_reason", () => {
+    const message = {
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.5,
+      num_turns: 7,
+      duration_ms: 12345,
+      terminal_reason: "completed",
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.terminalReason).toBe("completed");
+  });
+
+  it("omits terminalReason when a result carries none", () => {
+    const message = {
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.5,
+      num_turns: 7,
+      duration_ms: 12345,
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("terminalReason");
+  });
+
+  it("summarizes a result's permission_denials as tool name -> count", () => {
+    const message = {
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.5,
+      num_turns: 7,
+      duration_ms: 12345,
+      permission_denials: [
+        { tool_name: "Bash", tool_use_id: "toolu_1", tool_input: {} },
+        { tool_name: "Bash", tool_use_id: "toolu_2", tool_input: {} },
+        { tool_name: "WebFetch", tool_use_id: "toolu_3", tool_input: {} },
+      ],
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result.permissionDenials).toEqual({ Bash: 2, WebFetch: 1 });
+  });
+
+  it("omits permissionDenials when a result carries none", () => {
+    const message = {
+      type: "result",
+      subtype: "success",
+      total_cost_usd: 0.5,
+      num_turns: 7,
+      duration_ms: 12345,
+      permission_denials: [],
+    } as unknown as SDKMessage;
+
+    const result = summarize(message);
+
+    expect(result).not.toHaveProperty("permissionDenials");
+  });
+
   it("captures a rate_limit_event's status, type, utilization, and resetsAt for journaling", () => {
     const message = {
       type: "rate_limit_event",
@@ -404,4 +467,32 @@ describe("summarize", () => {
       resetsAt: undefined,
     });
   });
+});
+
+describe("shouldJournal", () => {
+  it.each(["assistant", "user", "result", "rate_limit_event"])("journals a %s message", (type) => {
+    expect(shouldJournal({ type } as unknown as SDKMessage)).toBe(true);
+  });
+
+  it.each(["init", "api_retry"])("journals a system message with subtype %s", (subtype) => {
+    expect(shouldJournal({ type: "system", subtype } as unknown as SDKMessage)).toBe(true);
+  });
+
+  it.each([
+    "status",
+    "compact_boundary",
+    "hook_started",
+    "task_notification",
+    "permission_denied",
+    "thinking_tokens",
+  ])("drops a system message with subtype %s — no journal-worth content", (subtype) => {
+    expect(shouldJournal({ type: "system", subtype } as unknown as SDKMessage)).toBe(false);
+  });
+
+  it.each(["stream_event", "tool_progress", "auth_status", "tool_use_summary", "prompt_suggestion", "conversation_reset"])(
+    "drops a %s message — new-in-0.3.x noise summarize() has no branch for",
+    (type) => {
+      expect(shouldJournal({ type } as unknown as SDKMessage)).toBe(false);
+    },
+  );
 });

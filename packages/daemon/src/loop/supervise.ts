@@ -20,7 +20,7 @@ import {
   shouldMachineReview,
   shouldReviewPlan,
 } from "../session/review.ts";
-import type { WorkerSession } from "../session/worker.ts";
+import { formatTurnError, type WorkerSession } from "../session/worker.ts";
 import { collectBranchDiff, hasCommits, type Worktree } from "../github/worktree.ts";
 
 /**
@@ -68,7 +68,7 @@ export async function supervise(
         if (parked === "closed") return;
         continue;
       }
-      await finishFailed(ctx, project, issue, turn.errorSubtype ?? "unknown error");
+      await finishFailed(ctx, project, issue, formatTurnError(turn));
       return;
     }
 
@@ -86,7 +86,7 @@ export async function supervise(
       if (parked === "closed") return;
       continue;
     }
-    await finishFailed(ctx, project, issue, turn.errorSubtype ?? "unknown error");
+    await finishFailed(ctx, project, issue, formatTurnError(turn));
     return;
   }
 }

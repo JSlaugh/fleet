@@ -1,5 +1,5 @@
 import { AbortError, query } from "@anthropic-ai/claude-agent-sdk";
-import type { CanUseTool, HookCallback, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, HookCallback, SDKMessage, SDKPermissionDenial, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import {
   PlanResultSchema,
@@ -184,6 +184,8 @@ export interface CodeTurnResult {
   errorSubtype?: string;
   /** Set alongside `errorSubtype: "plan_limit"` when a reset time could be parsed out of the limit message. */
   limitResetAt?: string;
+  /** The SDK result message's `terminal_reason`, when the turn ended on a `result` message — richer than `errorSubtype` alone for diagnosing why a turn ended. */
+  terminalReason?: string;
 }
 
 export interface PlanTurnResult {
@@ -191,9 +193,16 @@ export interface PlanTurnResult {
   result?: PlanResult;
   errorSubtype?: string;
   limitResetAt?: string;
+  terminalReason?: string;
 }
 
 export type TurnResult = CodeTurnResult | PlanTurnResult;
+
+/** The error text `finishFailed` reports for a turn that didn't complete — `errorSubtype` plus `terminalReason` when the SDK supplied one, so "why did this turn end" isn't guessed from subtype alone. */
+export function formatTurnError(turn: { errorSubtype?: string; terminalReason?: string }): string {
+  const subtype = turn.errorSubtype ?? "unknown error";
+  return turn.terminalReason ? `${subtype} (terminal_reason: ${turn.terminalReason})` : subtype;
+}
 
 /**
  * The reliable, reactive signal for a plan usage-limit hit: no API exposes remaining
@@ -244,8 +253,7 @@ export function findLimitText(message: SDKMessage): string | undefined {
     }
   }
   if (message.type === "result" && message.subtype !== "success") {
-    const errors = (message as { errors?: string[] }).errors;
-    return errors?.find((e) => USAGE_LIMIT_PATTERN.test(e));
+    return message.errors.find((e) => USAGE_LIMIT_PATTERN.test(e));
   }
   return undefined;
 }
@@ -269,6 +277,38 @@ export function checkPlanLimit(message: SDKMessage): { limitResetAt?: Date } | u
   const limitText = findLimitText(message);
   if (!limitText) return undefined;
   return { limitResetAt: parseLimitReset(limitText) };
+}
+
+/** `SDKMessage["type"]`s `summarize()` extracts real content for. */
+const JOURNALED_MESSAGE_TYPES = new Set<string>(["assistant", "user", "result", "rate_limit_event"]);
+
+/**
+ * `system` messages worth a journal row even though `summarize()` has no
+ * dedicated branch for them and would otherwise produce a bare
+ * `{type, subtype}` row: `init` carries the session id `nextResult` reads out
+ * of it, and `api_retry` is a genuine diagnostic signal (a request retried).
+ */
+const JOURNALED_SYSTEM_SUBTYPES = new Set<string>(["init", "api_retry"]);
+
+/**
+ * Whether a message is worth a journal row at all. The SDK's `SDKMessage`
+ * union grew from ~6 to ~39 members in 0.3.x (`tool_progress`,
+ * `thinking_tokens`, `status`, `hook_started`, task/notification events, ...)
+ * — `summarize()` has no branch for almost all of them, so left unguarded
+ * they'd journal as bare `{type: "..."}` noise, and `journal_entries` has no
+ * retention policy to age it back out. Kept as an explicit allowlist (types
+ * `summarize()` actually extracts content for, plus the two `system`
+ * subtypes above) rather than a blocklist, so a *future* SDK message type
+ * defaults to being dropped instead of silently journaling noise again.
+ */
+export function shouldJournal(message: SDKMessage): boolean {
+  if (message.type === "system") return JOURNALED_SYSTEM_SUBTYPES.has(message.subtype);
+  return JOURNALED_MESSAGE_TYPES.has(message.type);
+}
+
+/** The on-disk transcript title for a session, so `claude --resume`/the transcripts directory can identify it at a glance. `suffix` distinguishes a review pass from the worker session it reviews. */
+export function sessionTitle(scope: string, suffix?: string): string {
+  return suffix ? `fleet ${scope} ${suffix}` : `fleet ${scope}`;
 }
 
 export class WorkerSession {
@@ -327,6 +367,8 @@ export class WorkerSession {
         abortController: this.abortController,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         resume: opts.resumeSessionId,
+        // On resume the persisted title wins — this only names a fresh transcript.
+        title: sessionTitle(opts.scope),
         permissionMode: "acceptEdits",
         allowedTools: opts.project.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
         canUseTool: opts.canUseTool,
@@ -359,7 +401,7 @@ export class WorkerSession {
       type: "user",
       message: { role: "user", content: text },
       parent_tool_use_id: null,
-      session_id: this.sessionId ?? "",
+      session_id: this.sessionId,
     });
   }
 
@@ -369,9 +411,11 @@ export class WorkerSession {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
         if (done || !message) return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
-        const entry = summarize(message, { toolTimings: this.toolTimings, pendingSends: this.pendingSends });
-        this.opts.onActivity(activityNote(entry));
-        this.opts.journal.append(entry);
+        if (shouldJournal(message)) {
+          const entry = summarize(message, { toolTimings: this.toolTimings, pendingSends: this.pendingSends });
+          this.opts.onActivity(activityNote(entry));
+          this.opts.journal.append(entry);
+        }
         if (message.type === "system" && message.subtype === "init") {
           this.sessionId = message.session_id;
           this.model = message.model;
@@ -389,17 +433,17 @@ export class WorkerSession {
         }
         if (message.type === "result") {
           if (message.subtype === "success") {
-            const structuredOutput = (message as { structured_output?: unknown }).structured_output;
+            const structuredOutput = message.structured_output;
             if (this.kind === "plan") {
               const parsed = PlanResultSchema.safeParse(structuredOutput);
               if (parsed.success) return { kind: "plan", result: normalizePlanResult(parsed.data) };
-              return { kind: "plan", errorSubtype: "invalid_structured_output" };
+              return { kind: "plan", errorSubtype: "invalid_structured_output", terminalReason: message.terminal_reason };
             }
             const parsed = WorkerResultSchema.safeParse(structuredOutput);
             if (parsed.success) return { kind: "code", result: normalizeResult(parsed.data) };
-            return { kind: "code", errorSubtype: "invalid_structured_output" };
+            return { kind: "code", errorSubtype: "invalid_structured_output", terminalReason: message.terminal_reason };
           }
-          return { kind: this.kind, errorSubtype: message.subtype } as TurnResult;
+          return { kind: this.kind, errorSubtype: message.subtype, terminalReason: message.terminal_reason } as TurnResult;
         }
       }
     } catch (err) {
@@ -516,6 +560,13 @@ export function summarizeModelUsage(
     };
   }
   return out;
+}
+
+/** Tool name → count, for the result journal entry — cross-checks the existing `bash-denied` fleet events without repeating every denial's full tool_input. */
+export function summarizePermissionDenials(denials: SDKPermissionDenial[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const denial of denials) counts[denial.tool_name] = (counts[denial.tool_name] ?? 0) + 1;
+  return counts;
 }
 
 /**
@@ -688,7 +739,11 @@ export function summarize(
     base.numTurns = message.num_turns;
     base.durationMs = message.duration_ms;
     if (message.subtype === "success") {
-      base.structuredOutput = (message as { structured_output?: unknown }).structured_output;
+      base.structuredOutput = message.structured_output;
+    }
+    if (message.terminal_reason) base.terminalReason = message.terminal_reason;
+    if (message.permission_denials && message.permission_denials.length > 0) {
+      base.permissionDenials = summarizePermissionDenials(message.permission_denials);
     }
   }
   if (message.type === "rate_limit_event") {

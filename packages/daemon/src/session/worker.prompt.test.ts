@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeProject } from "../test-support.ts";
-import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock, buildSystemPromptAppend } from "./worker.ts";
+import { buildEpicContextBlock, buildIssuePrompt, buildPriorAttemptBlock, buildSystemPromptAppend, sessionTitle } from "./worker.ts";
 
 const project = makeProject();
 const issue = { number: 42, title: "the ticket", body: "the body" };
@@ -139,5 +139,16 @@ describe("buildSystemPromptAppend", () => {
   it("a plan session ignores verify commands entirely — untyped and typed planners are byte-for-byte identical", () => {
     const plain = buildSystemPromptAppend("plan");
     expect(buildSystemPromptAppend("plan", undefined, ["pnpm test"])).toBe(plain);
+  });
+});
+
+describe("sessionTitle", () => {
+  it("titles a worker session from its scope alone", () => {
+    expect(sessionTitle("alpha#62")).toBe("fleet alpha#62");
+  });
+
+  it("appends a suffix for a review session", () => {
+    expect(sessionTitle("alpha#62", "machine-review")).toBe("fleet alpha#62 machine-review");
+    expect(sessionTitle("alpha#62", "plan-review")).toBe("fleet alpha#62 plan-review");
   });
 });

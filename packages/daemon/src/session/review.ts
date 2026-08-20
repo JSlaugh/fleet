@@ -10,7 +10,7 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { checkPlanLimit, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
+import { checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -250,6 +250,7 @@ async function runReviewSession<T>(opts: {
         model: opts.model,
         abortController,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
+        title: sessionTitle(opts.scope, opts.journalSession),
         permissionMode: "default",
         allowedTools: ["Read", "Grep", "Glob"],
         canUseTool: async (toolName) => ({
@@ -263,7 +264,9 @@ async function runReviewSession<T>(opts: {
       },
     });
     for await (const message of q) {
-      opts.journal.append({ ...summarize(message, { toolTimings }), session: opts.journalSession });
+      if (shouldJournal(message)) {
+        opts.journal.append({ ...summarize(message, { toolTimings }), session: opts.journalSession });
+      }
       if (message.type === "system" && message.subtype === "init") {
         outcome.sessionId = message.session_id;
         log("review", `${opts.scope}: ${opts.logLabel} session ${message.session_id} started (${message.model})`);
@@ -283,7 +286,7 @@ async function runReviewSession<T>(opts: {
           outcome.errorSubtype = message.subtype;
           return outcome;
         }
-        const parsed = opts.parseResult((message as { structured_output?: unknown }).structured_output);
+        const parsed = opts.parseResult(message.structured_output);
         if (parsed !== undefined) outcome.result = parsed;
         else outcome.errorSubtype = "invalid_structured_output";
         return outcome;
