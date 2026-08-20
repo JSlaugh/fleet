@@ -42,18 +42,18 @@ function onSelect(item: AttentionItem) {
         {{ items.length }}
       </span>
     </div>
-    <button
+    <div
       v-for="item in items"
       :key="`${item.kind}:${item.approvalId ?? `${item.project}#${item.issueNumber}`}`"
-      type="button"
-      class="flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
-      @click="onSelect(item)"
+      class="flex items-center gap-2 rounded-md px-1 py-0.5 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-800"
     >
-      <span class="shrink-0 rounded-full px-2 py-0.5 font-medium" :class="KIND_CLASS[item.kind]">
-        {{ KIND_LABEL[item.kind] }}
-      </span>
-      <span class="shrink-0 font-medium text-neutral-700 dark:text-neutral-200">{{ item.project }}#{{ item.issueNumber }}</span>
-      <span class="min-w-0 flex-1 truncate text-neutral-500 dark:text-neutral-400">{{ item.detail }}</span>
+      <button type="button" class="flex min-w-0 flex-1 items-center gap-2 px-1 py-1 text-left" @click="onSelect(item)">
+        <span class="shrink-0 rounded-full px-2 py-0.5 font-medium" :class="KIND_CLASS[item.kind]">
+          {{ KIND_LABEL[item.kind] }}
+        </span>
+        <span class="shrink-0 font-medium text-neutral-700 dark:text-neutral-200">{{ item.project }}#{{ item.issueNumber }}</span>
+        <span class="min-w-0 flex-1 truncate text-neutral-500 dark:text-neutral-400">{{ item.detail }}</span>
+      </button>
       <a
         v-if="item.prUrl ?? item.url"
         :href="item.prUrl ?? item.url"
@@ -61,13 +61,16 @@ function onSelect(item: AttentionItem) {
         rel="noopener"
         class="shrink-0 text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
         :title="item.prUrl ? 'Open PR' : 'Open issue'"
-        @click.stop
+        :aria-label="item.prUrl ? 'Open PR' : 'Open issue'"
       >
         ↗
       </a>
-      <span class="shrink-0 tabular-nums text-neutral-400 dark:text-neutral-500" :title="`Waiting since ${new Date(item.since).toLocaleString()}`">
+      <span
+        class="shrink-0 tabular-nums pr-1 text-neutral-400 dark:text-neutral-500"
+        :title="`Waiting since ${new Date(item.since).toLocaleString()}`"
+      >
         {{ formatWait(item.waitMs) }}
       </span>
-    </button>
+    </div>
   </div>
 </template>
