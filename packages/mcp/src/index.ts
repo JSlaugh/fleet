@@ -1,7 +1,20 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { fetchBoardStatus, fileTicket, formatBacklogText, formatBoardStatusText, queryBacklog } from "./client.ts";
+import {
+  DEFAULT_HISTORY_LIMIT,
+  fetchBoardStatus,
+  fetchHistory,
+  fetchTicketJournal,
+  fetchTicketReport,
+  fileTicket,
+  formatBacklogText,
+  formatBoardStatusText,
+  formatHistoryText,
+  formatJournalText,
+  formatTicketReportText,
+  queryBacklog,
+} from "./client.ts";
 
 const FLEET_URL = process.env.FLEET_URL ?? "http://localhost:4400";
 const FLEET_PROJECT = process.env.FLEET_PROJECT;
@@ -72,6 +85,89 @@ server.registerTool(
     try {
       const summary = await fetchBoardStatus(FLEET_URL);
       return { content: [{ type: "text", text: formatBoardStatusText(summary) }] };
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "fleet_ticket_history",
+  {
+    title: "Query closed fleet ticket history",
+    description:
+      "Lists recently closed (archived) fleet tickets with their outcomes — PR merged/closed, cost, model, review " +
+      "rounds, human rework, machine-review result — plus aggregate stats over the full filtered set. Use to " +
+      "evaluate how past tickets went before filing similar work or when asked how fleet has been performing.",
+    inputSchema: {
+      since: z.string().optional().describe("Only tickets closed at or after this ISO date/timestamp"),
+      until: z.string().optional().describe("Only tickets closed at or before this ISO date/timestamp"),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe(`Max records to list (default ${DEFAULT_HISTORY_LIMIT}); aggregates always cover the full filtered set`),
+      allProjects: z.boolean().optional().describe("True to include every fleet project, not just this repo's"),
+    },
+  },
+  async ({ since, until, limit, allProjects }) => {
+    try {
+      const history = await fetchHistory(FLEET_URL, {
+        project: allProjects ? undefined : FLEET_PROJECT,
+        since,
+        until,
+        limit,
+      });
+      return { content: [{ type: "text", text: formatHistoryText(history) }] };
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "fleet_ticket_report",
+  {
+    title: "Get a fleet ticket's session report",
+    description:
+      "Aggregated stats from one ticket's worker-session journal: per-tool call/error counts, session segments " +
+      "(turns, duration, cost per resumption), bash-contract denials, approval wait times, and machine-review " +
+      "findings. Use to dig into why a specific ticket was slow, expensive, or error-prone.",
+    inputSchema: {
+      issue: z.number().int().positive().describe("Issue number"),
+      project: z.string().optional().describe("Fleet project name; defaults to this repo's project"),
+    },
+  },
+  async ({ issue, project }) => {
+    try {
+      const report = await fetchTicketReport(FLEET_URL, project ?? FLEET_PROJECT, issue);
+      return { content: [{ type: "text", text: formatTicketReportText(report) }] };
+    } catch (err) {
+      return errorResult(err);
+    }
+  },
+);
+
+server.registerTool(
+  "fleet_ticket_journal",
+  {
+    title: "Read a fleet ticket's journal",
+    description:
+      "The tail of one ticket's session journal — a one-line-per-entry narrative of what the worker actually did " +
+      "(assistant messages, tool calls, operator steering, fleet lifecycle events). Use fleet_ticket_report first " +
+      "for the numbers; read the journal when you need the story behind them.",
+    inputSchema: {
+      issue: z.number().int().positive().describe("Issue number"),
+      project: z.string().optional().describe("Fleet project name; defaults to this repo's project"),
+      limit: z.number().int().min(1).max(200).optional().describe("Max journal entries, newest kept (default 50)"),
+    },
+  },
+  async ({ issue, project, limit }) => {
+    try {
+      const journal = await fetchTicketJournal(FLEET_URL, project ?? FLEET_PROJECT, issue);
+      return { content: [{ type: "text", text: formatJournalText(journal.slice(-(limit ?? 50))) }] };
     } catch (err) {
       return errorResult(err);
     }

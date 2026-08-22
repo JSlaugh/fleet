@@ -1,6 +1,6 @@
 ---
 name: fleet-backlog
-description: File well-formed tickets into this project's fleet backlog via the fleet MCP tools. Use proactively when you notice out-of-scope work worth queuing (a bug, a follow-up, a piece of tech debt) while doing something else, or whenever the user asks to file, queue, backlog, or track work for fleet.
+description: File well-formed tickets into this project's fleet backlog via the fleet MCP tools, and evaluate how past fleet tickets went (outcomes, cost, review friction). Use proactively when you notice out-of-scope work worth queuing (a bug, a follow-up, a piece of tech debt) while doing something else, or whenever the user asks to file, queue, backlog, or track work for fleet — or asks how fleet has been performing.
 ---
 
 # fleet-backlog
@@ -38,8 +38,21 @@ Don't use this for the work you're currently doing — finish that yourself. Thi
 
 Prefer commenting on the issue over editing the body. At claim time the worker's first prompt includes the issue body and every comment on it, read fresh — so a comment added before the ticket is claimed is just as effective as editing the body, without disturbing the original problem statement. Reserve body edits for genuine rescoping.
 
+## Evaluating past work
+
+When the user asks how fleet has been doing, whether a past ticket went well, or what similar work has cost — or you want a baseline before filing something — use the read-only evaluation tools:
+
+1. **Start with `fleet_ticket_history`** for the closed-ticket record: per-ticket outcomes (PR merged vs. closed, cost, model, review rounds, whether a human had to rework the output) plus aggregates over everything matching the filter. It defaults to this project and the 10 most recent closures; pass `since`/`until` to scope a period, or `allProjects: true` for the whole fleet.
+2. **Drill into one ticket with `fleet_ticket_report`** — tool-call and error counts, per-session cost/turns/duration, approval wait times, machine-review findings. This is the "why was this ticket slow or expensive" view.
+3. **Read `fleet_ticket_journal` when you need the story** — a one-line-per-entry narrative of what the worker actually did. Reach for it after the report points at something odd, not as a first stop; it's the most verbose of the three.
+
+These tools read the daemon's archive, so they only cover tickets fleet itself ran — issues closed outside fleet won't appear.
+
 ## Tools
 
 - `fleet_query_backlog` — lists this project's current tickets (number, title, status, priority). No input.
 - `fleet_file_ticket` — files a new ticket. Input: `{ title, body, priority?: "p1"|"p2"|"p3", ready?: boolean, dependsOn?: number[] }`.
 - `fleet_board_status` — per-column ticket counts across all fleet-managed projects, plus currently running tickets and their latest activity. Useful context if the user asks "what's fleet up to".
+- `fleet_ticket_history` — closed tickets with outcomes and aggregates. Input: `{ since?, until?, limit? (default 10), allProjects? }`.
+- `fleet_ticket_report` — one ticket's session stats. Input: `{ issue, project? }`.
+- `fleet_ticket_journal` — one ticket's journal tail. Input: `{ issue, project?, limit? (default 50) }`.
