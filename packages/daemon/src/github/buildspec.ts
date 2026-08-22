@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { BuildSpecSchema, checklistForType, verifyForType, type BuildSpec } from "@fleet/shared";
+import { BuildSpecSchema, checklistForType, contractForType, verifyForType, type BuildSpec } from "@fleet/shared";
 import { parse } from "yaml";
 import { logError } from "../log.ts";
 
@@ -31,6 +31,26 @@ export function readBuildSpec(repoRoot: string): BuildSpec | undefined {
   const path = join(repoRoot, "fleet.yaml");
   if (!existsSync(path)) return undefined;
   return parseBuildSpec(readFileSync(path, "utf8"));
+}
+
+/**
+ * Re-reads `fleet.yaml` fresh (rather than trusting anything cached from
+ * claim time) to find `ticketType`'s declared `contract:` markdown, so a
+ * resumed session picks up a since-edited contract same as a fresh claim
+ * would. Best-effort: a missing/malformed spec at session-open time (e.g. a
+ * resume after the worktree's fleet.yaml was hand-edited into something
+ * invalid) fails open to no appendix rather than blocking the session — the
+ * same fail-open posture the machine review gate uses.
+ */
+export function resolveTypeContract(scope: string, worktreePath: string, ticketType: string | undefined): string | undefined {
+  if (!ticketType) return undefined;
+  try {
+    const spec = readBuildSpec(worktreePath);
+    return spec ? contractForType(spec, ticketType) : undefined;
+  } catch (err) {
+    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its contract appendix`, err);
+    return undefined;
+  }
 }
 
 /**

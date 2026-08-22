@@ -27,12 +27,17 @@ export const PLAN_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(PlanReviewResultSchema, 
 export const MACHINE_REVIEW_TIMEOUT_MS = 8 * 60_000;
 
 const DIFF_CHAR_LIMIT = 80_000;
+/** Discussion and the worker report are unbounded inputs — each is capped so neither can starve the diff of its budget (#199). */
+const CONTEXT_SECTION_CHAR_LIMIT = 10_000;
+/** However much added context the prompt carries, the diff keeps at least this much of the shared budget (#199). */
+const DIFF_CHAR_FLOOR = 40_000;
 
 const REVIEWER_CONTRACT = `
 You are a fleet machine reviewer: a cheap pre-review pass over one ticket's branch diff before it goes to a human.
 
 Contract:
-- Read-only. You may Read/Grep/Glob files in this worktree for context. Never modify anything.
+- Read-only: Read, Grep, and Glob are your only tools — there is no Bash and no way to modify anything. Inspect directories with Glob, never with Read.
+- Your only deliverable is the structured verdict (the StructuredOutput call). Never write the verdict as prose — no report, no closing summary.
 - Do NOT run tests or builds — they already ran in the worker session that produced this diff.
 - Report real defects only: bugs, broken edge cases, unmet requirements from the ticket, dangerous changes (data loss, security), contract violations with surrounding code.
 - Do NOT report style, formatting, or preference nits. "pass" is the normal outcome for competent work.
@@ -43,7 +48,8 @@ const PLAN_REVIEWER_CONTRACT = `
 You are a fleet plan reviewer: a cheap pre-review pass over a proposed decomposition of an epic into child tickets, before those children are filed as real GitHub issues.
 
 Contract:
-- Read-only. You may Read/Grep/Glob files in this worktree for context. Never modify anything.
+- Read-only: Read, Grep, and Glob are your only tools — there is no Bash and no way to modify anything. Inspect directories with Glob, never with Read.
+- Your only deliverable is the structured verdict (the StructuredOutput call). Never write the verdict as prose — no report, no closing summary.
 - Judge each proposed child ticket: is it self-contained (a competent engineer could implement it without reading the sibling tickets) and PR-sized (not another epic in disguise)?
 - Judge the decomposition as a whole: does it cover the epic's stated scope, or is something obviously missing?
 - Do NOT report style, wording, or preference nits. "pass" is the normal outcome for a competent decomposition.
@@ -100,35 +106,76 @@ export function truncateDiff(diff: string, max: number = DIFF_CHAR_LIMIT): strin
   return `${diff.slice(0, max)}\n[diff truncated at ${max} characters — use Read/Grep to inspect the rest]`;
 }
 
+/** Unlike `truncateDiff` this keeps the END of the block — the newest comments are the ones most likely to amend or overrule the issue body. */
+export function truncateDiscussion(block: string, max: number = CONTEXT_SECTION_CHAR_LIMIT): string {
+  if (block.length <= max) return block;
+  return `[${block.length - max} characters of older discussion truncated]\n${block.slice(-max)}`;
+}
+
+function truncateReport(text: string, max: number = CONTEXT_SECTION_CHAR_LIMIT): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n[report truncated at ${max} characters]`;
+}
+
+export interface MachineReviewPromptContext {
+  /** The claimed ticket type's `review:` markdown from `fleet.yaml` (#158) — explicit dimensions layered on top of the generic pass, not a replacement for it. */
+  checklist?: string;
+  /** The type's declared `verify:` commands (#160). The read-only reviewer can't run them — it judges the implementer's report (or, absent one, the diff) for evidence they ran. */
+  verifyCommands?: string[];
+  /** The type's `contract:` block — the rules the implementer was ordered to follow, so the reviewer judges against them instead of unknowingly contradicting them (#199). */
+  contract?: string;
+  /** Issue discussion in the same `@author: body` form the worker's first prompt carries (#199). */
+  comments?: string[];
+  /** The implementer's structured self-report from the turn under review (#199). */
+  workerReport?: { summary: string; prBody?: string };
+}
+
 /**
- * `checklist` is the claimed ticket type's `review:` markdown from
- * `fleet.yaml` (#158) — explicit dimensions layered on top of the generic
- * pass, not a replacement for it. Undefined for untyped tickets or a type
- * with no declared checklist, in which case the prompt is unchanged.
- *
- * `verifyCommands` is the type's declared `verify:` commands (#160). The
- * reviewer is read-only, so it can't run them itself — it's asked to check
- * the diff and commit history for evidence they were run instead.
+ * Every optional section beyond the issue itself rides in `context` — see
+ * `MachineReviewPromptContext` for what each field is. The added sections
+ * spend from the diff's character budget: discussion and the report are
+ * individually capped, and whatever they plus the contract use shrinks the
+ * diff's truncation limit (never below `DIFF_CHAR_FLOOR`), so briefing the
+ * reviewer better can't balloon the prompt past today's cap.
  */
 export function buildMachineReviewPrompt(
   issue: { number: number; title: string; body: string },
   commits: string,
   diff: string,
   defaultBranch: string,
-  checklist?: string,
-  verifyCommands?: string[],
+  context: MachineReviewPromptContext = {},
 ): string {
+  const { checklist, verifyCommands, contract, comments, workerReport } = context;
+  const discussion = comments && comments.length > 0 ? truncateDiscussion(comments.join("\n\n")) : "";
+  const report = workerReport
+    ? truncateReport(
+        [`### Summary\n\n${workerReport.summary}`, workerReport.prBody ? `### Proposed PR description\n\n${workerReport.prBody}` : ""]
+          .filter(Boolean)
+          .join("\n\n"),
+      )
+    : "";
+  const extraChars = discussion.length + report.length + (contract?.length ?? 0);
+  const diffBudget = Math.max(DIFF_CHAR_FLOOR, DIFF_CHAR_LIMIT - extraChars);
   return [
     `Review the branch diff for GitHub issue #${issue.number}: ${issue.title}`,
     issue.body || "(no description)",
+    discussion ? `## Discussion on the issue\n\n${discussion}` : "",
+    contract
+      ? `## The rules the implementer was working under\n\nThis ticket type's contract was given to the implementer as binding instructions. Judge the diff against these rules — never raise a finding that faults the work for following them:\n\n${contract}`
+      : "",
+    report
+      ? `## The implementer's report\n\nWhat the implementer says it did, from its structured result. Its claims are not proof — but do not raise a finding this report already answers unless the diff contradicts it:\n\n${report}`
+      : "",
     `## Commits\n\n${commits || "(none)"}`,
-    `## Diff (against origin/${defaultBranch})\n\n\`\`\`diff\n${truncateDiff(diff)}\n\`\`\``,
+    `## Diff (against origin/${defaultBranch})\n\n\`\`\`diff\n${truncateDiff(diff, diffBudget)}\n\`\`\``,
     checklist ? `## Additional review dimensions for this ticket's type\n\n${checklist}` : "",
     verifyCommands && verifyCommands.length > 0
       ? [
           "## Required verification for this ticket type",
           "",
-          "This ticket's type requires the following commands to have been run before completion. You cannot run them yourself — check the diff and commit history for evidence they were run, and raise a finding if there's no such evidence:",
+          workerReport
+            ? "This ticket's type requires the following commands to have been run before completion. You cannot run them yourself — the implementer's report above is included for this purpose: raise a finding only if the report fails to state they were run, or the diff contradicts it:"
+            : "This ticket's type requires the following commands to have been run before completion. You cannot run them yourself — check the diff and commit history for evidence they were run, and raise a finding if there's no such evidence:",
           "",
           ...verifyCommands.map((c) => `- \`${c}\``),
         ].join("\n")

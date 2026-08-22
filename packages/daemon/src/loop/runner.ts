@@ -1,8 +1,8 @@
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
-import { contractForType, tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type Effort, type ProjectConfig, type TicketRecord, type Tier } from "@fleet/shared";
+import { tierForType, ELEVATE_LABEL, LIGHT_LABEL, PLAN_LABEL, mergeModelUsage, type Effort, type ProjectConfig, type TicketRecord, type Tier } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { reportRunFailure } from "./finish.ts";
-import { readBuildSpec, resolveTypeVerify } from "../github/buildspec.ts";
+import { readBuildSpec, resolveTypeContract, resolveTypeVerify } from "../github/buildspec.ts";
 import { getIssue, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
@@ -121,27 +121,8 @@ export interface RunSessionOptions {
 }
 
 /**
- * Re-reads `fleet.yaml` fresh (rather than trusting anything cached from
- * claim time) to find `ticketType`'s declared `contract:` markdown, so a
- * resumed session picks up a since-edited contract same as a fresh claim
- * would. Best-effort: a missing/malformed spec at session-open time (e.g. a
- * resume after the worktree's fleet.yaml was hand-edited into something
- * invalid) fails open to no appendix rather than blocking the session — the
- * same fail-open posture the machine review gate uses.
- */
-export function resolveTypeContract(scope: string, worktreePath: string, ticketType: string | undefined): string | undefined {
-  if (!ticketType) return undefined;
-  try {
-    const spec = readBuildSpec(worktreePath);
-    return spec ? contractForType(spec, ticketType) : undefined;
-  } catch (err) {
-    logError("loop", `${scope}: could not re-read fleet.yaml for ticketType "${ticketType}" — running without its contract appendix`, err);
-    return undefined;
-  }
-}
-
-/**
- * Same re-read-fresh, fail-open posture as `resolveTypeContract`, for the
+ * Same re-read-fresh, fail-open posture as `resolveTypeContract`
+ * (`../github/buildspec.ts`), for the
  * type's declared `tier:` instead of its `contract:` — a resumed session
  * picks up a since-edited tier same as a fresh claim would, and a
  * missing/malformed spec at session-open time falls back to no tier override

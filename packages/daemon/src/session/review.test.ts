@@ -14,6 +14,7 @@ import {
   shouldMachineReview,
   shouldReviewPlan,
   truncateDiff,
+  truncateDiscussion,
 } from "./review.ts";
 
 describe("shouldMachineReview", () => {
@@ -110,51 +111,109 @@ describe("isActionable", () => {
   });
 });
 
+describe("truncateDiscussion", () => {
+  it("passes short blocks through untouched", () => {
+    expect(truncateDiscussion("short", 100)).toBe("short");
+  });
+
+  it("keeps the end of the block — the newest comments — and marks what was dropped", () => {
+    const out = truncateDiscussion(`${"old ".repeat(50)}newest comment`, 20);
+    expect(out.endsWith("newest comment")).toBe(true);
+    expect(out).toContain("characters of older discussion truncated");
+  });
+});
+
 describe("prompts", () => {
+  const issue = { number: 7, title: "Fix the thing", body: "Details" };
+
   it("buildMachineReviewPrompt carries issue, commits, and fenced diff", () => {
-    const prompt = buildMachineReviewPrompt({ number: 7, title: "Fix the thing", body: "Details" }, "abc123 fix", "diff --git a b", "main");
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main");
     expect(prompt).toContain("issue #7: Fix the thing");
     expect(prompt).toContain("abc123 fix");
     expect(prompt).toContain("```diff\ndiff --git a b\n```");
     expect(prompt).toContain("origin/main");
   });
 
-  it("buildMachineReviewPrompt omits the checklist section for untyped tickets", () => {
-    const prompt = buildMachineReviewPrompt({ number: 7, title: "Fix the thing", body: "Details" }, "abc123 fix", "diff --git a b", "main");
+  it("buildMachineReviewPrompt omits every optional section when no context is given", () => {
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main");
     expect(prompt).not.toContain("Additional review dimensions");
+    expect(prompt).not.toContain("Discussion on the issue");
+    expect(prompt).not.toContain("rules the implementer was working under");
+    expect(prompt).not.toContain("implementer's report");
   });
 
   it("buildMachineReviewPrompt appends the type's checklist as explicit review dimensions when given one", () => {
-    const prompt = buildMachineReviewPrompt(
-      { number: 7, title: "Fix the thing", body: "Details" },
-      "abc123 fix",
-      "diff --git a b",
-      "main",
-      "- Accessibility: keyboard-reachable controls\n- Dark mode: uses theme tokens",
-    );
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", {
+      checklist: "- Accessibility: keyboard-reachable controls\n- Dark mode: uses theme tokens",
+    });
     expect(prompt).toContain("## Additional review dimensions for this ticket's type");
     expect(prompt).toContain("Accessibility: keyboard-reachable controls");
     expect(prompt).toContain("Dark mode: uses theme tokens");
   });
 
   it("buildMachineReviewPrompt omits the verify section for untyped tickets or types with no verify commands", () => {
-    const prompt = buildMachineReviewPrompt({ number: 7, title: "Fix the thing", body: "Details" }, "abc123 fix", "diff --git a b", "main", undefined, []);
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", { verifyCommands: [] });
     expect(prompt).not.toContain("Required verification");
   });
 
   it("buildMachineReviewPrompt tells the read-only reviewer to check for evidence the type's verify commands ran", () => {
-    const prompt = buildMachineReviewPrompt(
-      { number: 7, title: "Fix the thing", body: "Details" },
-      "abc123 fix",
-      "diff --git a b",
-      "main",
-      undefined,
-      ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
-    );
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", {
+      verifyCommands: ["pnpm --filter @fleet/daemon typecheck", "pnpm --filter @fleet/daemon test"],
+    });
     expect(prompt).toContain("## Required verification for this ticket type");
     expect(prompt).toContain("- `pnpm --filter @fleet/daemon typecheck`");
     expect(prompt).toContain("- `pnpm --filter @fleet/daemon test`");
     expect(prompt).toContain("You cannot run them yourself");
+    expect(prompt).toContain("check the diff and commit history for evidence");
+  });
+
+  it("buildMachineReviewPrompt frames the lane contract as the rules the implementer was working under", () => {
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", {
+      contract: "Never run `pnpm migrate` in a fleet worktree — the reviewer generates the migration.",
+    });
+    expect(prompt).toContain("## The rules the implementer was working under");
+    expect(prompt).toContain("never raise a finding that faults the work for following them");
+    expect(prompt).toContain("Never run `pnpm migrate` in a fleet worktree");
+  });
+
+  it("buildMachineReviewPrompt carries the issue discussion, same as the worker's prompt", () => {
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", {
+      comments: ["@alice: please also handle X", "@bob: agreed — X is in scope"],
+    });
+    expect(prompt).toContain("## Discussion on the issue");
+    expect(prompt).toContain("@alice: please also handle X");
+    expect(prompt).toContain("@bob: agreed — X is in scope");
+  });
+
+  it("buildMachineReviewPrompt includes the implementer's report and reframes verify around it", () => {
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", "diff --git a b", "main", {
+      verifyCommands: ["pnpm test"],
+      workerReport: { summary: "Fixed the loop bound.", prBody: "## What changed\n\nRan `pnpm test`: 42 passed." },
+    });
+    expect(prompt).toContain("## The implementer's report");
+    expect(prompt).toContain("Fixed the loop bound.");
+    expect(prompt).toContain("Ran `pnpm test`: 42 passed.");
+    expect(prompt).toContain("raise a finding only if the report fails to state they were run");
+    expect(prompt).not.toContain("check the diff and commit history for evidence");
+  });
+
+  it("buildMachineReviewPrompt spends the added sections from the diff budget so the total stays capped", () => {
+    const longDiff = "x".repeat(200_000);
+    const contract = "c".repeat(30_000);
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", longDiff, "main", { contract });
+    expect(prompt).toContain("diff truncated at 50000 characters");
+  });
+
+  it("buildMachineReviewPrompt never squeezes the diff below its floor, and caps the unbounded sections", () => {
+    const longDiff = "x".repeat(200_000);
+    const prompt = buildMachineReviewPrompt(issue, "abc123 fix", longDiff, "main", {
+      contract: "c".repeat(60_000),
+      comments: ["@alice: " + "y".repeat(30_000)],
+      workerReport: { summary: "s".repeat(30_000) },
+    });
+    expect(prompt).toContain("diff truncated at 40000 characters");
+    expect(prompt).toContain("characters of older discussion truncated");
+    expect(prompt).toContain("[report truncated at 10000 characters]");
   });
 
   it("buildMachineReviewFixPrompt names each finding with location, severity, and detail, and allows rebuttal", () => {

@@ -1,12 +1,12 @@
 import { mergeModelUsage, type PlanResult, type ProjectConfig } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
 import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./finish.ts";
-import { MAX_TICKET_TIMEOUT_MINUTES, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
+import { MAX_TICKET_TIMEOUT_MINUTES, getIssueComments, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { extendPause, handlePlanLimit } from "./pause.ts";
 import { recordSpend } from "./budget.ts";
-import { resolveTypeChecklist, resolveTypeVerify } from "../github/buildspec.ts";
+import { resolveTypeChecklist, resolveTypeContract, resolveTypeVerify } from "../github/buildspec.ts";
 import {
   buildMachineReviewFixPrompt,
   buildMachineReviewPrompt,
@@ -75,7 +75,7 @@ export async function supervise(
     }
 
     if (turn.result?.status === "completed") {
-      const gate = await machineReviewGate(ctx, project, issue, worktree, base);
+      const gate = await machineReviewGate(ctx, project, issue, worktree, base, turn.result);
       if (gate.action === "fixing") {
         session.send(gate.prompt);
         continue;
@@ -187,6 +187,7 @@ export async function machineReviewGate(
   issue: ReadyIssue,
   worktree: Worktree,
   base: SessionBase,
+  workerReport: { summary: string; prBody?: string },
 ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
   const scope = key(project.name, issue.number);
   const record = ctx.state.get(project.name, issue.number);
@@ -213,12 +214,27 @@ export async function machineReviewGate(
     const { diff, commits } = await collectBranchDiff(project, worktree.path);
     const checklist = resolveTypeChecklist(scope, worktree.path, record?.ticketType);
     const verify = resolveTypeVerify(scope, worktree.path, record?.ticketType);
+    const contract = resolveTypeContract(scope, worktree.path, record?.ticketType);
+    // Same fail-open posture as the fleet.yaml resolvers: a gh hiccup reviews
+    // without the discussion rather than skipping the review outright.
+    let comments: string[] = [];
+    try {
+      comments = await getIssueComments(project, issue.number);
+    } catch (err) {
+      logError("loop", `${scope}: could not fetch issue comments for the reviewer — reviewing without them`, err);
+    }
     outcome = await runMachineReview({
       scope,
       worktreePath: worktree.path,
       model,
       effort,
-      prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch, checklist, verify),
+      prompt: buildMachineReviewPrompt(issue, commits, diff, project.defaultBranch, {
+        checklist,
+        verifyCommands: verify,
+        contract,
+        comments,
+        workerReport,
+      }),
       claudeExecutable: ctx.config.claudeExecutable,
       journal,
     });
