@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { PlanResult, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
@@ -55,6 +58,7 @@ function record(patch: Partial<TicketRecord> = {}): TicketRecord {
 
 const issue = { number: 7, title: "issue 7", body: "body", labels: [] };
 const worktree = { path: "/tmp/wt/7", branch: "fleet/7" };
+const workerReport = { summary: "Fixed the loop bound.", prBody: "## What changed\n\nRan `pnpm test`: all green." };
 
 function makeLoop(seed?: TicketRecord, opts: { dryRun?: boolean } = {}) {
   const { dataDir, state } = makeTempState("fleet-machinereview-");
@@ -67,6 +71,7 @@ function makeLoop(seed?: TicketRecord, opts: { dryRun?: boolean } = {}) {
       i: typeof issue,
       w: typeof worktree,
       base: { costUsd: number; modelUsage?: Record<string, { inputTokens: number; outputTokens: number; costUsd: number }> },
+      report: { summary: string; prBody?: string },
     ) => Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }>;
     planReviewGate: (
       p: ProjectConfig,
@@ -105,6 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(worktreeMod.hasCommits).mockResolvedValue(true);
   vi.mocked(worktreeMod.collectBranchDiff).mockResolvedValue({ diff: "diff --git a b", commits: "abc123 fix" });
+  vi.mocked(github.getIssueComments).mockResolvedValue([]);
 });
 
 describe("machineReviewGate", () => {
@@ -115,7 +121,7 @@ describe("machineReviewGate", () => {
     const { state, internals } = makeLoop(record());
     const base = { costUsd: 3 };
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, base);
+    const gate = await internals.machineReviewGate(project, issue, worktree, base, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).toHaveBeenCalledOnce();
@@ -125,6 +131,59 @@ describe("machineReviewGate", () => {
     expect(state.get("alpha", 7)?.costUsd).toBeCloseTo(3.05);
     expect(state.get("alpha", 7)?.modelUsage?.["claude-haiku-4-5"]?.costUsd).toBeCloseTo(0.05);
     expect(github.upsertStatusComment).not.toHaveBeenCalled();
+  });
+
+  it("briefs the reviewer with the lane contract, the issue discussion, and the implementer's report", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-mr-briefing-"));
+    // JSON is valid YAML — sidesteps quoting headaches in the fixture.
+    writeFileSync(
+      join(dir, "fleet.yaml"),
+      JSON.stringify({
+        setup: {
+          default: [{ name: "install", run: "pnpm install" }],
+          api: {
+            setup: [{ name: "install", run: "pnpm install" }],
+            contract: "Never run pnpm migrate in a fleet worktree.",
+            verify: ["pnpm test"],
+          },
+        },
+      }),
+    );
+    try {
+      vi.mocked(github.getIssueComments).mockResolvedValue(["@alice: please also handle X"]);
+      vi.mocked(review.runMachineReview).mockResolvedValue(
+        reviewOutcome({ result: { verdict: "pass", summary: "Looks correct.", findings: [] } }),
+      );
+      const { internals } = makeLoop(record({ ticketType: "api", worktreePath: dir }));
+
+      await internals.machineReviewGate(project, issue, { path: dir, branch: "fleet/7" }, { costUsd: 0 }, workerReport);
+
+      const prompt = vi.mocked(review.runMachineReview).mock.calls[0]?.[0]?.prompt ?? "";
+      expect(prompt).toContain("## The rules the implementer was working under");
+      expect(prompt).toContain("Never run pnpm migrate in a fleet worktree.");
+      expect(prompt).toContain("@alice: please also handle X");
+      expect(prompt).toContain("Fixed the loop bound.");
+      expect(prompt).toContain("Ran `pnpm test`: all green.");
+      expect(prompt).toContain("raise a finding only if the report fails to state they were run");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reviews without the discussion when the comment fetch fails, rather than skipping the review", async () => {
+    vi.mocked(github.getIssueComments).mockRejectedValue(new Error("gh exploded"));
+    vi.mocked(review.runMachineReview).mockResolvedValue(
+      reviewOutcome({ result: { verdict: "pass", summary: "Looks correct.", findings: [] } }),
+    );
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(review.runMachineReview).toHaveBeenCalledOnce();
+    const prompt = vi.mocked(review.runMachineReview).mock.calls[0]?.[0]?.prompt ?? "";
+    expect(prompt).not.toContain("Discussion on the issue");
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("passed");
   });
 
   it("returns a fix prompt on findings and posts them to the status comment", async () => {
@@ -139,7 +198,7 @@ describe("machineReviewGate", () => {
     );
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate.action).toBe("fixing");
     if (gate.action === "fixing") expect(gate.prompt).toContain("off-by-one");
@@ -152,7 +211,7 @@ describe("machineReviewGate", () => {
   it("caps at one attempt: a recorded outcome skips the reviewer entirely", async () => {
     const { internals } = makeLoop(record({ machineReviewOutcome: "findings" }));
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();
@@ -162,7 +221,7 @@ describe("machineReviewGate", () => {
     vi.mocked(review.runMachineReview).mockResolvedValue(reviewOutcome({ result: undefined, errorSubtype: "timed out after 8 minutes" }));
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
@@ -172,7 +231,7 @@ describe("machineReviewGate", () => {
     vi.mocked(worktreeMod.collectBranchDiff).mockRejectedValue(new Error("git exploded"));
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();
@@ -185,7 +244,7 @@ describe("machineReviewGate", () => {
     );
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
@@ -196,7 +255,7 @@ describe("machineReviewGate", () => {
     const optedOut = makeProject({ model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(optedOut, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(optedOut, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();
@@ -206,7 +265,7 @@ describe("machineReviewGate", () => {
   it("never runs in dry-run mode", async () => {
     const { internals } = makeLoop(record(), { dryRun: true });
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();
@@ -216,7 +275,7 @@ describe("machineReviewGate", () => {
     vi.mocked(worktreeMod.hasCommits).mockResolvedValue(false);
     const { state, internals } = makeLoop(record());
 
-    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 });
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
 
     expect(gate).toEqual({ action: "proceed" });
     expect(review.runMachineReview).not.toHaveBeenCalled();

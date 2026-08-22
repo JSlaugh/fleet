@@ -249,8 +249,9 @@ export class FleetLoop {
     issue: ReadyIssue,
     worktree: Worktree,
     base: SessionBase,
+    workerReport: { summary: string; prBody?: string },
   ): Promise<{ action: "proceed" } | { action: "fixing"; prompt: string }> {
-    return machineReviewGate(this.ctx, project, issue, worktree, base);
+    return machineReviewGate(this.ctx, project, issue, worktree, base, workerReport);
   }
 
   private planReviewGate(
