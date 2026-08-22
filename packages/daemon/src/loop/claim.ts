@@ -38,6 +38,7 @@ import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { notify, projectUrl } from "../notify.ts";
 import { addressComments } from "./comments.ts";
+import { teardownTicket } from "./teardown.ts";
 import { autoMergeReady } from "./automerge.ts";
 import { addressReviews } from "./reviews.ts";
 import { runSession } from "./runner.ts";
@@ -415,12 +416,16 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
     const comments = await getIssueComments(project, issue.number);
     const epicNumber = parsePartOf(issue.body);
     const epicContext = await fetchEpicContext(project, issue);
+    const priorRecord = ctx.state.get(project.name, issue.number);
+    // `createWorktree` force-replaces any previous attempt's worktree for this
+    // issue, so release that attempt's per-worktree resources first (no-op
+    // unless its claim flagged teardownPending) — setup below re-provisions.
+    if (priorRecord?.teardownPending) await teardownTicket(ctx, project, priorRecord);
     const worktree = await createWorktree(project, issue.number, ctx.config.worktreeRoot, issue.labels);
 
     const elevated = issue.labels.includes(ELEVATE_LABEL);
     const light = issue.labels.includes(LIGHT_LABEL);
     const isPlan = issue.labels.includes(PLAN_LABEL);
-    const priorRecord = ctx.state.get(project.name, issue.number);
     // A fresh claim otherwise wipes the once-only escalation guard along with
     // everything else the prior attempt recorded — carry it forward so a
     // second failure (now elevated) can't trigger a second auto-escalation.
@@ -441,6 +446,7 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
       autoElevated,
       epicNumber,
       ticketType: worktree.type,
+      teardownPending: worktree.hasTeardown,
       // Every comment that exists at claim time is already in `comments`, folded
       // into the first prompt below — the watermark stops the next cycle's
       // `addressComments` from re-injecting them.

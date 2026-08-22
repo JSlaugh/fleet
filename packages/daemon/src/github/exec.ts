@@ -59,9 +59,12 @@ export async function runJsonPaginated<T>(command: string, args: string[], optio
   return pages.flat();
 }
 
-export function runShell(command: string, cwd: string): Promise<RunResult> {
+export function runShell(command: string, cwd: string, env?: Record<string, string>): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    exec(command, { cwd, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+    // `env` REPLACES the child's environment, so extras are layered over the
+    // daemon's own — a bare extras object would strip PATH out from under the step.
+    const childEnv = env ? { ...process.env, ...env } : undefined;
+    exec(command, { cwd, env: childEnv, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`${command} failed (exit ${error.code ?? 1}): ${stderr || stdout || error.message}`));
         return;
