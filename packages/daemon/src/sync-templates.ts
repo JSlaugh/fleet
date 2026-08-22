@@ -103,7 +103,9 @@ ${TASK_BODY_FIELDS}`;
 
 function typeTaskForm(name: string): string {
   const label = typeLabel(name);
-  return `name: Fleet task: ${capitalize(name)}
+  // The name contains ": " and must be quoted — unquoted it is invalid YAML,
+  // and GitHub silently drops the form from the New Issue chooser.
+  return `name: "Fleet task: ${capitalize(name)}"
 description: A fleet task scoped to the "${name}" fleet.yaml setup profile. Files as ${FLEET_LABELS.ready} + ${label}.
 labels: ["${FLEET_LABELS.ready}", "${label}"]
 body:

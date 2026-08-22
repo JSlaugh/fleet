@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeProject } from "./test-support.ts";
 import { issueFormFiles, mergeMcpConfig, syncTemplates } from "./sync-templates.ts";
@@ -122,8 +123,16 @@ describe("syncTemplates", () => {
     ]);
 
     const dashboardForm = readFileSync(join(issueTemplateDir, "02-fleet-task-dashboard.yml"), "utf8");
-    expect(dashboardForm).toContain("name: Fleet task: Dashboard");
+    expect(dashboardForm).toContain('name: "Fleet task: Dashboard"');
     expect(dashboardForm).toContain('labels: ["fleet:ready", "fleet:type:dashboard"]');
+
+    // every generated form must be valid YAML — GitHub silently drops invalid
+    // forms from the New Issue chooser (the type-form name contains ": ")
+    for (const file of readdirSync(issueTemplateDir)) {
+      const parsed = parseYaml(readFileSync(join(issueTemplateDir, file), "utf8"));
+      expect(parsed, file).toHaveProperty("name");
+      expect(parsed, file).toHaveProperty("body");
+    }
   });
 
   it("prunes forms left over from a profile that was renamed or removed since the last run", async () => {
