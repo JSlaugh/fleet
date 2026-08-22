@@ -6,6 +6,7 @@ import { log, logError } from "../log.ts";
 import { deleteRemoteBranch, removeWorktree } from "../github/worktree.ts";
 import { readJournalTail, summarizeJournalEvents } from "../store/journal.ts";
 import { copyTicketTranscripts } from "../store/transcripts.ts";
+import { teardownTicket } from "./teardown.ts";
 
 /** GitHub issue URL for a ticket record, or "" if its project isn't in the current config (e.g. removed since it closed). */
 export function issueUrl(
@@ -125,6 +126,9 @@ export async function cleanupFinished(
     const reason = record.prUrl ? `PR ${prState.toLowerCase()} and issue closed` : "plan epic issue closed";
     log("loop", `${scope}: ${reason} — cleaning up worktree + branch ${record.branch}`);
     copyTicketTranscripts(ctx.dataDirPath, record);
+    // Before the worktree goes: release whatever per-worktree resources its
+    // setup provisioned (no-op unless the claim flagged teardownPending).
+    await teardownTicket(ctx, project, record);
     // allowFailure keeps cleanup rolling, but a Windows file lock here leaks
     // the worktree dir forever (the record is removed below regardless) — so a
     // failure must at least be visible in the log.

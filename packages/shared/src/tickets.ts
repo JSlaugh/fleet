@@ -45,6 +45,16 @@ export interface TicketRecord {
    * here, so a later edit to the repo's contract text takes effect on resume.
    */
   ticketType?: string;
+  /**
+   * Set at claim time when this ticket's `fleet.yaml` profile declares
+   * `teardown:` steps; cleared once teardown has actually run. Whatever path
+   * discards the worktree (cleanup after merge/close, operator restart, a
+   * re-claim replacing it) tears down first, and daemon startup re-runs
+   * teardown for records still flagged whose worktree directory is already
+   * gone — so a crash between removal and teardown can't leak the resources
+   * setup provisioned.
+   */
+  teardownPending?: boolean;
   /** ISO timestamp watermark: PR reviews/comments at or before this have already been fed back into the session. */
   lastReviewHandledAt?: string;
   /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, tierForType, verifyForType, type BuildSpec } from "./buildspec.ts";
+import { BuildSpecSchema, checklistForType, contractForType, profileNames, selectSetupProfile, teardownForType, tierForType, verifyForType, type BuildSpec } from "./buildspec.ts";
 
 describe("BuildSpecSchema", () => {
   it("accepts a bare step list", () => {
@@ -382,6 +382,60 @@ describe("selectSetupProfile", () => {
       const selection = selectSetupProfile(tierSpec, ["fleet:ready"]);
       expect(selection.tier).toBeUndefined();
     });
+  });
+});
+
+describe("teardownForType", () => {
+  const teardownSpec: BuildSpec = {
+    setup: {
+      default: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        teardown: [{ name: "stack-down", run: "docker compose down -v" }],
+      },
+      api: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        teardown: [{ name: "db-down", run: "docker compose -p api down" }],
+      },
+      frontend: [{ name: "install", run: "pnpm install" }],
+    },
+  };
+
+  it("returns a type's declared teardown steps", () => {
+    expect(teardownForType(teardownSpec, "api")).toEqual([{ name: "db-down", run: "docker compose -p api down" }]);
+  });
+
+  it("falls back to the default profile's teardown for an undefined or unknown type — mirroring the setup fallback", () => {
+    expect(teardownForType(teardownSpec, undefined)).toEqual([{ name: "stack-down", run: "docker compose down -v" }]);
+    expect(teardownForType(teardownSpec, "mobile")).toEqual([{ name: "stack-down", run: "docker compose down -v" }]);
+  });
+
+  it("is undefined for a matched list-form profile (it can't declare teardown)", () => {
+    expect(teardownForType(teardownSpec, "frontend")).toBeUndefined();
+  });
+
+  it("is undefined for list-form specs and when nothing declares teardown", () => {
+    expect(teardownForType({ setup: [{ name: "install", run: "pnpm install" }] }, "api")).toBeUndefined();
+    expect(teardownForType({ setup: { default: [{ name: "install", run: "pnpm install" }] } }, undefined)).toBeUndefined();
+  });
+});
+
+describe("selectSetupProfile teardown", () => {
+  const teardownSpec: BuildSpec = {
+    setup: {
+      default: {
+        setup: [{ name: "install", run: "pnpm install" }],
+        teardown: [{ name: "stack-down", run: "docker compose down -v" }],
+      },
+      frontend: [{ name: "install", run: "pnpm install" }],
+    },
+  };
+
+  it("carries the selected profile's teardown, including default's for untyped tickets", () => {
+    expect(selectSetupProfile(teardownSpec, ["fleet:ready"]).teardown).toEqual([{ name: "stack-down", run: "docker compose down -v" }]);
+  });
+
+  it("a matched profile without teardown yields none — no default fallback once a profile matched", () => {
+    expect(selectSetupProfile(teardownSpec, ["fleet:type:frontend"]).teardown).toBeUndefined();
   });
 });
 

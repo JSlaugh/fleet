@@ -13,6 +13,7 @@ import {
   hasCommits,
   pushBranch,
   removeWorktree,
+  runTeardown,
 } from "./worktree.ts";
 
 const TEST_TIMEOUT = 20_000;
@@ -224,6 +225,139 @@ describe("createWorktree with fleet.yaml", () => {
       const worktreeRoot = makeTempDir("fleet-wt-root-");
 
       await expect(createWorktree(project, 205, worktreeRoot)).rejects.toThrow(/fleet\.yaml is invalid/);
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe("step environment and teardown", () => {
+  it(
+    "exposes FLEET_ISSUE / FLEET_PROJECT / FLEET_WORKTREE to setup steps",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: [
+          nodeStep(
+            "record-env",
+            "require('fs').writeFileSync('env.txt', [process.env.FLEET_ISSUE, process.env.FLEET_PROJECT, process.env.FLEET_WORKTREE].join('|'))",
+          ),
+        ],
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 301, worktreeRoot);
+
+      const [issue, projectName, worktreePath] = readFileSync(join(wt.path, "env.txt"), "utf8").split("|");
+      expect(issue).toBe("301");
+      expect(projectName).toBe(project.name);
+      expect(worktreePath).toBe(wt.path);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "reports hasTeardown only when the selected profile declares teardown steps",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: {
+          default: {
+            setup: [nodeStep("noop", "0")],
+            teardown: [nodeStep("down", "0")],
+          },
+          frontend: [nodeStep("noop", "0")],
+        },
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const withTeardown = await createWorktree(project, 302, worktreeRoot);
+      expect(withTeardown.hasTeardown).toBe(true);
+
+      const without = await createWorktree(project, 303, worktreeRoot, ["fleet:type:frontend"]);
+      expect(without.hasTeardown).toBeUndefined();
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "runTeardown runs the resolved profile's teardown steps in the worktree with the FLEET_* environment",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: {
+          default: [nodeStep("noop", "0")],
+          api: {
+            setup: [nodeStep("noop", "0")],
+            teardown: [nodeStep("record", "require('fs').writeFileSync('teardown.txt', process.env.FLEET_ISSUE + ':' + process.env.FLEET_PROJECT)")],
+          },
+        },
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+      const wt = await createWorktree(project, 304, worktreeRoot, ["fleet:type:api"]);
+
+      const outcome = await runTeardown(project, 304, wt.path, "api");
+
+      expect(outcome).toEqual({ failures: [] });
+      expect(readFileSync(join(wt.path, "teardown.txt"), "utf8")).toBe(`304:${project.name}`);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "runTeardown swallows a failing step as a reported failure and still runs later steps",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: {
+          default: {
+            setup: [nodeStep("noop", "0")],
+            teardown: [nodeStep("boom", "process.exit(3)"), nodeStep("after", "require('fs').writeFileSync('after.txt','ok')")],
+          },
+        },
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+      const wt = await createWorktree(project, 305, worktreeRoot);
+
+      const outcome = await runTeardown(project, 305, wt.path, undefined);
+
+      expect(outcome?.failures).toHaveLength(1);
+      expect(outcome?.failures[0]).toContain('teardown step "boom" failed');
+      expect(existsSync(join(wt.path, "after.txt"))).toBe(true);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "runTeardown returns undefined when the resolved profile declares no teardown",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, { setup: [nodeStep("noop", "0")] });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+      const wt = await createWorktree(project, 306, worktreeRoot);
+
+      expect(await runTeardown(project, 306, wt.path, undefined)).toBeUndefined();
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "runTeardown falls back to the main checkout when the worktree is already gone",
+    async () => {
+      const project = setupProject();
+      commitFleetYaml(project, {
+        setup: {
+          default: {
+            setup: [nodeStep("noop", "0")],
+            teardown: [nodeStep("record", "require('fs').writeFileSync('gone.txt', process.env.FLEET_WORKTREE)")],
+          },
+        },
+      });
+      const gone = join(makeTempDir("fleet-wt-root-"), "alpha", "999");
+
+      const outcome = await runTeardown(project, 999, gone, undefined);
+
+      expect(outcome).toEqual({ failures: [] });
+      expect(readFileSync(join(project.repoPath, "gone.txt"), "utf8")).toBe(gone);
     },
     TEST_TIMEOUT,
   );

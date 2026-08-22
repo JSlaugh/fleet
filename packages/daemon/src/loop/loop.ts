@@ -26,6 +26,7 @@ import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseStat
 import { setProjectDormant } from "./pin.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
+import { recoverPendingTeardowns } from "./teardown.ts";
 import { workHoursReserveStatus } from "./workHoursReserve.ts";
 import { HistoryStore, StateStore } from "../store/state.ts";
 import { machineReviewGate, planReviewGate } from "./supervise.ts";
@@ -99,6 +100,11 @@ export class FleetLoop {
   /** Boot-only: force-refresh the heartbeat on this daemon's own stalled tickets before the first cycle, so a quick restart's recovery window never looks stale to a peer. */
   async refreshBootHeartbeats(): Promise<void> {
     await refreshStalledHeartbeatsOnBoot(this.ctx);
+  }
+
+  /** Boot-only: run the pending teardown of any ticket whose worktree is already gone — the daemon died (or the directory was removed by hand) between worktree removal and teardown. */
+  async recoverPendingTeardowns(): Promise<void> {
+    await recoverPendingTeardowns(this.ctx);
   }
 
   async cycle(): Promise<void> {

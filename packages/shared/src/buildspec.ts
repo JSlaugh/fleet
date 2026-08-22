@@ -15,18 +15,22 @@ export type Tier = z.infer<typeof TierSchema>;
 
 /**
  * A profile is either the original bare step array, or an object that can
- * also carry keys beyond setup — `contract:`, the markdown appended to the
- * worker's system contract for tickets of this type, `review:`, the
- * checklist markdown appended to the machine reviewer's prompt for tickets of
- * this type, `verify:`, the list of commands the worker must run before
- * finishing `completed` (and the reviewer checks for evidence of), and
- * `tier:`, this type's default model tier. Later per-type siblings get their
- * own optional keys here without another schema migration.
+ * also carry keys beyond setup — `teardown:`, steps run best-effort when the
+ * worktree is discarded (for releasing per-worktree resources `setup:`
+ * provisioned; absent means nothing new runs anywhere), `contract:`, the
+ * markdown appended to the worker's system contract for tickets of this
+ * type, `review:`, the checklist markdown appended to the machine reviewer's
+ * prompt for tickets of this type, `verify:`, the list of commands the
+ * worker must run before finishing `completed` (and the reviewer checks for
+ * evidence of), and `tier:`, this type's default model tier. Later per-type
+ * siblings get their own optional keys here without another schema
+ * migration.
  */
 const ProfileSchema = z.union([
   z.array(BuildSpecStepSchema),
   z.object({
     setup: z.array(BuildSpecStepSchema),
+    teardown: z.array(BuildSpecStepSchema).optional(),
     contract: z.string().min(1).optional(),
     review: z.string().min(1).optional(),
     verify: z.array(z.string().min(1)).optional(),
@@ -47,9 +51,18 @@ export const BuildSpecSchema = z.object({
 export type BuildSpec = z.infer<typeof BuildSpecSchema>;
 
 /** A profile's steps and (map-object form only) its declared extra keys. */
-function normalizeProfile(profile: Profile): { steps: BuildSpecStep[]; contract?: string; review?: string; verify?: string[]; tier?: Tier } {
+function normalizeProfile(
+  profile: Profile,
+): { steps: BuildSpecStep[]; teardown?: BuildSpecStep[]; contract?: string; review?: string; verify?: string[]; tier?: Tier } {
   if (Array.isArray(profile)) return { steps: profile };
-  return { steps: profile.setup, contract: profile.contract, review: profile.review, verify: profile.verify, tier: profile.tier };
+  return {
+    steps: profile.setup,
+    teardown: profile.teardown,
+    contract: profile.contract,
+    review: profile.review,
+    verify: profile.verify,
+    tier: profile.tier,
+  };
 }
 
 /** Profile names a repo's `fleet.yaml` declares (map form only; `default` excluded since it never gets its own label). */
@@ -61,6 +74,8 @@ export function profileNames(spec: BuildSpec): string[] {
 export interface SetupSelection {
   profile: string;
   steps: BuildSpecStep[];
+  /** The selected profile's declared `teardown:` steps, if any — unlike the type-keyed extras below, the `default` profile's teardown applies to untyped tickets too, since its setup is what provisioned for them. */
+  teardown?: BuildSpecStep[];
   /** The `fleet:type:<name>` actually matched to a profile — undefined for list-form specs, no type label, or an unmatched one (the "default" fallback doesn't count as a type). */
   type?: string;
   /** The matched type's declared `contract:` markdown, if any — only ever set alongside `type`. */
@@ -91,7 +106,8 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
   const profiles = spec.setup;
   // Schema validation (`SetupProfilesSchema`'s refine) guarantees a "default"
   // key exists; the `?? []` here is only to satisfy noUncheckedIndexedAccess.
-  const defaultSteps = normalizeProfile(profiles.default ?? []).steps;
+  const defaultProfile = normalizeProfile(profiles.default ?? []);
+  const defaultSteps = defaultProfile.steps;
   const typeNames = [
     ...new Set(
       labels
@@ -101,7 +117,7 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
   ].sort();
 
   if (typeNames.length === 0) {
-    return { profile: "default", steps: defaultSteps };
+    return { profile: "default", steps: defaultSteps, teardown: defaultProfile.teardown };
   }
 
   const matched = typeNames.find((name) => profiles[name]);
@@ -118,6 +134,7 @@ export function selectSetupProfile(spec: BuildSpec, labels: string[]): SetupSele
   return {
     profile: matched ?? "default",
     steps: matchedProfile ? matchedProfile.steps : defaultSteps,
+    teardown: matchedProfile ? matchedProfile.teardown : defaultProfile.teardown,
     type: matched,
     contract: matchedProfile?.contract,
     review: matchedProfile?.review,
@@ -138,6 +155,21 @@ export function contractForType(spec: BuildSpec, type: string | undefined): stri
   if (!type || Array.isArray(spec.setup)) return undefined;
   const profile = spec.setup[type];
   return profile ? normalizeProfile(profile).contract : undefined;
+}
+
+/**
+ * The teardown steps for a ticket of `type`, looked up directly by name —
+ * how the daemon re-derives at worktree-removal time what
+ * `selectSetupProfile` selected at claim time. Unlike the other per-type
+ * lookups, an undefined or unknown type falls back to the `default`
+ * profile's teardown (mirroring the setup fallback that provisioned for it).
+ * Undefined for list-form specs or when the resolved profile declares no
+ * `teardown:`.
+ */
+export function teardownForType(spec: BuildSpec, type: string | undefined): BuildSpecStep[] | undefined {
+  if (Array.isArray(spec.setup)) return undefined;
+  const profile = (type ? spec.setup[type] : undefined) ?? spec.setup.default;
+  return profile ? normalizeProfile(profile).teardown : undefined;
 }
 
 /**

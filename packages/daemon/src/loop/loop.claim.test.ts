@@ -25,6 +25,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
 
 vi.mock("../github/worktree.ts", () => ({
   createWorktree: vi.fn(async () => ({ path: "/tmp/wt/62", branch: "fleet/62" })),
+  runTeardown: vi.fn(async () => ({ failures: [] })),
 }));
 
 vi.mock("./runner.ts", () => ({
@@ -602,6 +603,31 @@ describe("processTicket", () => {
       expect(ctx.state.get("alpha", 62)?.ticketType).toBe("backend");
       const call = vi.mocked(runner.runSession).mock.calls[0]?.[1] as { ticketType?: string } | undefined;
       expect(call?.ticketType).toBe("backend");
+    });
+  });
+
+  describe("per-worktree teardown", () => {
+    it("flags teardownPending when the selected profile declares teardown steps", async () => {
+      vi.mocked(worktree.createWorktree).mockResolvedValueOnce({ path: "/tmp/wt/62", branch: "fleet/62", type: "api", hasTeardown: true });
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+      await runProcessTicket(ctx);
+
+      expect(ctx.state.get("alpha", 62)?.teardownPending).toBe(true);
+    });
+
+    it("tears down the previous attempt's flagged resources before the new worktree replaces it", async () => {
+      const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+      ctx.state.upsert(makeRecord({ issueNumber: 62, worktreePath: "/tmp/wt/62-old", ticketType: "api", teardownPending: true, status: "failed" }));
+
+      await runProcessTicket(ctx);
+
+      expect(worktree.runTeardown).toHaveBeenCalledWith(expect.objectContaining({ name: "alpha" }), 62, "/tmp/wt/62-old", "api");
+      const teardownOrder = vi.mocked(worktree.runTeardown).mock.invocationCallOrder[0] ?? 0;
+      const createOrder = vi.mocked(worktree.createWorktree).mock.invocationCallOrder[0] ?? 0;
+      expect(teardownOrder).toBeLessThan(createOrder);
+      // The fresh claim's profile declared no teardown, so the stale flag does not survive the re-claim.
+      expect(ctx.state.get("alpha", 62)?.teardownPending).toBeUndefined();
     });
   });
 

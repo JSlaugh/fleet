@@ -5,6 +5,7 @@ import { deleteRemoteBranch } from "../github/worktree.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { resumeTicket } from "./runner.ts";
+import { teardownTicket } from "./teardown.ts";
 
 /** How long a restart waits for an aborted run to unwind before resetting anyway. */
 const ABORT_DRAIN_MS = 30_000;
@@ -224,6 +225,10 @@ export async function resetForFreshClaim(
     }
   }
   if (prior?.branch) await deleteRemoteBranch(project, prior.branch);
+  // The restart discards the previous attempt's worktree wholesale, so its
+  // per-worktree resources go with it (no-op unless teardownPending is set);
+  // the fresh claim's setup re-provisions from scratch.
+  if (prior) await teardownTicket(ctx, project, prior);
   ctx.state.update(project.name, issueNumber, {
     status: "restarting",
     sessionId: undefined,

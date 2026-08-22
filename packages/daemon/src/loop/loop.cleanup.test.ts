@@ -20,6 +20,7 @@ vi.mock("../github/worktree.ts", () => ({
   pushBranch: vi.fn(async () => {}),
   removeWorktree: vi.fn(async () => ({ stdout: "", stderr: "" })),
   collectBranchDiff: vi.fn(async () => ({ diff: "", commits: "" })),
+  runTeardown: vi.fn(async () => ({ failures: [] })),
 }));
 
 vi.mock("../github/exec.ts", () => ({
@@ -66,6 +67,28 @@ beforeEach(() => {
 });
 
 describe("cleanupFinished", () => {
+  it("tears down per-worktree resources before removing the worktree when the claim flagged them", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    const { internals } = makeLoop(record({ teardownPending: true, ticketType: "api" }));
+
+    await internals.cleanupFinished(project, []);
+
+    expect(worktreeMod.runTeardown).toHaveBeenCalledWith(project, 7, "/tmp/wt/7", "api");
+    const teardownOrder = vi.mocked(worktreeMod.runTeardown).mock.invocationCallOrder[0] ?? 0;
+    const removeOrder = vi.mocked(worktreeMod.removeWorktree).mock.invocationCallOrder[0] ?? 0;
+    expect(teardownOrder).toBeLessThan(removeOrder);
+  });
+
+  it("runs no teardown when the claim never flagged one — the opt-out is total", async () => {
+    vi.mocked(github.getPrState).mockResolvedValue("MERGED");
+    const { internals } = makeLoop(record());
+
+    await internals.cleanupFinished(project, []);
+
+    expect(worktreeMod.removeWorktree).toHaveBeenCalled();
+    expect(worktreeMod.runTeardown).not.toHaveBeenCalled();
+  });
+
   it("deletes the remote branch alongside the worktree and local branch once merged and closed", async () => {
     vi.mocked(github.getPrState).mockResolvedValue("MERGED");
     const { state, internals } = makeLoop(record());
