@@ -1,4 +1,4 @@
-name: Fleet task: Dashboard
+name: "Fleet task: Dashboard"
 description: A fleet task scoped to the "dashboard" fleet.yaml setup profile. Files as fleet:ready + fleet:type:dashboard.
 labels: ["fleet:ready", "fleet:type:dashboard"]
 body:

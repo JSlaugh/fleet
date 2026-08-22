@@ -1,4 +1,4 @@
-name: Fleet task: Daemon
+name: "Fleet task: Daemon"
 description: A fleet task scoped to the "daemon" fleet.yaml setup profile. Files as fleet:ready + fleet:type:daemon.
 labels: ["fleet:ready", "fleet:type:daemon"]
 body:
