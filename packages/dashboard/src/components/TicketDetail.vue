@@ -22,7 +22,19 @@ import {
 } from "../lib/api.ts";
 import { formatCost, formatDuration, formatTime, formatTokens } from "../lib/format.ts";
 import { machineReviewBadgeClass } from "../lib/statusColors.ts";
+import { usePanelFocus } from "../composables/usePanelFocus.ts";
 import { usePolledResource } from "../composables/usePolledResource.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog/index.ts";
 import PrDiff from "./PrDiff.vue";
 
 function formatApprovalWait(latency: ApprovalLatencyStats | undefined): string {
@@ -44,6 +56,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
 }>();
+
+const panelRoot = ref<HTMLElement>();
+usePanelFocus(panelRoot, () => emit("close"));
 
 const detail = ref<TicketDetail>();
 const report = ref<TicketReport>();
@@ -77,18 +92,8 @@ const reportIsEmpty = computed(
   () => !report.value || (reportToolNames.value.length === 0 && report.value.segments.length === 0),
 );
 
-async function confirmAcceptPlan() {
+async function acceptPlanNow() {
   if (accepting.value) return;
-  const confirmed = window.confirm(
-    [
-      `Accept plan ${props.ticket.project}#${props.ticket.issueNumber}?`,
-      "",
-      "This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.",
-      "",
-      "Child tickets are not affected — release each with its own fleet:ready label.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   accepting.value = true;
   acceptStatus.value = undefined;
   try {
@@ -102,20 +107,10 @@ async function confirmAcceptPlan() {
   }
 }
 
-async function confirmRestart() {
+const restartBranch = computed(() => detail.value?.record?.branch ?? `fleet/${props.ticket.issueNumber}`);
+
+async function restartNow() {
   if (restarting.value) return;
-  const branch = detail.value?.record?.branch ?? `fleet/${props.ticket.issueNumber}`;
-  const confirmed = window.confirm(
-    [
-      `Restart ${props.ticket.project}#${props.ticket.issueNumber}?`,
-      "",
-      "This terminates the current session and discards its work: the branch " +
-        `${branch} and its worktree are deleted and recreated from scratch, so any commits the worker made are lost.`,
-      "",
-      "The ticket goes back to fleet:ready and a brand-new session picks it up on the next poll cycle.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   restarting.value = true;
   restartStatus.value = undefined;
   try {
@@ -237,7 +232,9 @@ watch(
 
 <template>
   <aside
-    class="flex w-[30rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
+    ref="panelRoot"
+    tabindex="-1"
+    class="flex w-[30rem] shrink-0 flex-col border-l border-neutral-200 bg-white outline-none dark:border-neutral-700 dark:bg-neutral-900"
     aria-label="Ticket detail"
   >
     <header class="border-b border-neutral-200 p-4 dark:border-neutral-700">
@@ -245,26 +242,57 @@ watch(
         <h2 class="min-w-0 flex-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
           {{ ticket.title }}
         </h2>
-        <button
-          v-if="canAcceptPlan"
-          type="button"
-          class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
-          :disabled="accepting"
-          title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
-          @click="confirmAcceptPlan"
-        >
-          {{ accepting ? "Accepting…" : "Accept plan" }}
-        </button>
-        <button
-          v-if="canRestart"
-          type="button"
-          class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-          :disabled="restarting"
-          title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
-          @click="confirmRestart"
-        >
-          {{ restarting ? "Restarting…" : "Restart" }}
-        </button>
+        <AlertDialog v-if="canAcceptPlan">
+          <AlertDialogTrigger as-child>
+            <button
+              type="button"
+              class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
+              :disabled="accepting"
+              title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
+            >
+              {{ accepting ? "Accepting…" : "Accept plan" }}
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Accept plan {{ ticket.project }}#{{ ticket.issueNumber }}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.
+                Child tickets are not affected — release each with its own fleet:ready label.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction @click="acceptPlanNow">Accept plan</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog v-if="canRestart">
+          <AlertDialogTrigger as-child>
+            <button
+              type="button"
+              class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+              :disabled="restarting"
+              title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
+            >
+              {{ restarting ? "Restarting…" : "Restart" }}
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Restart {{ ticket.project }}#{{ ticket.issueNumber }}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This terminates the current session and discards its work: the branch {{ restartBranch }} and its
+                worktree are deleted and recreated from scratch, so any commits the worker made are lost.
+                The ticket goes back to fleet:ready and a brand-new session picks it up on the next poll cycle.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction @click="restartNow">Restart</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <button
           type="button"
           class="rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"

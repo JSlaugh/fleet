@@ -24,6 +24,17 @@ import { formatCost } from "./lib/format.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
 import { usePolledResource } from "./composables/usePolledResource.ts";
 import { useUrlState } from "./composables/useUrlState.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog/index.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import AttentionQueue from "./components/AttentionQueue.vue";
 import BoardColumn from "./components/BoardColumn.vue";
@@ -198,17 +209,8 @@ async function togglePaused() {
   }
 }
 
-async function confirmRestartDaemon() {
+async function restartDaemonNow() {
   if (restartingDaemon.value) return;
-  const confirmed = window.confirm(
-    [
-      "Restart the fleet daemon?",
-      "",
-      `This aborts ${runningCount.value} running ticket${runningCount.value === 1 ? "" : "s"} mid-turn and exits the process for a supervisor to relaunch.`,
-      "Interrupted tickets auto-resume from their last session on the next boot.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   restartingDaemon.value = true;
   try {
     await restartDaemon();
@@ -352,15 +354,32 @@ onUnmounted(() => {
       >
         {{ paused ? "Resume" : "Pause" }}
       </button>
-      <button
-        type="button"
-        class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-        :disabled="restartingDaemon"
-        title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
-        @click="confirmRestartDaemon"
-      >
-        {{ restartingDaemon ? "Restarting…" : "Restart daemon" }}
-      </button>
+      <AlertDialog>
+        <AlertDialogTrigger as-child>
+          <button
+            type="button"
+            class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+            :disabled="restartingDaemon"
+            title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
+          >
+            {{ restartingDaemon ? "Restarting…" : "Restart daemon" }}
+          </button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restart the fleet daemon?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This aborts {{ runningCount }} running ticket{{ runningCount === 1 ? "" : "s" }} mid-turn and exits the
+              process for a supervisor to relaunch. Interrupted tickets auto-resume from their last session on the
+              next boot.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction @click="restartDaemonNow">Restart daemon</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <button
         type="button"
         class="rounded-full px-2.5 py-1 text-xs font-medium"

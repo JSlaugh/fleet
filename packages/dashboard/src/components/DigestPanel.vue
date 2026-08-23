@@ -2,9 +2,13 @@
 import { onMounted, ref } from "vue";
 import type { DigestResponse } from "@fleet/shared";
 import { fetchDigest } from "../lib/api.ts";
+import { usePanelFocus } from "../composables/usePanelFocus.ts";
 import { formatCost } from "../lib/format.ts";
 
 const emit = defineEmits<{ close: [] }>();
+
+const panelRoot = ref<HTMLElement>();
+usePanelFocus(panelRoot, () => emit("close"));
 
 const digest = ref<DigestResponse>();
 const loading = ref(false);
@@ -44,6 +48,8 @@ onMounted(() => void load());
 
 <template>
   <aside
+    ref="panelRoot"
+    tabindex="-1"
     class="flex w-[26rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
     aria-label="Daily digest"
   >
