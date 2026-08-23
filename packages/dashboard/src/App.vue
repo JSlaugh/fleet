@@ -24,6 +24,8 @@ import { formatCost } from "./lib/format.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
 import { usePolledResource } from "./composables/usePolledResource.ts";
 import { useUrlState } from "./composables/useUrlState.ts";
+import { toast } from "vue-sonner";
+import { Toaster } from "@/components/ui/sonner/index.ts";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -71,6 +73,16 @@ const projectFilter = ref<string>();
 useUrlState({ view, projectFilter, selected, tickets });
 
 let disconnect: (() => void) | undefined;
+
+/**
+ * Action failures go to toasts (#208): the shared `error` ref is cleared by
+ * every successful background board load, so a mutation's message could vanish
+ * before the operator saw it. `error` now carries board fetch/connectivity
+ * problems only.
+ */
+function toastActionError(context: string, err: unknown) {
+  toast.error(context, { description: err instanceof Error ? err.message : String(err), duration: 8000 });
+}
 
 async function load(isStale: () => boolean) {
   try {
@@ -183,7 +195,7 @@ async function onResolveApproval(
     await refreshApprovals();
     done?.(true);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError("Failed to resolve approval", err);
     done?.(false);
   }
 }
@@ -193,7 +205,7 @@ async function onSetPriority(ticket: BoardTicket, priority: string | null) {
     await setTicketPriority(ticket.project, ticket.issueNumber, priority);
     await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to set priority for ${ticket.project}#${ticket.issueNumber}`, err);
   }
 }
 
@@ -203,7 +215,7 @@ async function togglePaused() {
     await setDaemonPaused(!paused.value);
     await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(paused.value ? "Failed to resume the daemon" : "Failed to pause the daemon", err);
   } finally {
     pauseToggling.value = false;
   }
@@ -215,7 +227,7 @@ async function restartDaemonNow() {
   try {
     await restartDaemon();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError("Failed to restart the daemon", err);
   } finally {
     restartingDaemon.value = false;
   }
@@ -227,7 +239,7 @@ async function toggleProjectPaused(project: string) {
     await setProjectPaused(project, !pausedProjects.value.includes(project));
     await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to toggle pause for ${project}`, err);
   } finally {
     projectPauseToggling.value = undefined;
   }
@@ -239,7 +251,7 @@ async function toggleProjectDormant(project: string) {
     await setProjectDormant(project, !dormantProjects.value.includes(project));
     await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to toggle dormant pin for ${project}`, err);
   } finally {
     projectPinToggling.value = undefined;
   }
@@ -267,6 +279,7 @@ onUnmounted(() => {
 
 <template>
   <div class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <Toaster theme="system" position="bottom-right" close-button />
     <header class="flex items-center gap-4 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
       <h1 class="text-base font-bold tracking-tight">Fleet</h1>
       <nav v-if="projects.length > 0" aria-label="Project filter" class="flex flex-wrap items-center gap-1">
