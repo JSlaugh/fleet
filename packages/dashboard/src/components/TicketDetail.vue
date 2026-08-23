@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type {
   ApprovalLatencyStats,
   BoardTicket,
@@ -58,6 +58,8 @@ const restarting = ref(false);
 const restartStatus = ref<string>();
 /** The diff only changes when new commits land, so re-fetching it every 3s poll tick (like the journal) would be a wasted `gh` shell-out — this tracks what's already been fetched so a refetch only fires when `lastActivityAt` actually moves. */
 let lastDiffFetchKey: string | undefined;
+/** The archived transcript is immutable once present (only copied in after worktree cleanup), so it gets the same fetch-key treatment: once loaded it's never refetched, and while it 404s a retry only fires when the record's state actually moves. */
+let lastTranscriptFetchKey: string | undefined;
 
 const accepting = ref(false);
 const acceptStatus = ref<string>();
@@ -145,31 +147,46 @@ async function submitReply() {
 }
 
 async function load(isStale: () => boolean) {
-  try {
-    const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
-    if (isStale()) return;
-    detail.value = fetched;
-    error.value = undefined;
-  } catch (err) {
-    if (isStale()) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  }
-  try {
-    const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
-    if (isStale()) return;
-    report.value = fetched;
-  } catch {
-    if (isStale()) return;
-    report.value = undefined;
-  }
-  try {
-    const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
-    if (isStale()) return;
-    transcript.value = fetched;
-  } catch {
-    if (isStale()) return;
-    transcript.value = undefined;
-  }
+  // Detail, report, and transcript are independent — only the diff below needs
+  // the detail's prUrl, so these three start together.
+  const loadDetail = async () => {
+    try {
+      const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      detail.value = fetched;
+      error.value = undefined;
+    } catch (err) {
+      if (isStale()) return;
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  };
+  const loadReport = async () => {
+    try {
+      const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      report.value = fetched;
+    } catch {
+      if (isStale()) return;
+      report.value = undefined;
+    }
+  };
+  const loadTranscript = async () => {
+    if (transcript.value) return;
+    // Keyed off the previous tick's detail — a state move (or the very first
+    // load, when detail is still empty) permits one attempt; a quiet tick doesn't.
+    const key = `${props.ticket.project}#${props.ticket.issueNumber}|${detail.value?.record?.status ?? ""}|${detail.value?.record?.lastActivityAt ?? ""}`;
+    if (key === lastTranscriptFetchKey) return;
+    lastTranscriptFetchKey = key;
+    try {
+      const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      transcript.value = fetched;
+    } catch {
+      // 404 — not archived yet; the next state move retries.
+    }
+  };
+  await Promise.all([loadDetail(), loadReport(), loadTranscript()]);
+  if (isStale()) return;
   const prUrl = detail.value?.record?.prUrl;
   if (prUrl) {
     const key = `${props.ticket.project}#${props.ticket.issueNumber}|${prUrl}|${detail.value?.record?.lastActivityAt ?? ""}`;
@@ -193,7 +210,29 @@ async function load(isStale: () => boolean) {
   }
 }
 
-const { refresh } = usePolledResource(load, 3000);
+// Done tickets change rarely (a ClosedTicketRecord is effectively final), so
+// their poll backs off to 30s; live tickets keep the 3s cadence. The immediate
+// load on mount happens either way.
+const { refresh } = usePolledResource(load, () =>
+  closedRecord.value || props.ticket.status === "done" ? 30_000 : 3_000,
+);
+
+// The panel instance is reused when another card is selected (no :key in
+// App.vue), so the fetch-once state has to reset by hand or the previous
+// ticket's transcript/diff would be pinned under the new one.
+watch(
+  () => `${props.ticket.project}#${props.ticket.issueNumber}`,
+  () => {
+    detail.value = undefined;
+    report.value = undefined;
+    transcript.value = undefined;
+    diff.value = undefined;
+    diffError.value = undefined;
+    lastDiffFetchKey = undefined;
+    lastTranscriptFetchKey = undefined;
+    void refresh();
+  },
+);
 </script>
 
 <template>
