@@ -22,6 +22,7 @@ import {
 } from "./lib/api.ts";
 import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
+import { useUrlState } from "./composables/useUrlState.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import AttentionQueue from "./components/AttentionQueue.vue";
 import BoardColumn from "./components/BoardColumn.vue";
@@ -54,6 +55,8 @@ const approvalsError = ref<string>();
 const connected = ref(false);
 const selected = ref<BoardTicket>();
 const projectFilter = ref<string>();
+
+useUrlState({ view, projectFilter, selected, tickets });
 
 let disconnect: (() => void) | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
