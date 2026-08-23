@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, watch, type Ref } from "vue";
+import { getCurrentInstance, onMounted, onUnmounted, watch, type Ref } from "vue";
 import type { BoardTicket } from "@fleet/shared";
 import { parseUrlState, serializeUrlState, type UrlTicketRef } from "../lib/urlState.ts";
 
@@ -63,6 +63,15 @@ export function useUrlState({ view, projectFilter, selected, tickets }: UrlState
   watch([view, projectFilter, selected], syncUrl);
 
   const onPopState = () => applyFromLocation();
-  onMounted(() => window.addEventListener("popstate", onPopState));
-  onUnmounted(() => window.removeEventListener("popstate", onPopState));
+  const start = () => window.addEventListener("popstate", onPopState);
+  const stop = () => window.removeEventListener("popstate", onPopState);
+
+  // Inside a component the popstate listener rides mount/unmount; inside a
+  // Pinia store the caller drives start/stop from the app shell.
+  if (getCurrentInstance()) {
+    onMounted(start);
+    onUnmounted(stop);
+  }
+
+  return { start, stop };
 }
