@@ -2,7 +2,8 @@
 import { computed, onMounted, ref, watch } from "vue";
 import type { BoardTicket, HistoryAggregates, HistoryRecord, HistoryWeeklyBucket } from "@fleet/shared";
 import { shortModelName } from "@fleet/shared";
-import { fetchHistory, formatCost } from "../lib/api.ts";
+import { fetchHistory } from "../lib/api.ts";
+import { formatCost } from "../lib/format.ts";
 import HistoryCharts from "./HistoryCharts.vue";
 
 const PAGE_SIZE = 50;

@@ -12,7 +12,6 @@ import {
   connectBoardSocket,
   fetchApprovals,
   fetchBoard,
-  formatCost,
   resolveApproval,
   restartDaemon,
   setDaemonPaused,
@@ -21,7 +20,9 @@ import {
   setTicketPriority,
 } from "./lib/api.ts";
 import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
+import { formatCost } from "./lib/format.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
+import { usePolledResource } from "./composables/usePolledResource.ts";
 import { useUrlState } from "./composables/useUrlState.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import AttentionQueue from "./components/AttentionQueue.vue";
@@ -59,16 +60,11 @@ const projectFilter = ref<string>();
 useUrlState({ view, projectFilter, selected, tickets });
 
 let disconnect: (() => void) | undefined;
-let timer: ReturnType<typeof setInterval> | undefined;
 
-/** Guards concurrent load()s (WS ping + polling interval): only the latest request's response is applied. */
-let loadSeq = 0;
-
-async function load() {
-  const seq = ++loadSeq;
+async function load(isStale: () => boolean) {
   try {
     const board = await fetchBoard();
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     tickets.value = board.tickets;
     pausedUntil.value = board.pausedUntil;
     paused.value = board.paused;
@@ -84,10 +80,12 @@ async function load() {
       ) ?? selected.value;
     }
   } catch (err) {
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
+
+const { refresh: refreshBoard } = usePolledResource(load, 15000);
 
 const projects = computed(() => [...new Set(tickets.value.map((t) => t.project))].sort());
 
@@ -139,15 +137,20 @@ function onAttentionSelect(project: string, issueNumber: number) {
   if (ticket) selected.value = ticket;
 }
 
-async function loadApprovals() {
+async function loadApprovals(isStale: () => boolean) {
   try {
-    approvals.value = (await fetchApprovals()).approvals;
+    const fetched = (await fetchApprovals()).approvals;
+    if (isStale()) return;
+    approvals.value = fetched;
     if (approvals.value.length > 0) showApprovals.value = true;
     approvalsError.value = undefined;
   } catch (err) {
+    if (isStale()) return;
     approvalsError.value = err instanceof Error ? err.message : String(err);
   }
 }
+
+const { refresh: refreshApprovals } = usePolledResource(loadApprovals, 15000);
 
 const approvalCounts = computed(() => {
   const counts = new Map<string, number>();
@@ -166,7 +169,7 @@ async function onResolveApproval(
 ) {
   try {
     await resolveApproval(id, decision, message);
-    await loadApprovals();
+    await refreshApprovals();
     done?.(true);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -177,7 +180,7 @@ async function onResolveApproval(
 async function onSetPriority(ticket: BoardTicket, priority: string | null) {
   try {
     await setTicketPriority(ticket.project, ticket.issueNumber, priority);
-    await load();
+    await refreshBoard();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   }
@@ -187,7 +190,7 @@ async function togglePaused() {
   pauseToggling.value = true;
   try {
     await setDaemonPaused(!paused.value);
-    await load();
+    await refreshBoard();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -220,7 +223,7 @@ async function toggleProjectPaused(project: string) {
   projectPauseToggling.value = project;
   try {
     await setProjectPaused(project, !pausedProjects.value.includes(project));
-    await load();
+    await refreshBoard();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -232,7 +235,7 @@ async function toggleProjectDormant(project: string) {
   projectPinToggling.value = project;
   try {
     await setProjectDormant(project, !dormantProjects.value.includes(project));
-    await load();
+    await refreshBoard();
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -247,23 +250,16 @@ function isSelected(ticket: BoardTicket): boolean {
 }
 
 onMounted(() => {
-  void load();
-  void loadApprovals();
   disconnect = connectBoardSocket(
     (type) => {
-      if (type === "approvals-updated") void loadApprovals();
-      else void load();
+      if (type === "approvals-updated") void refreshApprovals();
+      else void refreshBoard();
     },
     (status) => (connected.value = status),
   );
-  timer = setInterval(() => {
-    void load();
-    void loadApprovals();
-  }, 15000);
 });
 onUnmounted(() => {
   disconnect?.();
-  clearInterval(timer);
 });
 </script>
 
@@ -459,7 +455,7 @@ onUnmounted(() => {
         v-if="fileTicketProject"
         :project="fileTicketProject"
         @close="fileTicketProject = undefined"
-        @created="load"
+        @created="refreshBoard"
       />
       <DigestPanel v-if="showDigest" @close="showDigest = false" />
       <ApprovalsPanel

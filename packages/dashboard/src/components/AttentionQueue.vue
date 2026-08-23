@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AttentionItem, AttentionKind } from "../lib/board.ts";
-import { formatWait } from "../lib/api.ts";
+import { formatWait } from "../lib/format.ts";
 
 defineProps<{
   items: AttentionItem[];

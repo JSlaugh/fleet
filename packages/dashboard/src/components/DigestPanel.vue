@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import type { DigestResponse } from "@fleet/shared";
-import { fetchDigest, formatCost } from "../lib/api.ts";
+import { fetchDigest } from "../lib/api.ts";
+import { formatCost } from "../lib/format.ts";
 
 const emit = defineEmits<{ close: [] }>();
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from "vue";
 import { parseWorkerQuestions, type PendingApproval } from "@fleet/shared";
-import { formatTime } from "../lib/api.ts";
+import { formatTime } from "../lib/format.ts";
 
 const props = defineProps<{
   approval: PendingApproval;

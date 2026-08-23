@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref } from "vue";
 import type {
   ApprovalLatencyStats,
   BoardTicket,
@@ -17,18 +17,13 @@ import {
   fetchTicketDiff,
   fetchTicketReport,
   fetchTicketTranscript,
-  formatCost,
-  formatDuration,
-  formatTime,
   restartTicket,
   sendReply,
 } from "../lib/api.ts";
+import { formatCost, formatDuration, formatTime, formatTokens } from "../lib/format.ts";
 import { machineReviewBadgeClass } from "../lib/statusColors.ts";
+import { usePolledResource } from "../composables/usePolledResource.ts";
 import PrDiff from "./PrDiff.vue";
-
-function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
 
 function formatApprovalWait(latency: ApprovalLatencyStats | undefined): string {
   if (!latency || latency.count === 0) return "—";
@@ -61,7 +56,6 @@ const sending = ref(false);
 const replyStatus = ref<string>();
 const restarting = ref(false);
 const restartStatus = ref<string>();
-let timer: ReturnType<typeof setInterval> | undefined;
 /** The diff only changes when new commits land, so re-fetching it every 3s poll tick (like the journal) would be a wasted `gh` shell-out — this tracks what's already been fetched so a refetch only fires when `lastActivityAt` actually moves. */
 let lastDiffFetchKey: string | undefined;
 
@@ -98,7 +92,7 @@ async function confirmAcceptPlan() {
   try {
     await acceptPlan(props.ticket.project, props.ticket.issueNumber);
     acceptStatus.value = "Accepted — issue closed.";
-    void load();
+    void refresh();
   } catch (err) {
     acceptStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -125,7 +119,7 @@ async function confirmRestart() {
   try {
     await restartTicket(props.ticket.project, props.ticket.issueNumber);
     restartStatus.value = "Restarted — waiting for a fresh session.";
-    void load();
+    void refresh();
   } catch (err) {
     restartStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -142,7 +136,7 @@ async function submitReply() {
     const { mode } = await sendReply(props.ticket.project, props.ticket.issueNumber, message);
     replyStatus.value = mode === "steered" ? "Sent into the live session." : "Session resumed with your reply.";
     reply.value = "";
-    void load();
+    void refresh();
   } catch (err) {
     replyStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -150,34 +144,30 @@ async function submitReply() {
   }
 }
 
-/** Guards concurrent load()s (3s poll + action-triggered refetches): only the latest request's responses are applied. */
-let loadSeq = 0;
-
-async function load() {
-  const seq = ++loadSeq;
+async function load(isStale: () => boolean) {
   try {
     const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     detail.value = fetched;
     error.value = undefined;
   } catch (err) {
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
   try {
     const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     report.value = fetched;
   } catch {
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     report.value = undefined;
   }
   try {
     const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     transcript.value = fetched;
   } catch {
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     transcript.value = undefined;
   }
   const prUrl = detail.value?.record?.prUrl;
@@ -187,11 +177,11 @@ async function load() {
       lastDiffFetchKey = key;
       try {
         const fetched = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
-        if (seq !== loadSeq) return;
+        if (isStale()) return;
         diff.value = fetched;
         diffError.value = undefined;
       } catch (err) {
-        if (seq !== loadSeq) return;
+        if (isStale()) return;
         diff.value = undefined;
         diffError.value = err instanceof Error ? err.message : String(err);
       }
@@ -203,11 +193,7 @@ async function load() {
   }
 }
 
-onMounted(() => {
-  void load();
-  timer = setInterval(() => void load(), 3000);
-});
-onUnmounted(() => clearInterval(timer));
+const { refresh } = usePolledResource(load, 3000);
 </script>
 
 <template>

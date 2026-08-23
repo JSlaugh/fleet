@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { PendingApproval } from "@fleet/shared";
-import { formatTime } from "../lib/api.ts";
+import { formatTime } from "../lib/format.ts";
 import QuestionCard from "./QuestionCard.vue";
 
 defineProps<{
