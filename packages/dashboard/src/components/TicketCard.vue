@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { PRIORITY_LABELS, shortModelName, type BoardTicket, type ClosedTicketRecord } from "@fleet/shared";
-import { formatCost } from "../lib/api.ts";
+import { formatCost } from "../lib/format.ts";
 import { Badge } from "@/components/ui/badge/index.ts";
 import { Card } from "@/components/ui/card/index.ts";
 

@@ -12,7 +12,6 @@ import {
   connectBoardSocket,
   fetchApprovals,
   fetchBoard,
-  formatCost,
   resolveApproval,
   restartDaemon,
   setDaemonPaused,
@@ -21,7 +20,23 @@ import {
   setTicketPriority,
 } from "./lib/api.ts";
 import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
+import { formatCost } from "./lib/format.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
+import { usePolledResource } from "./composables/usePolledResource.ts";
+import { useUrlState } from "./composables/useUrlState.ts";
+import { toast } from "vue-sonner";
+import { Toaster } from "@/components/ui/sonner/index.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog/index.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import AttentionQueue from "./components/AttentionQueue.vue";
 import BoardColumn from "./components/BoardColumn.vue";
@@ -55,17 +70,24 @@ const connected = ref(false);
 const selected = ref<BoardTicket>();
 const projectFilter = ref<string>();
 
+useUrlState({ view, projectFilter, selected, tickets });
+
 let disconnect: (() => void) | undefined;
-let timer: ReturnType<typeof setInterval> | undefined;
 
-/** Guards concurrent load()s (WS ping + polling interval): only the latest request's response is applied. */
-let loadSeq = 0;
+/**
+ * Action failures go to toasts (#208): the shared `error` ref is cleared by
+ * every successful background board load, so a mutation's message could vanish
+ * before the operator saw it. `error` now carries board fetch/connectivity
+ * problems only.
+ */
+function toastActionError(context: string, err: unknown) {
+  toast.error(context, { description: err instanceof Error ? err.message : String(err), duration: 8000 });
+}
 
-async function load() {
-  const seq = ++loadSeq;
+async function load(isStale: () => boolean) {
   try {
     const board = await fetchBoard();
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     tickets.value = board.tickets;
     pausedUntil.value = board.pausedUntil;
     paused.value = board.paused;
@@ -81,10 +103,12 @@ async function load() {
       ) ?? selected.value;
     }
   } catch (err) {
-    if (seq !== loadSeq) return;
+    if (isStale()) return;
     error.value = err instanceof Error ? err.message : String(err);
   }
 }
+
+const { refresh: refreshBoard } = usePolledResource(load, 15000);
 
 const projects = computed(() => [...new Set(tickets.value.map((t) => t.project))].sort());
 
@@ -136,15 +160,20 @@ function onAttentionSelect(project: string, issueNumber: number) {
   if (ticket) selected.value = ticket;
 }
 
-async function loadApprovals() {
+async function loadApprovals(isStale: () => boolean) {
   try {
-    approvals.value = (await fetchApprovals()).approvals;
+    const fetched = (await fetchApprovals()).approvals;
+    if (isStale()) return;
+    approvals.value = fetched;
     if (approvals.value.length > 0) showApprovals.value = true;
     approvalsError.value = undefined;
   } catch (err) {
+    if (isStale()) return;
     approvalsError.value = err instanceof Error ? err.message : String(err);
   }
 }
+
+const { refresh: refreshApprovals } = usePolledResource(loadApprovals, 15000);
 
 const approvalCounts = computed(() => {
   const counts = new Map<string, number>();
@@ -163,10 +192,10 @@ async function onResolveApproval(
 ) {
   try {
     await resolveApproval(id, decision, message);
-    await loadApprovals();
+    await refreshApprovals();
     done?.(true);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError("Failed to resolve approval", err);
     done?.(false);
   }
 }
@@ -174,9 +203,9 @@ async function onResolveApproval(
 async function onSetPriority(ticket: BoardTicket, priority: string | null) {
   try {
     await setTicketPriority(ticket.project, ticket.issueNumber, priority);
-    await load();
+    await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to set priority for ${ticket.project}#${ticket.issueNumber}`, err);
   }
 }
 
@@ -184,30 +213,21 @@ async function togglePaused() {
   pauseToggling.value = true;
   try {
     await setDaemonPaused(!paused.value);
-    await load();
+    await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(paused.value ? "Failed to resume the daemon" : "Failed to pause the daemon", err);
   } finally {
     pauseToggling.value = false;
   }
 }
 
-async function confirmRestartDaemon() {
+async function restartDaemonNow() {
   if (restartingDaemon.value) return;
-  const confirmed = window.confirm(
-    [
-      "Restart the fleet daemon?",
-      "",
-      `This aborts ${runningCount.value} running ticket${runningCount.value === 1 ? "" : "s"} mid-turn and exits the process for a supervisor to relaunch.`,
-      "Interrupted tickets auto-resume from their last session on the next boot.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   restartingDaemon.value = true;
   try {
     await restartDaemon();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError("Failed to restart the daemon", err);
   } finally {
     restartingDaemon.value = false;
   }
@@ -217,9 +237,9 @@ async function toggleProjectPaused(project: string) {
   projectPauseToggling.value = project;
   try {
     await setProjectPaused(project, !pausedProjects.value.includes(project));
-    await load();
+    await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to toggle pause for ${project}`, err);
   } finally {
     projectPauseToggling.value = undefined;
   }
@@ -229,9 +249,9 @@ async function toggleProjectDormant(project: string) {
   projectPinToggling.value = project;
   try {
     await setProjectDormant(project, !dormantProjects.value.includes(project));
-    await load();
+    await refreshBoard();
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err);
+    toastActionError(`Failed to toggle dormant pin for ${project}`, err);
   } finally {
     projectPinToggling.value = undefined;
   }
@@ -244,28 +264,22 @@ function isSelected(ticket: BoardTicket): boolean {
 }
 
 onMounted(() => {
-  void load();
-  void loadApprovals();
   disconnect = connectBoardSocket(
     (type) => {
-      if (type === "approvals-updated") void loadApprovals();
-      else void load();
+      if (type === "approvals-updated") void refreshApprovals();
+      else void refreshBoard();
     },
     (status) => (connected.value = status),
   );
-  timer = setInterval(() => {
-    void load();
-    void loadApprovals();
-  }, 15000);
 });
 onUnmounted(() => {
   disconnect?.();
-  clearInterval(timer);
 });
 </script>
 
 <template>
   <div class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+    <Toaster theme="system" position="bottom-right" close-button />
     <header class="flex items-center gap-4 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
       <h1 class="text-base font-bold tracking-tight">Fleet</h1>
       <nav v-if="projects.length > 0" aria-label="Project filter" class="flex flex-wrap items-center gap-1">
@@ -353,15 +367,32 @@ onUnmounted(() => {
       >
         {{ paused ? "Resume" : "Pause" }}
       </button>
-      <button
-        type="button"
-        class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-        :disabled="restartingDaemon"
-        title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
-        @click="confirmRestartDaemon"
-      >
-        {{ restartingDaemon ? "Restarting…" : "Restart daemon" }}
-      </button>
+      <AlertDialog>
+        <AlertDialogTrigger as-child>
+          <button
+            type="button"
+            class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+            :disabled="restartingDaemon"
+            title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
+          >
+            {{ restartingDaemon ? "Restarting…" : "Restart daemon" }}
+          </button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restart the fleet daemon?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This aborts {{ runningCount }} running ticket{{ runningCount === 1 ? "" : "s" }} mid-turn and exits the
+              process for a supervisor to relaunch. Interrupted tickets auto-resume from their last session on the
+              next boot.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction @click="restartDaemonNow">Restart daemon</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <button
         type="button"
         class="rounded-full px-2.5 py-1 text-xs font-medium"
@@ -456,7 +487,7 @@ onUnmounted(() => {
         v-if="fileTicketProject"
         :project="fileTicketProject"
         @close="fileTicketProject = undefined"
-        @created="load"
+        @created="refreshBoard"
       />
       <DigestPanel v-if="showDigest" @close="showDigest = false" />
       <ApprovalsPanel

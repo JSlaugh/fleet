@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { PRIORITY_LABELS, SECTION_LABELS } from "@fleet/shared";
 import { createTicket } from "../lib/api.ts";
+import { usePanelFocus } from "../composables/usePanelFocus.ts";
 import { composeTicketBody, missingTicketSections } from "../lib/ticketForm.ts";
 
 const props = defineProps<{
@@ -12,6 +13,9 @@ const emit = defineEmits<{
   close: [];
   created: [];
 }>();
+
+const panelRoot = ref<HTMLElement>();
+usePanelFocus(panelRoot, () => emit("close"));
 
 const SECTION_KEYS = ["problem", "acceptance", "verification"] as const;
 
@@ -84,6 +88,8 @@ watch(() => props.project, resetForm);
 
 <template>
   <aside
+    ref="panelRoot"
+    tabindex="-1"
     class="flex w-[26rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
     :aria-label="`File a ticket in ${project}`"
   >

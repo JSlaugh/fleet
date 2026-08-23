@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import type {
   ApprovalLatencyStats,
   BoardTicket,
@@ -17,18 +17,25 @@ import {
   fetchTicketDiff,
   fetchTicketReport,
   fetchTicketTranscript,
-  formatCost,
-  formatDuration,
-  formatTime,
   restartTicket,
   sendReply,
 } from "../lib/api.ts";
+import { formatCost, formatDuration, formatTime, formatTokens } from "../lib/format.ts";
 import { machineReviewBadgeClass } from "../lib/statusColors.ts";
+import { usePanelFocus } from "../composables/usePanelFocus.ts";
+import { usePolledResource } from "../composables/usePolledResource.ts";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog/index.ts";
 import PrDiff from "./PrDiff.vue";
-
-function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
 
 function formatApprovalWait(latency: ApprovalLatencyStats | undefined): string {
   if (!latency || latency.count === 0) return "—";
@@ -50,6 +57,9 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const panelRoot = ref<HTMLElement>();
+usePanelFocus(panelRoot, () => emit("close"));
+
 const detail = ref<TicketDetail>();
 const report = ref<TicketReport>();
 const transcript = ref<TicketTranscript>();
@@ -61,9 +71,10 @@ const sending = ref(false);
 const replyStatus = ref<string>();
 const restarting = ref(false);
 const restartStatus = ref<string>();
-let timer: ReturnType<typeof setInterval> | undefined;
 /** The diff only changes when new commits land, so re-fetching it every 3s poll tick (like the journal) would be a wasted `gh` shell-out — this tracks what's already been fetched so a refetch only fires when `lastActivityAt` actually moves. */
 let lastDiffFetchKey: string | undefined;
+/** The archived transcript is immutable once present (only copied in after worktree cleanup), so it gets the same fetch-key treatment: once loaded it's never refetched, and while it 404s a retry only fires when the record's state actually moves. */
+let lastTranscriptFetchKey: string | undefined;
 
 const accepting = ref(false);
 const acceptStatus = ref<string>();
@@ -81,24 +92,14 @@ const reportIsEmpty = computed(
   () => !report.value || (reportToolNames.value.length === 0 && report.value.segments.length === 0),
 );
 
-async function confirmAcceptPlan() {
+async function acceptPlanNow() {
   if (accepting.value) return;
-  const confirmed = window.confirm(
-    [
-      `Accept plan ${props.ticket.project}#${props.ticket.issueNumber}?`,
-      "",
-      "This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.",
-      "",
-      "Child tickets are not affected — release each with its own fleet:ready label.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   accepting.value = true;
   acceptStatus.value = undefined;
   try {
     await acceptPlan(props.ticket.project, props.ticket.issueNumber);
     acceptStatus.value = "Accepted — issue closed.";
-    void load();
+    void refresh();
   } catch (err) {
     acceptStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -106,26 +107,16 @@ async function confirmAcceptPlan() {
   }
 }
 
-async function confirmRestart() {
+const restartBranch = computed(() => detail.value?.record?.branch ?? `fleet/${props.ticket.issueNumber}`);
+
+async function restartNow() {
   if (restarting.value) return;
-  const branch = detail.value?.record?.branch ?? `fleet/${props.ticket.issueNumber}`;
-  const confirmed = window.confirm(
-    [
-      `Restart ${props.ticket.project}#${props.ticket.issueNumber}?`,
-      "",
-      "This terminates the current session and discards its work: the branch " +
-        `${branch} and its worktree are deleted and recreated from scratch, so any commits the worker made are lost.`,
-      "",
-      "The ticket goes back to fleet:ready and a brand-new session picks it up on the next poll cycle.",
-    ].join("\n"),
-  );
-  if (!confirmed) return;
   restarting.value = true;
   restartStatus.value = undefined;
   try {
     await restartTicket(props.ticket.project, props.ticket.issueNumber);
     restartStatus.value = "Restarted — waiting for a fresh session.";
-    void load();
+    void refresh();
   } catch (err) {
     restartStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -142,7 +133,7 @@ async function submitReply() {
     const { mode } = await sendReply(props.ticket.project, props.ticket.issueNumber, message);
     replyStatus.value = mode === "steered" ? "Sent into the live session." : "Session resumed with your reply.";
     reply.value = "";
-    void load();
+    void refresh();
   } catch (err) {
     replyStatus.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -150,36 +141,47 @@ async function submitReply() {
   }
 }
 
-/** Guards concurrent load()s (3s poll + action-triggered refetches): only the latest request's responses are applied. */
-let loadSeq = 0;
-
-async function load() {
-  const seq = ++loadSeq;
-  try {
-    const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
-    detail.value = fetched;
-    error.value = undefined;
-  } catch (err) {
-    if (seq !== loadSeq) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  }
-  try {
-    const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
-    report.value = fetched;
-  } catch {
-    if (seq !== loadSeq) return;
-    report.value = undefined;
-  }
-  try {
-    const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
-    if (seq !== loadSeq) return;
-    transcript.value = fetched;
-  } catch {
-    if (seq !== loadSeq) return;
-    transcript.value = undefined;
-  }
+async function load(isStale: () => boolean) {
+  // Detail, report, and transcript are independent — only the diff below needs
+  // the detail's prUrl, so these three start together.
+  const loadDetail = async () => {
+    try {
+      const fetched = await fetchTicket(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      detail.value = fetched;
+      error.value = undefined;
+    } catch (err) {
+      if (isStale()) return;
+      error.value = err instanceof Error ? err.message : String(err);
+    }
+  };
+  const loadReport = async () => {
+    try {
+      const fetched = await fetchTicketReport(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      report.value = fetched;
+    } catch {
+      if (isStale()) return;
+      report.value = undefined;
+    }
+  };
+  const loadTranscript = async () => {
+    if (transcript.value) return;
+    // Keyed off the previous tick's detail — a state move (or the very first
+    // load, when detail is still empty) permits one attempt; a quiet tick doesn't.
+    const key = `${props.ticket.project}#${props.ticket.issueNumber}|${detail.value?.record?.status ?? ""}|${detail.value?.record?.lastActivityAt ?? ""}`;
+    if (key === lastTranscriptFetchKey) return;
+    lastTranscriptFetchKey = key;
+    try {
+      const fetched = await fetchTicketTranscript(props.ticket.project, props.ticket.issueNumber);
+      if (isStale()) return;
+      transcript.value = fetched;
+    } catch {
+      // 404 — not archived yet; the next state move retries.
+    }
+  };
+  await Promise.all([loadDetail(), loadReport(), loadTranscript()]);
+  if (isStale()) return;
   const prUrl = detail.value?.record?.prUrl;
   if (prUrl) {
     const key = `${props.ticket.project}#${props.ticket.issueNumber}|${prUrl}|${detail.value?.record?.lastActivityAt ?? ""}`;
@@ -187,11 +189,11 @@ async function load() {
       lastDiffFetchKey = key;
       try {
         const fetched = await fetchTicketDiff(props.ticket.project, props.ticket.issueNumber);
-        if (seq !== loadSeq) return;
+        if (isStale()) return;
         diff.value = fetched;
         diffError.value = undefined;
       } catch (err) {
-        if (seq !== loadSeq) return;
+        if (isStale()) return;
         diff.value = undefined;
         diffError.value = err instanceof Error ? err.message : String(err);
       }
@@ -203,16 +205,36 @@ async function load() {
   }
 }
 
-onMounted(() => {
-  void load();
-  timer = setInterval(() => void load(), 3000);
-});
-onUnmounted(() => clearInterval(timer));
+// Done tickets change rarely (a ClosedTicketRecord is effectively final), so
+// their poll backs off to 30s; live tickets keep the 3s cadence. The immediate
+// load on mount happens either way.
+const { refresh } = usePolledResource(load, () =>
+  closedRecord.value || props.ticket.status === "done" ? 30_000 : 3_000,
+);
+
+// The panel instance is reused when another card is selected (no :key in
+// App.vue), so the fetch-once state has to reset by hand or the previous
+// ticket's transcript/diff would be pinned under the new one.
+watch(
+  () => `${props.ticket.project}#${props.ticket.issueNumber}`,
+  () => {
+    detail.value = undefined;
+    report.value = undefined;
+    transcript.value = undefined;
+    diff.value = undefined;
+    diffError.value = undefined;
+    lastDiffFetchKey = undefined;
+    lastTranscriptFetchKey = undefined;
+    void refresh();
+  },
+);
 </script>
 
 <template>
   <aside
-    class="flex w-[30rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
+    ref="panelRoot"
+    tabindex="-1"
+    class="flex w-[30rem] shrink-0 flex-col border-l border-neutral-200 bg-white outline-none dark:border-neutral-700 dark:bg-neutral-900"
     aria-label="Ticket detail"
   >
     <header class="border-b border-neutral-200 p-4 dark:border-neutral-700">
@@ -220,26 +242,57 @@ onUnmounted(() => clearInterval(timer));
         <h2 class="min-w-0 flex-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
           {{ ticket.title }}
         </h2>
-        <button
-          v-if="canAcceptPlan"
-          type="button"
-          class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
-          :disabled="accepting"
-          title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
-          @click="confirmAcceptPlan"
-        >
-          {{ accepting ? "Accepting…" : "Accept plan" }}
-        </button>
-        <button
-          v-if="canRestart"
-          type="button"
-          class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
-          :disabled="restarting"
-          title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
-          @click="confirmRestart"
-        >
-          {{ restarting ? "Restarting…" : "Restart" }}
-        </button>
+        <AlertDialog v-if="canAcceptPlan">
+          <AlertDialogTrigger as-child>
+            <button
+              type="button"
+              class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
+              :disabled="accepting"
+              title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
+            >
+              {{ accepting ? "Accepting…" : "Accept plan" }}
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Accept plan {{ ticket.project }}#{{ ticket.issueNumber }}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.
+                Child tickets are not affected — release each with its own fleet:ready label.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction @click="acceptPlanNow">Accept plan</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        <AlertDialog v-if="canRestart">
+          <AlertDialogTrigger as-child>
+            <button
+              type="button"
+              class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+              :disabled="restarting"
+              title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
+            >
+              {{ restarting ? "Restarting…" : "Restart" }}
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Restart {{ ticket.project }}#{{ ticket.issueNumber }}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This terminates the current session and discards its work: the branch {{ restartBranch }} and its
+                worktree are deleted and recreated from scratch, so any commits the worker made are lost.
+                The ticket goes back to fleet:ready and a brand-new session picks it up on the next poll cycle.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction @click="restartNow">Restart</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <button
           type="button"
           class="rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"

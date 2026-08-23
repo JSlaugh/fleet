@@ -106,4 +106,48 @@ describe("TicketDetail archived transcript + resume command", () => {
 
     expect(wrapper.text()).not.toContain("claude --resume");
   });
+
+  it("fetches the transcript once, not on every poll tick", async () => {
+    vi.useFakeTimers();
+    stubFetch(
+      { journal: [], canRestart: false, canReply: false, record: { sessionId: "sess-abc" } as never },
+      { files: [{ name: "sess-abc.jsonl", content: '{"type":"user"}\n' }] },
+    );
+    const wrapper = mount(TicketDetail, { props: { ticket: makeTicket() } });
+    await vi.advanceTimersByTimeAsync(0);
+    const transcriptCalls = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).endsWith("/transcript")).length;
+    expect(transcriptCalls()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(transcriptCalls()).toBe(1);
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
+
+  it("retries a missing transcript only when the record's state moves", async () => {
+    vi.useFakeTimers();
+    stubFetch({
+      journal: [],
+      canRestart: false,
+      canReply: false,
+      record: { status: "running", lastActivityAt: "t1" } as never,
+    });
+    const wrapper = mount(TicketDetail, { props: { ticket: makeTicket() } });
+    await vi.advanceTimersByTimeAsync(0);
+    const transcriptCalls = () =>
+      vi.mocked(globalThis.fetch).mock.calls.filter((c) => String(c[0]).endsWith("/transcript")).length;
+    // Mount attempt (keyed off empty detail), then one retry once the detail's state is known.
+    await vi.advanceTimersByTimeAsync(3000);
+    const afterStateMove = transcriptCalls();
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(3000);
+
+    expect(transcriptCalls()).toBe(afterStateMove);
+    wrapper.unmount();
+    vi.useRealTimers();
+  });
 });

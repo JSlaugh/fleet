@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import type { PendingApproval } from "@fleet/shared";
-import { formatTime } from "../lib/api.ts";
+import { formatTime } from "../lib/format.ts";
+import { usePanelFocus } from "../composables/usePanelFocus.ts";
 import QuestionCard from "./QuestionCard.vue";
 
 defineProps<{
@@ -11,6 +13,9 @@ const emit = defineEmits<{
   resolve: [id: string, decision: "allow" | "deny" | "answer", message?: string, done?: (ok: boolean) => void];
   close: [];
 }>();
+
+const panelRoot = ref<HTMLElement>();
+usePanelFocus(panelRoot, () => emit("close"));
 
 function pretty(input: unknown): string {
   try {
@@ -23,6 +28,8 @@ function pretty(input: unknown): string {
 
 <template>
   <aside
+    ref="panelRoot"
+    tabindex="-1"
     class="flex w-[26rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
     aria-label="Pending approvals"
   >
