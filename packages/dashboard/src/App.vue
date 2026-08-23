@@ -127,7 +127,7 @@ onUnmounted(() => {
 <template>
   <div class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
     <Toaster theme="system" position="bottom-right" close-button />
-    <header class="flex items-center gap-4 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+    <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
       <h1 class="text-base font-bold tracking-tight">Fleet</h1>
       <nav v-if="projects.length > 0" aria-label="Project filter" class="flex flex-wrap items-center gap-1">
         <button
@@ -199,7 +199,7 @@ onUnmounted(() => {
       </button>
       <span
         v-if="budget"
-        class="rounded-full px-2.5 py-1 text-xs font-medium"
+        class="whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium"
         :class="budgetClass"
         :title="`Self-estimated spend over the trailing ${budget.windowHours}h vs configured budget`"
       >

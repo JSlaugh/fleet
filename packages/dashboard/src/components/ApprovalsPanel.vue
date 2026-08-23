@@ -30,7 +30,7 @@ function pretty(input: unknown): string {
   <aside
     ref="panelRoot"
     tabindex="-1"
-    class="flex w-[26rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
+    class="flex w-[26rem] max-w-[85vw] max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:shadow-xl shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
     aria-label="Pending approvals"
   >
     <header class="flex items-center gap-2 border-b border-neutral-200 p-4 dark:border-neutral-700">
