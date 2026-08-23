@@ -29,11 +29,11 @@ const lines = computed<DiffLine[]>(() =>
 );
 
 const lineClass: Record<DiffLineKind, string> = {
-  add: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
-  remove: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
-  hunk: "text-blue-600 dark:text-blue-400",
-  meta: "text-neutral-400 dark:text-neutral-500",
-  context: "text-neutral-600 dark:text-neutral-400",
+  add: "bg-success/10 text-success",
+  remove: "bg-destructive/10 text-destructive",
+  hunk: "text-primary",
+  meta: "text-muted-foreground",
+  context: "text-muted-foreground",
 };
 </script>
 
@@ -43,26 +43,26 @@ const lineClass: Record<DiffLineKind, string> = {
       <li
         v-for="file in diff.files"
         :key="file.path"
-        class="flex items-center justify-between gap-2 rounded bg-neutral-50 px-2 py-1 font-mono dark:bg-neutral-800"
+        class="flex items-center justify-between gap-2 rounded bg-muted px-2 py-1 font-mono"
       >
-        <span class="truncate text-neutral-700 dark:text-neutral-300">{{ file.path }}</span>
+        <span class="truncate text-foreground/80">{{ file.path }}</span>
         <span class="shrink-0">
-          <span class="text-emerald-600 dark:text-emerald-400">+{{ file.additions }}</span>
-          <span class="ml-1 text-red-600 dark:text-red-400">-{{ file.deletions }}</span>
+          <span class="text-success">+{{ file.additions }}</span>
+          <span class="ml-1 text-destructive">-{{ file.deletions }}</span>
         </span>
       </li>
     </ul>
 
-    <p v-if="diff.truncated" class="mb-2 text-[11px] text-amber-600 dark:text-amber-400">
+    <p v-if="diff.truncated" class="mb-2 text-[11px] text-warning">
       Diff truncated for display —
       <a :href="diff.prUrl" target="_blank" rel="noopener" class="underline">open on GitHub</a>
       for the full diff.
     </p>
 
-    <p v-if="lines.length === 0" class="text-xs text-neutral-400 dark:text-neutral-500">No changes.</p>
+    <p v-if="lines.length === 0" class="text-xs text-muted-foreground">No changes.</p>
     <pre
       v-else
-      class="max-h-96 overflow-auto rounded bg-neutral-50 p-2 font-mono text-[10px] leading-relaxed dark:bg-neutral-900"
+      class="max-h-96 overflow-auto rounded bg-muted p-2 font-mono text-[10px] leading-relaxed"
     ><span
       v-for="(line, index) in lines"
       :key="index"

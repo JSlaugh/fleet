@@ -196,11 +196,11 @@ const showTable = ref(false);
 </script>
 
 <template>
-  <div v-if="buckets.length === 0" class="mb-4 rounded border border-neutral-200 p-4 text-xs text-neutral-400 dark:border-neutral-700 dark:text-neutral-500">
+  <div v-if="buckets.length === 0" class="mb-4 rounded border p-4 text-xs text-muted-foreground">
     Not enough closed tickets yet to chart weekly trends.
   </div>
 
-  <div v-else class="viz-root mb-4 rounded border border-neutral-200 p-3 dark:border-neutral-700">
+  <div v-else class="viz-root mb-4 rounded border p-3">
     <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
       <div class="flex flex-wrap gap-1.5">
         <button
@@ -210,8 +210,8 @@ const showTable = ref(false);
           class="flex items-center gap-1.5 rounded border px-1.5 py-0.5 text-[11px]"
           :class="
             activeTiers.has(tier)
-              ? 'border-neutral-300 dark:border-neutral-600'
-              : 'border-neutral-200 text-neutral-400 dark:border-neutral-800 dark:text-neutral-600'
+              ? 'border-muted-foreground/40'
+              : 'text-muted-foreground'
           "
           @click="toggleTier(tier)"
         >
@@ -221,7 +221,7 @@ const showTable = ref(false);
       </div>
       <button
         type="button"
-        class="rounded border border-neutral-200 px-1.5 py-0.5 text-[11px] text-neutral-500 dark:border-neutral-700 dark:text-neutral-400"
+        class="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground"
         @click="showTable = !showTable"
       >
         {{ showTable ? "Hide table" : "Show as table" }}
@@ -230,7 +230,7 @@ const showTable = ref(false);
 
     <!-- Weekly spend, stacked by tier -->
     <div class="relative mb-4">
-      <div class="mb-1 text-[11px] uppercase tracking-wide text-neutral-400">Weekly spend</div>
+      <div class="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Weekly spend</div>
       <svg :viewBox="`0 0 ${CHART_W} ${SPEND_H}`" class="w-full" preserveAspectRatio="none" style="height: 130px">
         <line
           v-for="tick in spendTicks"
@@ -291,7 +291,7 @@ const showTable = ref(false);
 
     <!-- Weekly completed vs failed -->
     <div class="relative mb-4">
-      <div class="mb-1 text-[11px] uppercase tracking-wide text-neutral-400">Tickets completed vs. failed</div>
+      <div class="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Tickets completed vs. failed</div>
       <svg :viewBox="`0 0 ${CHART_W} ${OUTCOME_H}`" class="w-full" preserveAspectRatio="none" style="height: 115px">
         <line
           v-for="tick in outcomeTicks"
@@ -335,7 +335,7 @@ const showTable = ref(false);
         <div class="tooltip-row"><span class="status-good-dot"></span>Completed: {{ shownTiers.reduce((s, t) => s + hoveredBucket!.completed[t], 0) }}</div>
         <div class="tooltip-row"><span class="status-critical-dot"></span>Failed: {{ shownTiers.reduce((s, t) => s + hoveredBucket!.failed[t], 0) }}</div>
       </div>
-      <div class="mt-1 flex gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+      <div class="mt-1 flex gap-3 text-[11px] text-muted-foreground">
         <span class="flex items-center gap-1"><span class="status-good-dot"></span>Completed</span>
         <span class="flex items-center gap-1"><span class="status-critical-dot"></span>Failed</span>
       </div>
@@ -343,7 +343,7 @@ const showTable = ref(false);
 
     <!-- Cost per cleanly-merged PR, by tier -->
     <div class="relative">
-      <div class="mb-1 text-[11px] uppercase tracking-wide text-neutral-400">Cost per cleanly merged PR, by tier</div>
+      <div class="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Cost per cleanly merged PR, by tier</div>
       <svg :viewBox="`0 0 ${CHART_W} ${COST_H}`" class="w-full" preserveAspectRatio="none" style="height: 120px">
         <line v-for="tick in costTicks" :key="tick.value" :x1="PAD_L" :x2="CHART_W - PAD_R" :y1="tick.y" :y2="tick.y" class="gridline" />
         <text v-for="tick in costTicks" :key="`t${tick.value}`" :x="PAD_L - 4" :y="tick.y + 3" class="axis-label" text-anchor="end">
@@ -383,11 +383,11 @@ const showTable = ref(false);
           {{ fmtUsd(hoveredBucket.cleanMergeCostUsd[tier] / hoveredBucket.cleanMergeCount[tier]) }}
           ({{ hoveredBucket.cleanMergeCount[tier] }} PR{{ hoveredBucket.cleanMergeCount[tier] === 1 ? "" : "s" }})
         </div>
-        <div v-if="shownTiers.every((t) => hoveredBucket!.cleanMergeCount[t] === 0)" class="tooltip-row text-neutral-400">
+        <div v-if="shownTiers.every((t) => hoveredBucket!.cleanMergeCount[t] === 0)" class="tooltip-row text-muted-foreground">
           No cleanly merged PRs this week
         </div>
       </div>
-      <div class="mt-1 flex flex-wrap gap-3 text-[11px] text-neutral-500 dark:text-neutral-400">
+      <div class="mt-1 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
         <span v-for="tier in shownTiers" :key="tier" class="flex items-center gap-1">
           <span class="tier-swatch" :class="`tier-${tier}`"></span>{{ TIER_LABEL[tier] }}
         </span>
@@ -395,9 +395,9 @@ const showTable = ref(false);
     </div>
 
     <details v-if="showTable" class="mt-3 text-xs" open>
-      <summary class="cursor-pointer text-neutral-400">Weekly data</summary>
+      <summary class="cursor-pointer text-muted-foreground">Weekly data</summary>
       <table class="mt-2 w-full text-left text-[11px]">
-        <thead class="text-neutral-400 dark:text-neutral-500">
+        <thead class="text-muted-foreground">
           <tr>
             <th class="py-1 pr-2 font-medium">Week of</th>
             <th v-for="tier in TIERS" :key="tier" class="py-1 pr-2 font-medium">{{ TIER_LABEL[tier] }} spend</th>
@@ -407,7 +407,7 @@ const showTable = ref(false);
           </tr>
         </thead>
         <tbody>
-          <tr v-for="b in buckets" :key="b.weekStart" class="border-t border-neutral-100 dark:border-neutral-800">
+          <tr v-for="b in buckets" :key="b.weekStart" class="border-t">
             <td class="py-1 pr-2">{{ shortWeek(b.weekStart) }}</td>
             <td v-for="tier in TIERS" :key="tier" class="py-1 pr-2">{{ fmtUsd(b.spendUsd[tier]) }}</td>
             <td class="py-1 pr-2">{{ TIERS.reduce((s, t) => s + b.completed[t], 0) }}</td>

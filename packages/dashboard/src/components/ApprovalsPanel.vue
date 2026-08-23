@@ -30,24 +30,24 @@ function pretty(input: unknown): string {
   <aside
     ref="panelRoot"
     tabindex="-1"
-    class="flex w-[26rem] max-w-[85vw] max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:shadow-xl shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
+    class="flex w-[26rem] max-w-[85vw] max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:shadow-xl shrink-0 flex-col border-l bg-card"
     aria-label="Pending approvals"
   >
-    <header class="flex items-center gap-2 border-b border-neutral-200 p-4 dark:border-neutral-700">
-      <h2 class="text-sm font-semibold text-neutral-900 dark:text-neutral-100">Approvals</h2>
-      <span class="rounded-full bg-neutral-200 px-2 py-0.5 text-xs font-medium text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+    <header class="flex items-center gap-2 border-b p-4">
+      <h2 class="text-sm font-semibold text-foreground">Approvals</h2>
+      <span class="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
         {{ approvals.length }}
       </span>
       <button
         type="button"
-        class="ml-auto rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+        class="ml-auto rounded px-2 py-0.5 text-sm text-muted-foreground hover:bg-accent"
         @click="emit('close')"
       >
         Close
       </button>
     </header>
     <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-      <p v-if="approvals.length === 0" class="text-xs text-neutral-400 dark:text-neutral-500">
+      <p v-if="approvals.length === 0" class="text-xs text-muted-foreground">
         No pending approvals. Workers request approval here for any tool outside their allowlist.
       </p>
       <template v-for="approval in approvals" :key="approval.id">
@@ -59,27 +59,27 @@ function pretty(input: unknown): string {
         />
         <article
           v-else
-          class="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950"
+          class="rounded-lg border border-warning/30 bg-warning/10 p-3"
         >
         <div class="flex items-center gap-2 text-xs">
-          <span class="font-semibold text-neutral-900 dark:text-neutral-100">{{ approval.toolName }}</span>
-          <span class="text-neutral-500 dark:text-neutral-400">{{ approval.project }}#{{ approval.issueNumber }}</span>
-          <span class="ml-auto text-neutral-400 dark:text-neutral-500">{{ formatTime(approval.createdAt) }}</span>
+          <span class="font-semibold text-foreground">{{ approval.toolName }}</span>
+          <span class="text-muted-foreground">{{ approval.project }}#{{ approval.issueNumber }}</span>
+          <span class="ml-auto text-muted-foreground">{{ formatTime(approval.createdAt) }}</span>
         </div>
         <pre
-          class="mt-2 max-h-48 overflow-auto rounded bg-white p-2 font-mono text-[11px] leading-relaxed text-neutral-700 dark:bg-neutral-900 dark:text-neutral-300"
+          class="mt-2 max-h-48 overflow-auto rounded bg-card p-2 font-mono text-[11px] leading-relaxed text-foreground/80"
         >{{ pretty(approval.input) }}</pre>
         <div class="mt-2 flex gap-2">
           <button
             type="button"
-            class="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+            class="rounded bg-success px-3 py-1 text-xs font-medium text-background hover:bg-success/90"
             @click="emit('resolve', approval.id, 'allow')"
           >
             Allow
           </button>
           <button
             type="button"
-            class="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-700"
+            class="rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90"
             @click="emit('resolve', approval.id, 'deny')"
           >
             Deny

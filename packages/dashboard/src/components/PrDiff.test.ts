@@ -21,9 +21,9 @@ describe("PrDiff", () => {
     const removed = spans.find((s) => s.text() === "-old line");
     const hunk = spans.find((s) => s.text() === "@@ -1,2 +1,2 @@");
 
-    expect(added?.classes()).toContain("text-emerald-700");
-    expect(removed?.classes()).toContain("text-red-700");
-    expect(hunk?.classes()).toContain("text-blue-600");
+    expect(added?.classes()).toContain("text-success");
+    expect(removed?.classes()).toContain("text-destructive");
+    expect(hunk?.classes()).toContain("text-primary");
     expect(added?.classes()).not.toEqual(removed?.classes());
   });
 

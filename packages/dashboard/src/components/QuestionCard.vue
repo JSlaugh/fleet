@@ -47,21 +47,21 @@ function submit() {
 </script>
 
 <template>
-  <article class="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950">
+  <article class="rounded-lg border border-info/30 bg-info/10 p-3">
     <div class="flex items-center gap-2 text-xs">
-      <span class="font-semibold text-neutral-900 dark:text-neutral-100">Worker question</span>
-      <span class="text-neutral-500 dark:text-neutral-400">{{ approval.project }}#{{ approval.issueNumber }}</span>
-      <span class="ml-auto text-neutral-400 dark:text-neutral-500">{{ formatTime(approval.createdAt) }}</span>
+      <span class="font-semibold text-foreground">Worker question</span>
+      <span class="text-muted-foreground">{{ approval.project }}#{{ approval.issueNumber }}</span>
+      <span class="ml-auto text-muted-foreground">{{ formatTime(approval.createdAt) }}</span>
     </div>
 
     <fieldset v-for="(q, qIndex) in questions" :key="qIndex" class="mt-3">
-      <legend class="text-xs font-medium text-neutral-800 dark:text-neutral-200">{{ q.question }}</legend>
+      <legend class="text-xs font-medium text-foreground">{{ q.question }}</legend>
       <div class="mt-1.5 space-y-1">
         <label
           v-for="option in q.options ?? []"
           :key="option.label"
-          class="flex cursor-pointer items-start gap-2 rounded border bg-white p-2 text-xs dark:bg-neutral-900"
-          :class="(picks[qIndex] ?? []).includes(option.label) ? 'border-blue-500 ring-1 ring-blue-500' : 'border-neutral-200 dark:border-neutral-700'"
+          class="flex cursor-pointer items-start gap-2 rounded border bg-card p-2 text-xs"
+          :class="(picks[qIndex] ?? []).includes(option.label) ? 'border-primary ring-1 ring-primary' : 'border-border'"
         >
           <input
             :type="q.multiSelect ? 'checkbox' : 'radio'"
@@ -71,8 +71,8 @@ function submit() {
             @change="toggle(qIndex, option.label, q.multiSelect)"
           />
           <span>
-            <span class="font-medium text-neutral-900 dark:text-neutral-100">{{ option.label }}</span>
-            <span v-if="option.description" class="block text-neutral-500 dark:text-neutral-400">{{ option.description }}</span>
+            <span class="font-medium text-foreground">{{ option.label }}</span>
+            <span v-if="option.description" class="block text-muted-foreground">{{ option.description }}</span>
           </span>
         </label>
         <label class="block">
@@ -81,7 +81,7 @@ function submit() {
             v-model="other[qIndex]"
             type="text"
             placeholder="Other…"
-            class="w-full rounded border border-neutral-200 bg-white px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            class="w-full rounded border bg-card px-2 py-1 text-xs"
           />
         </label>
       </div>
@@ -90,7 +90,7 @@ function submit() {
     <div class="mt-3 flex gap-2">
       <button
         type="button"
-        class="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+        class="rounded bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         :disabled="submitted"
         @click="submit"
       >
@@ -98,7 +98,7 @@ function submit() {
       </button>
       <button
         type="button"
-        class="rounded border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        class="rounded border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-accent"
         @click="emit('dismiss')"
       >
         Dismiss

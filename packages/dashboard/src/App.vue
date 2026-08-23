@@ -125,16 +125,16 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="flex h-screen flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+  <div class="flex h-screen flex-col bg-background text-foreground">
     <Toaster theme="system" position="bottom-right" close-button />
-    <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-neutral-200 px-5 py-3 dark:border-neutral-800">
+    <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-5 py-3">
       <h1 class="text-base font-bold tracking-tight">Fleet</h1>
       <nav v-if="projects.length > 0" aria-label="Project filter" class="flex flex-wrap items-center gap-1">
         <button
           v-if="projects.length > 1"
           type="button"
           class="rounded-full px-2.5 py-1 text-xs font-medium"
-          :class="!projectFilter ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+          :class="!projectFilter ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent'"
           @click="projectFilter = undefined"
         >
           All
@@ -143,19 +143,19 @@ onUnmounted(() => {
           v-for="project in projects"
           :key="project"
           class="flex items-center overflow-hidden rounded-full"
-          :class="pausedProjects.includes(project) ? 'bg-amber-50 dark:bg-amber-950' : dormantProjects.includes(project) ? 'bg-neutral-100 dark:bg-neutral-900' : ''"
+          :class="pausedProjects.includes(project) ? 'bg-warning/10' : dormantProjects.includes(project) ? 'bg-muted' : ''"
         >
           <button
             type="button"
             class="px-2.5 py-1 text-xs font-medium"
             :class="
               projectFilter === project
-                ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900'
+                ? 'bg-foreground text-background'
                 : pausedProjects.includes(project)
-                  ? 'text-amber-800 dark:text-amber-200'
+                  ? 'text-warning'
                   : dormantProjects.includes(project)
-                    ? 'text-neutral-400 dark:text-neutral-500'
-                    : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                    ? 'text-muted-foreground'
+                    : 'text-muted-foreground hover:bg-accent'
             "
             @click="projectFilter = project"
           >
@@ -163,7 +163,7 @@ onUnmounted(() => {
           </button>
           <button
             type="button"
-            class="px-1.5 py-1 text-xs text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-900"
+            class="px-1.5 py-1 text-xs text-warning hover:bg-warning/15 disabled:opacity-50"
             :disabled="projectPauseToggling === project"
             :title="pausedProjects.includes(project) ? `Resume ${project}` : `Pause ${project}`"
             @click="board.toggleProjectPaused(project)"
@@ -172,7 +172,7 @@ onUnmounted(() => {
           </button>
           <button
             type="button"
-            class="px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-200 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            class="px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
             :disabled="projectPinToggling === project"
             :title="dormantProjects.includes(project) ? `Pin ${project} active` : `Pin ${project} dormant`"
             @click="board.toggleProjectDormant(project)"
@@ -181,7 +181,7 @@ onUnmounted(() => {
           </button>
           <button
             type="button"
-            class="px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-200 dark:text-neutral-400 dark:hover:bg-neutral-700"
+            class="px-1.5 py-1 text-xs text-muted-foreground hover:bg-accent"
             :title="`File a ticket in ${project}`"
             @click="fileTicketProject = project"
           >
@@ -192,7 +192,7 @@ onUnmounted(() => {
       <button
         type="button"
         class="ml-auto rounded-full px-2.5 py-1 text-xs font-medium"
-        :class="view === 'history' ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        :class="view === 'history' ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent'"
         @click="view = view === 'board' ? 'history' : 'board'"
       >
         {{ view === "board" ? "History" : "Board" }}
@@ -208,7 +208,7 @@ onUnmounted(() => {
       <button
         type="button"
         class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-        :class="paused ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        :class="paused ? 'bg-warning/15 text-warning' : 'text-muted-foreground hover:bg-accent'"
         :disabled="pauseToggling"
         @click="board.togglePaused"
       >
@@ -218,7 +218,7 @@ onUnmounted(() => {
         <AlertDialogTrigger as-child>
           <button
             type="button"
-            class="rounded-full border border-red-300 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+            class="rounded-full border border-destructive/40 px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
             :disabled="restartingDaemon"
             title="Abort live sessions and exit for a supervisor to relaunch — interrupted tickets auto-resume on the next boot"
           >
@@ -243,7 +243,7 @@ onUnmounted(() => {
       <button
         type="button"
         class="rounded-full px-2.5 py-1 text-xs font-medium"
-        :class="showDigest ? 'bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        :class="showDigest ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent'"
         @click="showDigest = !showDigest"
       >
         Digest
@@ -251,18 +251,18 @@ onUnmounted(() => {
       <button
         type="button"
         class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-        :class="approvals.length > 0 ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
+        :class="approvals.length > 0 ? 'bg-warning/15 text-warning' : 'text-muted-foreground hover:bg-accent'"
         @click="showApprovals = !showApprovals"
       >
         Approvals
-        <span v-if="approvals.length > 0" class="rounded-full bg-amber-500 px-1.5 text-white">{{ approvals.length }}</span>
+        <span v-if="approvals.length > 0" class="rounded-full bg-warning px-1.5 text-background">{{ approvals.length }}</span>
       </button>
-      <div class="flex items-center gap-3 text-xs text-neutral-400 dark:text-neutral-500">
-        <span v-if="error" class="text-red-600 dark:text-red-400">{{ error }}</span>
-        <span v-if="approvalsError" class="text-amber-600 dark:text-amber-400" :title="approvalsError">approvals unavailable</span>
+      <div class="flex items-center gap-3 text-xs text-muted-foreground">
+        <span v-if="error" class="text-destructive">{{ error }}</span>
+        <span v-if="approvalsError" class="text-warning" :title="approvalsError">approvals unavailable</span>
         <span v-if="totalCost" :title="'Total cost of tickets on the board'">Σ {{ totalCost }}</span>
         <span class="flex items-center gap-1.5">
-          <span class="size-2 rounded-full" :class="connected ? 'bg-emerald-500' : 'bg-neutral-300 dark:bg-neutral-700'" aria-hidden="true"></span>
+          <span class="size-2 rounded-full" :class="connected ? 'bg-success' : 'bg-muted-foreground/40'" aria-hidden="true"></span>
           {{ connected ? "live" : "offline" }}
         </span>
       </div>
@@ -270,19 +270,19 @@ onUnmounted(() => {
 
     <div
       v-if="paused"
-      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      class="border-b border-warning/30 bg-warning/10 px-5 py-2 text-center text-xs font-medium text-warning"
     >
       Paused — finishing {{ runningCount }} running ticket{{ runningCount === 1 ? "" : "s" }}, no new claims
     </div>
     <div
       v-if="pausedUntil"
-      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      class="border-b border-warning/30 bg-warning/10 px-5 py-2 text-center text-xs font-medium text-warning"
     >
       Plan limit reached — paused until {{ new Date(pausedUntil).toLocaleString() }}
     </div>
     <div
       v-if="workHoursReserve?.active"
-      class="border-b border-amber-200 bg-amber-50 px-5 py-2 text-center text-xs font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      class="border-b border-warning/30 bg-warning/10 px-5 py-2 text-center text-xs font-medium text-warning"
     >
       Work-hours reserve — claims held until
       {{ workHoursReserve.releaseAt ? new Date(workHoursReserve.releaseAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "" }}
