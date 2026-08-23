@@ -234,19 +234,19 @@ watch(
   <aside
     ref="panelRoot"
     tabindex="-1"
-    class="flex w-[30rem] shrink-0 flex-col border-l border-neutral-200 bg-white outline-none dark:border-neutral-700 dark:bg-neutral-900"
+    class="flex w-[30rem] max-w-[85vw] max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:shadow-xl shrink-0 flex-col border-l bg-card outline-none"
     aria-label="Ticket detail"
   >
-    <header class="border-b border-neutral-200 p-4 dark:border-neutral-700">
+    <header class="border-b p-4">
       <div class="flex items-start gap-2">
-        <h2 class="min-w-0 flex-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+        <h2 class="min-w-0 flex-1 text-sm font-semibold text-foreground">
           {{ ticket.title }}
         </h2>
         <AlertDialog v-if="canAcceptPlan">
           <AlertDialogTrigger as-child>
             <button
               type="button"
-              class="rounded border border-green-300 px-2 py-0.5 text-xs font-medium text-green-700 hover:bg-green-50 disabled:opacity-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950"
+              class="rounded border border-success/40 px-2 py-0.5 text-xs font-medium text-success hover:bg-success/10 disabled:opacity-50"
               :disabled="accepting"
               title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
             >
@@ -271,7 +271,7 @@ watch(
           <AlertDialogTrigger as-child>
             <button
               type="button"
-              class="rounded border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+              class="rounded border border-destructive/40 px-2 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
               :disabled="restarting"
               title="Terminate the session and re-run this ticket from scratch, discarding its branch work"
             >
@@ -295,16 +295,16 @@ watch(
         </AlertDialog>
         <button
           type="button"
-          class="rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          class="rounded px-2 py-0.5 text-sm text-muted-foreground hover:bg-accent"
           @click="emit('close')"
         >
           Close
         </button>
       </div>
-      <p v-if="acceptStatus" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{{ acceptStatus }}</p>
-      <p v-if="restartStatus" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">{{ restartStatus }}</p>
-      <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-        <a :href="ticket.url" target="_blank" rel="noopener" class="text-blue-600 hover:underline dark:text-blue-400">
+      <p v-if="acceptStatus" class="mt-2 text-xs text-muted-foreground">{{ acceptStatus }}</p>
+      <p v-if="restartStatus" class="mt-2 text-xs text-muted-foreground">{{ restartStatus }}</p>
+      <div class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <a :href="ticket.url" target="_blank" rel="noopener" class="text-primary hover:underline">
           {{ ticket.project }}#{{ ticket.issueNumber }}
         </a>
         <a
@@ -312,7 +312,7 @@ watch(
           :href="detail.record.prUrl"
           target="_blank"
           rel="noopener"
-          class="text-blue-600 hover:underline dark:text-blue-400"
+          class="text-primary hover:underline"
         >
           Pull request
         </a>
@@ -323,153 +323,153 @@ watch(
       </div>
       <dl
         v-if="detail?.record?.modelUsage"
-        class="mt-2 space-y-0.5 text-xs text-neutral-500 dark:text-neutral-400"
+        class="mt-2 space-y-0.5 text-xs text-muted-foreground"
       >
         <div v-for="(usage, model) in detail.record.modelUsage" :key="model" class="flex gap-2">
-          <dt class="font-medium text-neutral-600 dark:text-neutral-300">{{ shortModelName(String(model)) }}</dt>
+          <dt class="font-medium text-muted-foreground">{{ shortModelName(String(model)) }}</dt>
           <dd>{{ formatTokens(usage.inputTokens) }} in / {{ formatTokens(usage.outputTokens) }} out · {{ formatCost(usage.costUsd) || "&lt;$0.01" }}</dd>
         </div>
       </dl>
       <dl
         v-if="closedRecord"
-        class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400"
+        class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
       >
         <div v-if="closedRecord.timeToMergeMs !== undefined" class="flex gap-1">
-          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Time to merge</dt>
+          <dt class="font-medium text-muted-foreground">Time to merge</dt>
           <dd>{{ formatDuration(closedRecord.timeToMergeMs) }}</dd>
         </div>
         <div v-if="closedRecord.reviewRounds !== undefined" class="flex gap-1">
-          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Review rounds</dt>
+          <dt class="font-medium text-muted-foreground">Review rounds</dt>
           <dd>{{ closedRecord.reviewRounds }}</dd>
         </div>
         <div v-if="closedRecord.reviewCommentCount !== undefined" class="flex gap-1">
-          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Review comments</dt>
+          <dt class="font-medium text-muted-foreground">Review comments</dt>
           <dd>{{ closedRecord.reviewCommentCount }}</dd>
         </div>
         <div v-if="closedRecord.humanPushedAfterOpen !== undefined" class="flex gap-1">
-          <dt class="font-medium text-neutral-600 dark:text-neutral-300">Human rework</dt>
+          <dt class="font-medium text-muted-foreground">Human rework</dt>
           <dd>{{ closedRecord.humanPushedAfterOpen ? "yes" : "no" }}</dd>
         </div>
       </dl>
-      <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-neutral-600 dark:text-neutral-300">
+      <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
         {{ detail.record.lastSummary }}
       </p>
-      <p v-if="detail?.record?.sessionId" class="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+      <p v-if="detail?.record?.sessionId" class="mt-2 text-xs text-muted-foreground">
         Resume locally:
-        <code class="rounded bg-neutral-100 px-1 py-0.5 font-mono text-[11px] text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">claude --resume {{ detail.record.sessionId }}</code>
+        <code class="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground/80">claude --resume {{ detail.record.sessionId }}</code>
       </p>
     </header>
 
     <form
       v-if="canReply"
-      class="border-b border-neutral-200 p-4 dark:border-neutral-700"
+      class="border-b p-4"
       @submit.prevent="submitReply"
     >
       <label class="block">
-        <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+        <span class="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Reply to worker
         </span>
         <textarea
           v-model="reply"
           rows="3"
-          class="w-full resize-y rounded border border-neutral-300 bg-white p-2 text-xs text-neutral-900 focus:border-blue-500 focus:outline-none dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100"
+          class="w-full resize-y rounded border bg-card p-2 text-xs text-foreground focus:border-ring focus:outline-none"
           :placeholder="detail?.record?.status === 'needs-input' ? 'Answer the worker\'s question…' : 'Steer the running session…'"
         ></textarea>
       </label>
       <div class="mt-2 flex items-center gap-3">
         <button
           type="submit"
-          class="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          class="rounded bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           :disabled="sending || reply.trim().length === 0"
         >
           {{ sending ? "Sending…" : "Send" }}
         </button>
-        <span v-if="replyStatus" class="text-xs text-neutral-500 dark:text-neutral-400">{{ replyStatus }}</span>
+        <span v-if="replyStatus" class="text-xs text-muted-foreground">{{ replyStatus }}</span>
       </div>
     </form>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-4">
       <section v-if="detail?.record?.prUrl" class="mb-4">
-        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Diff
         </h3>
         <PrDiff v-if="diff" :diff="diff" />
-        <p v-else-if="diffError" class="text-xs text-red-600 dark:text-red-400">{{ diffError }}</p>
-        <p v-else class="text-xs text-neutral-400 dark:text-neutral-500">Loading diff…</p>
+        <p v-else-if="diffError" class="text-xs text-destructive">{{ diffError }}</p>
+        <p v-else class="text-xs text-muted-foreground">Loading diff…</p>
       </section>
 
       <section class="mb-4">
-        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Operation report
         </h3>
-        <p v-if="reportIsEmpty" class="text-xs text-neutral-400 dark:text-neutral-500">
+        <p v-if="reportIsEmpty" class="text-xs text-muted-foreground">
           No session activity recorded yet.
         </p>
         <div v-else class="space-y-3">
           <dl class="grid grid-cols-3 gap-2 text-xs">
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Tool calls</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">{{ report?.totals.toolCalls }}</dd>
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Tool calls</dt>
+              <dd class="font-semibold text-foreground/80">{{ report?.totals.toolCalls }}</dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Errors</dt>
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Errors</dt>
               <dd
                 class="font-semibold"
                 :class="
                   (report?.totals.errors ?? 0) > 0
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-neutral-700 dark:text-neutral-300'
+                    ? 'text-destructive'
+                    : 'text-foreground/80'
                 "
               >
                 {{ report?.totals.errors }}
               </dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Turns</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">{{ report?.totals.turns }}</dd>
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Turns</dt>
+              <dd class="font-semibold text-foreground/80">{{ report?.totals.turns }}</dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Wall time</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Wall time</dt>
+              <dd class="font-semibold text-foreground/80">
                 {{ formatDuration(report?.totals.durationMs) }}
               </dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Cost</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Cost</dt>
+              <dd class="font-semibold text-foreground/80">
                 {{ formatCost(report?.totals.costUsd) || "&lt;$0.01" }}
               </dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Bash denied</dt>
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Bash denied</dt>
               <dd
                 class="font-semibold"
                 :class="
                   (report?.bashDeniedCount ?? 0) > 0
-                    ? 'text-amber-600 dark:text-amber-400'
-                    : 'text-neutral-700 dark:text-neutral-300'
+                    ? 'text-warning'
+                    : 'text-foreground/80'
                 "
               >
                 {{ report?.bashDeniedCount ?? 0 }}
               </dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Approval wait (mean/max)</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Approval wait (mean/max)</dt>
+              <dd class="font-semibold text-foreground/80">
                 {{ formatApprovalWait(report?.approvalLatency) }}
               </dd>
             </div>
-            <div class="rounded bg-neutral-50 px-2 py-1.5 dark:bg-neutral-800">
-              <dt class="text-neutral-400 dark:text-neutral-500">Cache read/write</dt>
-              <dd class="font-semibold text-neutral-700 dark:text-neutral-300">
+            <div class="rounded bg-muted px-2 py-1.5">
+              <dt class="text-muted-foreground">Cache read/write</dt>
+              <dd class="font-semibold text-foreground/80">
                 {{ formatTokens(report?.cacheReadTokens ?? 0) }} / {{ formatTokens(report?.cacheCreationTokens ?? 0) }}
               </dd>
             </div>
           </dl>
 
-          <div v-if="report?.machineReview" class="rounded bg-neutral-50 px-2 py-1.5 text-[11px] dark:bg-neutral-800">
+          <div v-if="report?.machineReview" class="rounded bg-muted px-2 py-1.5 text-[11px]">
             <div class="flex items-center gap-2">
-              <span class="font-semibold text-neutral-700 dark:text-neutral-300">
+              <span class="font-semibold text-foreground/80">
                 {{ report.machineReview.kind === "plan" ? "Plan review" : "Machine review" }}
               </span>
               <span
@@ -478,16 +478,16 @@ watch(
               >
                 {{ report.machineReview.outcome }}
               </span>
-              <span v-if="report.machineReview.model" class="text-neutral-400 dark:text-neutral-500">
+              <span v-if="report.machineReview.model" class="text-muted-foreground">
                 {{ shortModelName(report.machineReview.model) }}
               </span>
             </div>
-            <p v-if="report.machineReview.errorSubtype" class="mt-1 text-neutral-500 dark:text-neutral-400">
+            <p v-if="report.machineReview.errorSubtype" class="mt-1 text-muted-foreground">
               {{ report.machineReview.errorSubtype }}
             </p>
             <ul v-if="report.machineReview.findings.length" class="mt-1 space-y-0.5">
-              <li v-for="(finding, index) in report.machineReview.findings" :key="index" class="text-neutral-600 dark:text-neutral-400">
-                <span class="font-medium text-neutral-700 dark:text-neutral-300">{{ findingLocation(finding) }}</span>
+              <li v-for="(finding, index) in report.machineReview.findings" :key="index" class="text-muted-foreground">
+                <span class="font-medium text-foreground/80">{{ findingLocation(finding) }}</span>
                 <template v-if="finding.severity"> ({{ finding.severity }})</template>
                 <template v-if="finding.summary">: {{ finding.summary }}</template>
               </li>
@@ -496,7 +496,7 @@ watch(
 
           <table v-if="reportToolNames.length" class="w-full text-left text-[11px]">
             <thead>
-              <tr class="text-neutral-400 dark:text-neutral-500">
+              <tr class="text-muted-foreground">
                 <th class="pb-1 font-medium">Tool</th>
                 <th class="pb-1 text-right font-medium">Calls</th>
                 <th class="pb-1 text-right font-medium">Errors</th>
@@ -506,18 +506,18 @@ watch(
               <tr
                 v-for="name in reportToolNames"
                 :key="name"
-                class="border-t border-neutral-100 dark:border-neutral-800"
+                class="border-t"
               >
-                <td class="py-1 text-neutral-700 dark:text-neutral-300">{{ name }}</td>
-                <td class="py-1 text-right text-neutral-600 dark:text-neutral-400">
+                <td class="py-1 text-foreground/80">{{ name }}</td>
+                <td class="py-1 text-right text-muted-foreground">
                   {{ report?.toolCounts[name] }}
                 </td>
                 <td
                   class="py-1 text-right"
                   :class="
                     (report?.toolErrorCounts[name] ?? 0) > 0
-                      ? 'text-red-600 dark:text-red-400'
-                      : 'text-neutral-600 dark:text-neutral-400'
+                      ? 'text-destructive'
+                      : 'text-muted-foreground'
                   "
                 >
                   {{ report?.toolErrorCounts[name] ?? 0 }}
@@ -527,16 +527,16 @@ watch(
           </table>
 
           <div v-if="report && report.segments.length > 0" class="space-y-1">
-            <h4 class="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+            <h4 class="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Segments
             </h4>
             <ol class="space-y-1">
               <li
                 v-for="(segment, index) in report.segments"
                 :key="index"
-                class="flex items-center justify-between gap-2 rounded bg-neutral-50 px-2 py-1 text-[11px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+                class="flex items-center justify-between gap-2 rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground"
               >
-                <span class="font-medium text-neutral-700 dark:text-neutral-300">Segment {{ index + 1 }}</span>
+                <span class="font-medium text-foreground/80">Segment {{ index + 1 }}</span>
                 <span>{{ segment.numTurns ?? "–" }} turns</span>
                 <span>{{ formatDuration(segment.durationMs) }}</span>
                 <span>{{ formatCost(segment.costUsd) || "&lt;$0.01" }}</span>
@@ -546,47 +546,47 @@ watch(
         </div>
       </section>
 
-      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+      <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Session activity
       </h3>
-      <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
-      <p v-else-if="!detail || detail.journal.length === 0" class="text-xs text-neutral-400 dark:text-neutral-500">
+      <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
+      <p v-else-if="!detail || detail.journal.length === 0" class="text-xs text-muted-foreground">
         No session activity recorded yet.
       </p>
       <ol v-else class="space-y-1.5">
         <li
           v-for="(entry, index) in detail.journal"
           :key="index"
-          class="rounded bg-neutral-50 px-2 py-1.5 font-mono text-[11px] leading-relaxed text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
+          class="rounded bg-muted px-2 py-1.5 font-mono text-[11px] leading-relaxed text-foreground/80"
         >
-          <span class="text-neutral-400 dark:text-neutral-500">{{ formatTime(entry.ts) }}</span>
+          <span class="text-muted-foreground">{{ formatTime(entry.ts) }}</span>
           <span class="ml-2 font-semibold">{{ entry.type }}<template v-if="entry.subtype">/{{ entry.subtype }}</template></span>
-          <span v-if="entry.tools?.length" class="ml-2 text-blue-700 dark:text-blue-400">{{ entry.tools.join(", ") }}</span>
-          <p v-if="entry.text" class="mt-0.5 whitespace-pre-wrap break-words text-neutral-600 dark:text-neutral-400">
+          <span v-if="entry.tools?.length" class="ml-2 text-info">{{ entry.tools.join(", ") }}</span>
+          <p v-if="entry.text" class="mt-0.5 whitespace-pre-wrap break-words text-muted-foreground">
             {{ entry.text }}
           </p>
-          <p v-if="entry.thinking" class="mt-0.5 whitespace-pre-wrap break-words italic text-neutral-400 dark:text-neutral-500">
+          <p v-if="entry.thinking" class="mt-0.5 whitespace-pre-wrap break-words italic text-muted-foreground">
             {{ entry.thinking }}
           </p>
         </li>
       </ol>
 
-      <h3 class="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-neutral-400 dark:text-neutral-500">
+      <h3 class="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         Archived transcript
       </h3>
-      <p v-if="!transcript?.files?.length" class="text-xs text-neutral-400 dark:text-neutral-500">
+      <p v-if="!transcript?.files?.length" class="text-xs text-muted-foreground">
         No archived transcript yet — transcripts are copied in once the ticket's worktree is cleaned up.
       </p>
       <div v-else class="space-y-2">
         <details
           v-for="file in transcript.files"
           :key="file.name"
-          class="rounded bg-neutral-50 dark:bg-neutral-800"
+          class="rounded bg-muted"
         >
-          <summary class="cursor-pointer px-2 py-1 text-[11px] font-medium text-neutral-600 dark:text-neutral-300">
+          <summary class="cursor-pointer px-2 py-1 text-[11px] font-medium text-muted-foreground">
             {{ file.name }}
           </summary>
-          <pre class="max-h-64 overflow-y-auto whitespace-pre-wrap break-words px-2 pb-2 font-mono text-[10px] leading-relaxed text-neutral-600 dark:text-neutral-400">{{ file.content }}</pre>
+          <pre class="max-h-64 overflow-y-auto whitespace-pre-wrap break-words px-2 pb-2 font-mono text-[10px] leading-relaxed text-muted-foreground">{{ file.content }}</pre>
         </details>
       </div>
     </div>

@@ -90,15 +90,15 @@ watch(() => props.project, resetForm);
   <aside
     ref="panelRoot"
     tabindex="-1"
-    class="flex w-[26rem] shrink-0 flex-col border-l border-neutral-200 bg-white dark:border-neutral-700 dark:bg-neutral-900"
+    class="flex w-[26rem] max-w-[85vw] max-lg:fixed max-lg:inset-y-0 max-lg:right-0 max-lg:z-40 max-lg:shadow-xl shrink-0 flex-col border-l bg-card"
     :aria-label="`File a ticket in ${project}`"
   >
-    <header class="flex items-center gap-2 border-b border-neutral-200 p-4 dark:border-neutral-700">
-      <h2 class="text-sm font-semibold text-neutral-900 dark:text-neutral-100">New ticket</h2>
-      <span class="text-xs text-neutral-400 dark:text-neutral-500">{{ project }}</span>
+    <header class="flex items-center gap-2 border-b p-4">
+      <h2 class="text-sm font-semibold text-foreground">New ticket</h2>
+      <span class="text-xs text-muted-foreground">{{ project }}</span>
       <button
         type="button"
-        class="ml-auto rounded px-2 py-0.5 text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+        class="ml-auto rounded px-2 py-0.5 text-sm text-muted-foreground hover:bg-accent"
         @click="emit('close')"
       >
         Close
@@ -107,7 +107,7 @@ watch(() => props.project, resetForm);
 
     <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
       <template v-if="result">
-        <p class="rounded border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">
+        <p class="rounded border border-success/30 bg-success/10 p-3 text-xs text-success">
           Filed
           <a :href="result.url" target="_blank" rel="noopener" class="font-medium underline">#{{ result.number }}</a>
           in {{ project }}.
@@ -115,14 +115,14 @@ watch(() => props.project, resetForm);
         <div class="flex gap-2">
           <button
             type="button"
-            class="rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+            class="rounded bg-foreground px-3 py-1.5 text-xs font-medium text-background hover:bg-foreground/85"
             @click="resetForm"
           >
             File another
           </button>
           <button
             type="button"
-            class="rounded border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:bg-neutral-100 dark:border-neutral-600 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            class="rounded border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
             @click="emit('close')"
           >
             Done
@@ -132,63 +132,63 @@ watch(() => props.project, resetForm);
 
       <form v-else class="space-y-3" @submit.prevent="submit">
         <label class="block">
-          <span class="text-xs font-medium text-neutral-700 dark:text-neutral-300">Title</span>
+          <span class="text-xs font-medium text-foreground/80">Title</span>
           <input
             v-model="title"
             type="text"
             required
-            class="mt-1 w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+            class="mt-1 w-full rounded border bg-card px-2 py-1.5 text-xs"
           />
         </label>
 
         <label v-for="section in SECTION_KEYS" :key="section" class="block">
-          <span class="text-xs font-medium text-neutral-700 dark:text-neutral-300">{{ SECTION_LABELS[section] }}</span>
+          <span class="text-xs font-medium text-foreground/80">{{ SECTION_LABELS[section] }}</span>
           <textarea
             v-model="sections[section]"
             rows="4"
-            class="mt-1 w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+            class="mt-1 w-full rounded border bg-card px-2 py-1.5 text-xs"
           ></textarea>
         </label>
 
-        <p v-if="missing.length > 0" class="text-xs text-amber-700 dark:text-amber-400">
+        <p v-if="missing.length > 0" class="text-xs text-warning">
           Missing: {{ missing.map((s) => SECTION_LABELS[s]).join(", ") }} — the same intake lint that gates claims.
         </p>
 
         <div class="flex gap-3">
           <label class="block flex-1">
-            <span class="text-xs font-medium text-neutral-700 dark:text-neutral-300">Priority</span>
+            <span class="text-xs font-medium text-foreground/80">Priority</span>
             <select
               v-model="priority"
-              class="mt-1 w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+              class="mt-1 w-full rounded border bg-card px-2 py-1.5 text-xs"
             >
               <option value="">None</option>
               <option v-for="p in PRIORITY_LABELS" :key="p" :value="p">{{ p.replace("fleet:", "") }}</option>
             </select>
           </label>
-          <label class="flex items-center gap-1.5 self-end pb-1.5 text-xs font-medium text-neutral-700 dark:text-neutral-300">
+          <label class="flex items-center gap-1.5 self-end pb-1.5 text-xs font-medium text-foreground/80">
             <input v-model="ready" type="checkbox" />
             Ready
           </label>
         </div>
 
         <label class="block">
-          <span class="text-xs font-medium text-neutral-700 dark:text-neutral-300">Depends on (issue numbers)</span>
+          <span class="text-xs font-medium text-foreground/80">Depends on (issue numbers)</span>
           <input
             v-model="dependsOnText"
             type="text"
             placeholder="e.g. 12, 14"
-            class="mt-1 w-full rounded border border-neutral-200 bg-white px-2 py-1.5 text-xs dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+            class="mt-1 w-full rounded border bg-card px-2 py-1.5 text-xs"
           />
-          <span v-if="dependsOnInvalid" class="mt-1 block text-xs text-red-600 dark:text-red-400">
+          <span v-if="dependsOnInvalid" class="mt-1 block text-xs text-destructive">
             Enter a comma-separated list of issue numbers.
           </span>
         </label>
 
-        <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
+        <p v-if="error" class="text-xs text-destructive">{{ error }}</p>
 
         <button
           type="submit"
-          class="w-full rounded bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+          class="w-full rounded bg-foreground px-3 py-1.5 text-xs font-medium text-background hover:bg-foreground/85 disabled:opacity-50"
           :disabled="!canSubmit"
         >
           {{ submitting ? "Filing…" : "File ticket" }}
