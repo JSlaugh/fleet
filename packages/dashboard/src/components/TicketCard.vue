@@ -2,6 +2,8 @@
 import { computed } from "vue";
 import { PRIORITY_LABELS, shortModelName, type BoardTicket, type ClosedTicketRecord } from "@fleet/shared";
 import { formatCost } from "../lib/api.ts";
+import { Badge } from "@/components/ui/badge/index.ts";
+import { Card } from "@/components/ui/card/index.ts";
 
 const props = defineProps<{
   ticket: BoardTicket;
@@ -33,22 +35,23 @@ const blurb = computed(() => {
 </script>
 
 <template>
-  <article
-    class="cursor-pointer rounded-lg border bg-white p-3 text-left shadow-sm transition hover:border-neutral-400 dark:bg-neutral-800 dark:hover:border-neutral-500"
+  <Card
+    as="article"
+    class="cursor-pointer gap-0 rounded-lg p-3 text-left transition hover:border-muted-foreground/50"
     :class="[
-      selected ? 'border-blue-500 ring-1 ring-blue-500' : 'border-neutral-200 dark:border-neutral-700',
+      selected ? 'border-primary ring-1 ring-primary' : '',
       ticket.blockedBy?.length ? 'opacity-50' : '',
     ]"
     @click="emit('select')"
   >
     <div class="flex items-start gap-2">
-      <h3 class="min-w-0 flex-1 text-sm font-medium text-neutral-900 dark:text-neutral-100">
+      <h3 class="min-w-0 flex-1 text-sm font-medium text-card-foreground">
         {{ ticket.title }}
       </h3>
       <select
         v-if="!isDone"
         :aria-label="`Priority for ${ticket.project} issue ${ticket.issueNumber}`"
-        class="rounded border border-neutral-200 bg-neutral-50 px-1 py-0.5 text-xs text-neutral-700 dark:border-neutral-600 dark:bg-neutral-700 dark:text-neutral-200"
+        class="rounded border bg-secondary px-1 py-0.5 text-xs text-secondary-foreground"
         :value="ticket.priority ?? ''"
         @click.stop
         @change="onPriorityChange"
@@ -59,111 +62,81 @@ const blurb = computed(() => {
     </div>
     <p
       v-if="blurb"
-      class="mt-1.5 line-clamp-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400"
+      class="mt-1.5 line-clamp-3 text-xs leading-relaxed text-muted-foreground"
     >
       {{ blurb }}
     </p>
     <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-      <a
+      <Badge
         v-if="isDone"
+        as="a"
+        variant="muted"
         :href="ticket.url"
         target="_blank"
         rel="noopener"
-        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 hover:underline dark:bg-neutral-700 dark:text-neutral-300"
+        class="hover:underline"
         @click.stop
       >
         {{ ticket.project }}#{{ ticket.issueNumber }}
-      </a>
-      <span v-else class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300">
+      </Badge>
+      <Badge v-else variant="muted">
         {{ ticket.project }}#{{ ticket.issueNumber }}
-      </span>
-      <span
-        v-if="ticket.type"
-        class="rounded bg-indigo-100 px-1.5 py-0.5 font-medium text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.type" variant="highlight">
         {{ ticket.type }}
-      </span>
-      <span
-        v-if="ticket.isPlan"
-        class="rounded bg-teal-100 px-1.5 py-0.5 font-medium text-teal-800 dark:bg-teal-900 dark:text-teal-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.isPlan" variant="highlight">
         plan
-      </span>
-      <span
+      </Badge>
+      <Badge
         v-if="ticket.epicProgress"
-        class="rounded bg-teal-100 px-1.5 py-0.5 font-medium text-teal-800 dark:bg-teal-900 dark:text-teal-200"
+        variant="highlight"
         :title="`${ticket.epicProgress.closed} of ${ticket.epicProgress.total} child tickets closed`"
       >
         {{ ticket.epicProgress.closed }}/{{ ticket.epicProgress.total }} children
-      </span>
-      <span
-        v-if="ticket.epicNumber"
-        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
-        :title="`Part of epic #${ticket.epicNumber}`"
-      >
+      </Badge>
+      <Badge v-if="ticket.epicNumber" variant="muted" :title="`Part of epic #${ticket.epicNumber}`">
         epic #{{ ticket.epicNumber }}
-      </span>
-      <span
-        v-if="closedRecord"
-        class="rounded bg-neutral-100 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
-      >
+      </Badge>
+      <Badge v-if="closedRecord" variant="muted">
         {{ closedRecord.prState === "MERGED" ? "merged" : "closed" }} {{ new Date(closedRecord.closedAt).toLocaleString() }}
-      </span>
-      <a
+      </Badge>
+      <Badge
         v-if="closedRecord?.prUrl"
+        as="a"
+        variant="info"
         :href="closedRecord.prUrl"
         target="_blank"
         rel="noopener"
-        class="rounded bg-blue-100 px-1.5 py-0.5 font-medium text-blue-800 hover:underline dark:bg-blue-900 dark:text-blue-200"
+        class="hover:underline"
         @click.stop
       >
         PR
-      </a>
-      <span
-        v-if="ticket.record?.sessionLive"
-        class="rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.record?.sessionLive" variant="success">
         live
-      </span>
-      <span
-        v-if="pendingApprovals"
-        class="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-      >
+      </Badge>
+      <Badge v-if="pendingApprovals" variant="warning">
         {{ pendingApprovals }} approval{{ pendingApprovals === 1 ? "" : "s" }}
-      </span>
-      <span
-        v-if="ticket.record?.status === 'stalled'"
-        class="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.record?.status === 'stalled'" variant="warning">
         stalled
-      </span>
-      <span
-        v-if="ticket.record?.status === 'restarting'"
-        class="rounded bg-sky-100 px-1.5 py-0.5 font-medium text-sky-800 dark:bg-sky-900 dark:text-sky-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.record?.status === 'restarting'" variant="info">
         restarting
-      </span>
-      <span
-        v-if="ticket.record?.status === 'failed'"
-        class="rounded bg-red-100 px-1.5 py-0.5 font-medium text-red-800 dark:bg-red-900 dark:text-red-200"
-      >
+      </Badge>
+      <Badge v-if="ticket.record?.status === 'failed'" variant="destructive">
         failed
-      </span>
-      <span
-        v-if="ticket.blockedBy?.length"
-        class="rounded bg-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300"
-      >
+      </Badge>
+      <Badge v-if="ticket.blockedBy?.length" variant="muted">
         waiting on #{{ ticket.blockedBy.join(", #") }}
-      </span>
-      <span
-        v-if="shortModelName(ticket.record?.model)"
-        class="rounded bg-violet-100 px-1.5 py-0.5 font-medium text-violet-800 dark:bg-violet-900 dark:text-violet-200"
-      >
+      </Badge>
+      <Badge v-if="shortModelName(ticket.record?.model)" variant="highlight">
         {{ shortModelName(ticket.record?.model) }}
-      </span>
-      <span v-if="formatCost(ticket.record?.costUsd)" class="ml-auto text-neutral-400 dark:text-neutral-500">
+      </Badge>
+      <span v-if="formatCost(ticket.record?.costUsd)" class="ml-auto text-muted-foreground">
         {{ formatCost(ticket.record?.costUsd) }}
       </span>
     </div>
-  </article>
+  </Card>
 </template>

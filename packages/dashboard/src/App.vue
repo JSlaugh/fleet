@@ -21,6 +21,7 @@ import {
   setTicketPriority,
 } from "./lib/api.ts";
 import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
+import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
 import ApprovalsPanel from "./components/ApprovalsPanel.vue";
 import AttentionQueue from "./components/AttentionQueue.vue";
 import BoardColumn from "./components/BoardColumn.vue";
@@ -56,14 +57,6 @@ const projectFilter = ref<string>();
 
 let disconnect: (() => void) | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
-
-const ACCENTS: Record<BoardStatus, string> = {
-  ready: "bg-emerald-500",
-  "in-progress": "bg-amber-500",
-  "needs-input": "bg-red-500",
-  review: "bg-blue-500",
-  done: "bg-neutral-400",
-};
 
 /** Guards concurrent load()s (WS ping + polling interval): only the latest request's response is applied. */
 let loadSeq = 0;
@@ -244,16 +237,7 @@ async function toggleProjectDormant(project: string) {
   }
 }
 
-const budgetClass = computed(() => {
-  switch (budget.value?.gate) {
-    case "blocked":
-      return "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200";
-    case "light-only":
-      return "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200";
-    default:
-      return "text-neutral-500";
-  }
-});
+const budgetClass = computed(() => budgetGateClass(budget.value?.gate));
 
 function isSelected(ticket: BoardTicket): boolean {
   return selected.value?.project === ticket.project && selected.value?.issueNumber === ticket.issueNumber;
@@ -452,7 +436,7 @@ onUnmounted(() => {
             :key="column.status"
             :title="column.title"
             :count="byStatus.get(column.status)?.length ?? 0"
-            :accent="ACCENTS[column.status]"
+            :accent="STATUS_ACCENTS[column.status]"
           >
             <TicketCard
               v-for="ticket in byStatus.get(column.status)"
