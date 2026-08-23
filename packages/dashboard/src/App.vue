@@ -1,30 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
-import {
-  BOARD_COLUMNS,
-  type BoardStatus,
-  type BoardTicket,
-  type BudgetStatus,
-  type PendingApproval,
-  type WorkHoursReserveStatus,
-} from "@fleet/shared";
-import {
-  connectBoardSocket,
-  fetchApprovals,
-  fetchBoard,
-  resolveApproval,
-  restartDaemon,
-  setDaemonPaused,
-  setProjectDormant,
-  setProjectPaused,
-  setTicketPriority,
-} from "./lib/api.ts";
+import { computed, onMounted, onUnmounted } from "vue";
+import { storeToRefs } from "pinia";
+import { BOARD_COLUMNS, type BoardStatus, type BoardTicket } from "@fleet/shared";
 import { buildAttentionQueue, groupByEpic, projectRollup } from "./lib/board.ts";
 import { formatCost } from "./lib/format.ts";
 import { budgetGateClass, STATUS_ACCENTS } from "./lib/statusColors.ts";
-import { usePolledResource } from "./composables/usePolledResource.ts";
-import { useUrlState } from "./composables/useUrlState.ts";
-import { toast } from "vue-sonner";
+import { useApprovalsStore } from "./stores/approvals.ts";
+import { useBoardStore } from "./stores/board.ts";
+import { useUiStore } from "./stores/ui.ts";
 import { Toaster } from "@/components/ui/sonner/index.ts";
 import {
   AlertDialog,
@@ -47,68 +30,31 @@ import HistoryView from "./components/HistoryView.vue";
 import TicketCard from "./components/TicketCard.vue";
 import TicketDetail from "./components/TicketDetail.vue";
 
-const tickets = ref<BoardTicket[]>([]);
-const approvals = ref<PendingApproval[]>([]);
-const showApprovals = ref(false);
-const showDigest = ref(false);
-const view = ref<"board" | "history">("board");
-const pausedUntil = ref<string>();
-const paused = ref(false);
-const pausedProjects = ref<string[]>([]);
-const dormantProjects = ref<string[]>([]);
-const runningCount = ref(0);
-const budget = ref<BudgetStatus>();
-const workHoursReserve = ref<WorkHoursReserveStatus>();
-const pauseToggling = ref(false);
-const restartingDaemon = ref(false);
-const projectPauseToggling = ref<string>();
-const projectPinToggling = ref<string>();
-const fileTicketProject = ref<string>();
-const error = ref<string>();
-const approvalsError = ref<string>();
-const connected = ref(false);
-const selected = ref<BoardTicket>();
-const projectFilter = ref<string>();
+// State and mutations live in the Pinia stores (#209); this component is
+// layout plus presentation-only derivations. Leaf components stay
+// props/emits-driven — the stores are consumed here only.
+const board = useBoardStore();
+const approvalsStore = useApprovalsStore();
+const ui = useUiStore();
 
-useUrlState({ view, projectFilter, selected, tickets });
-
-let disconnect: (() => void) | undefined;
-
-/**
- * Action failures go to toasts (#208): the shared `error` ref is cleared by
- * every successful background board load, so a mutation's message could vanish
- * before the operator saw it. `error` now carries board fetch/connectivity
- * problems only.
- */
-function toastActionError(context: string, err: unknown) {
-  toast.error(context, { description: err instanceof Error ? err.message : String(err), duration: 8000 });
-}
-
-async function load(isStale: () => boolean) {
-  try {
-    const board = await fetchBoard();
-    if (isStale()) return;
-    tickets.value = board.tickets;
-    pausedUntil.value = board.pausedUntil;
-    paused.value = board.paused;
-    pausedProjects.value = board.pausedProjects;
-    dormantProjects.value = board.dormantProjects;
-    runningCount.value = board.runningCount;
-    budget.value = board.budget;
-    workHoursReserve.value = board.workHoursReserve;
-    error.value = undefined;
-    if (selected.value) {
-      selected.value = board.tickets.find(
-        (t) => t.project === selected.value?.project && t.issueNumber === selected.value?.issueNumber,
-      ) ?? selected.value;
-    }
-  } catch (err) {
-    if (isStale()) return;
-    error.value = err instanceof Error ? err.message : String(err);
-  }
-}
-
-const { refresh: refreshBoard } = usePolledResource(load, 15000);
+const {
+  tickets,
+  pausedUntil,
+  paused,
+  pausedProjects,
+  dormantProjects,
+  runningCount,
+  budget,
+  workHoursReserve,
+  error,
+  connected,
+  pauseToggling,
+  restartingDaemon,
+  projectPauseToggling,
+  projectPinToggling,
+} = storeToRefs(board);
+const { approvals, approvalsError } = storeToRefs(approvalsStore);
+const { view, projectFilter, selected, showApprovals, showDigest, fileTicketProject } = storeToRefs(ui);
 
 const projects = computed(() => [...new Set(tickets.value.map((t) => t.project))].sort());
 
@@ -155,26 +101,6 @@ const attentionItems = computed(() => {
   return buildAttentionQueue(scopedTickets, scopedApprovals, Date.now());
 });
 
-function onAttentionSelect(project: string, issueNumber: number) {
-  const ticket = tickets.value.find((t) => t.project === project && t.issueNumber === issueNumber);
-  if (ticket) selected.value = ticket;
-}
-
-async function loadApprovals(isStale: () => boolean) {
-  try {
-    const fetched = (await fetchApprovals()).approvals;
-    if (isStale()) return;
-    approvals.value = fetched;
-    if (approvals.value.length > 0) showApprovals.value = true;
-    approvalsError.value = undefined;
-  } catch (err) {
-    if (isStale()) return;
-    approvalsError.value = err instanceof Error ? err.message : String(err);
-  }
-}
-
-const { refresh: refreshApprovals } = usePolledResource(loadApprovals, 15000);
-
 const approvalCounts = computed(() => {
   const counts = new Map<string, number>();
   for (const approval of approvals.value) {
@@ -184,96 +110,17 @@ const approvalCounts = computed(() => {
   return counts;
 });
 
-async function onResolveApproval(
-  id: string,
-  decision: "allow" | "deny" | "answer",
-  message?: string,
-  done?: (ok: boolean) => void,
-) {
-  try {
-    await resolveApproval(id, decision, message);
-    await refreshApprovals();
-    done?.(true);
-  } catch (err) {
-    toastActionError("Failed to resolve approval", err);
-    done?.(false);
-  }
-}
-
-async function onSetPriority(ticket: BoardTicket, priority: string | null) {
-  try {
-    await setTicketPriority(ticket.project, ticket.issueNumber, priority);
-    await refreshBoard();
-  } catch (err) {
-    toastActionError(`Failed to set priority for ${ticket.project}#${ticket.issueNumber}`, err);
-  }
-}
-
-async function togglePaused() {
-  pauseToggling.value = true;
-  try {
-    await setDaemonPaused(!paused.value);
-    await refreshBoard();
-  } catch (err) {
-    toastActionError(paused.value ? "Failed to resume the daemon" : "Failed to pause the daemon", err);
-  } finally {
-    pauseToggling.value = false;
-  }
-}
-
-async function restartDaemonNow() {
-  if (restartingDaemon.value) return;
-  restartingDaemon.value = true;
-  try {
-    await restartDaemon();
-  } catch (err) {
-    toastActionError("Failed to restart the daemon", err);
-  } finally {
-    restartingDaemon.value = false;
-  }
-}
-
-async function toggleProjectPaused(project: string) {
-  projectPauseToggling.value = project;
-  try {
-    await setProjectPaused(project, !pausedProjects.value.includes(project));
-    await refreshBoard();
-  } catch (err) {
-    toastActionError(`Failed to toggle pause for ${project}`, err);
-  } finally {
-    projectPauseToggling.value = undefined;
-  }
-}
-
-async function toggleProjectDormant(project: string) {
-  projectPinToggling.value = project;
-  try {
-    await setProjectDormant(project, !dormantProjects.value.includes(project));
-    await refreshBoard();
-  } catch (err) {
-    toastActionError(`Failed to toggle dormant pin for ${project}`, err);
-  } finally {
-    projectPinToggling.value = undefined;
-  }
-}
-
 const budgetClass = computed(() => budgetGateClass(budget.value?.gate));
 
-function isSelected(ticket: BoardTicket): boolean {
-  return selected.value?.project === ticket.project && selected.value?.issueNumber === ticket.issueNumber;
-}
-
 onMounted(() => {
-  disconnect = connectBoardSocket(
-    (type) => {
-      if (type === "approvals-updated") void refreshApprovals();
-      else void refreshBoard();
-    },
-    (status) => (connected.value = status),
-  );
+  board.start();
+  approvalsStore.start();
+  ui.start();
 });
 onUnmounted(() => {
-  disconnect?.();
+  board.stop();
+  approvalsStore.stop();
+  ui.stop();
 });
 </script>
 
@@ -319,7 +166,7 @@ onUnmounted(() => {
             class="px-1.5 py-1 text-xs text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-900"
             :disabled="projectPauseToggling === project"
             :title="pausedProjects.includes(project) ? `Resume ${project}` : `Pause ${project}`"
-            @click="toggleProjectPaused(project)"
+            @click="board.toggleProjectPaused(project)"
           >
             {{ pausedProjects.includes(project) ? "▶" : "⏸" }}
           </button>
@@ -328,7 +175,7 @@ onUnmounted(() => {
             class="px-1.5 py-1 text-xs text-neutral-500 hover:bg-neutral-200 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-700"
             :disabled="projectPinToggling === project"
             :title="dormantProjects.includes(project) ? `Pin ${project} active` : `Pin ${project} dormant`"
-            @click="toggleProjectDormant(project)"
+            @click="board.toggleProjectDormant(project)"
           >
             {{ dormantProjects.includes(project) ? "○" : "●" }}
           </button>
@@ -363,7 +210,7 @@ onUnmounted(() => {
         class="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
         :class="paused ? 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200' : 'text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800'"
         :disabled="pauseToggling"
-        @click="togglePaused"
+        @click="board.togglePaused"
       >
         {{ paused ? "Resume" : "Pause" }}
       </button>
@@ -389,7 +236,7 @@ onUnmounted(() => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction @click="restartDaemonNow">Restart daemon</AlertDialogAction>
+            <AlertDialogAction @click="board.restartDaemonNow">Restart daemon</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -446,7 +293,7 @@ onUnmounted(() => {
         <AttentionQueue
           v-if="attentionItems.length > 0"
           :items="attentionItems"
-          @select="onAttentionSelect"
+          @select="ui.selectTicket"
           @open-approvals="showApprovals = true"
         />
         <div v-if="dormantRollups.length > 0" class="flex shrink-0 flex-col gap-1.5" aria-label="Dormant projects">
@@ -457,8 +304,8 @@ onUnmounted(() => {
             :paused="pausedProjects.includes(rollup.project)"
             :pause-toggling="projectPauseToggling === rollup.project"
             :pin-toggling="projectPinToggling === rollup.project"
-            @toggle-pause="toggleProjectPaused(rollup.project)"
-            @activate="toggleProjectDormant(rollup.project)"
+            @toggle-pause="board.toggleProjectPaused(rollup.project)"
+            @activate="board.toggleProjectDormant(rollup.project)"
           />
         </div>
         <div class="flex min-h-0 flex-1 gap-3 overflow-x-auto">
@@ -473,10 +320,10 @@ onUnmounted(() => {
               v-for="ticket in byStatus.get(column.status)"
               :key="`${ticket.project}#${ticket.issueNumber}`"
               :ticket="ticket"
-              :selected="isSelected(ticket)"
+              :selected="ui.isSelected(ticket)"
               :pending-approvals="approvalCounts.get(`${ticket.project}#${ticket.issueNumber}`) ?? 0"
-              @select="selected = isSelected(ticket) ? undefined : ticket"
-              @set-priority="(p) => onSetPriority(ticket, p)"
+              @select="selected = ui.isSelected(ticket) ? undefined : ticket"
+              @set-priority="(p) => board.setPriority(ticket, p)"
             />
           </BoardColumn>
         </div>
@@ -487,13 +334,13 @@ onUnmounted(() => {
         v-if="fileTicketProject"
         :project="fileTicketProject"
         @close="fileTicketProject = undefined"
-        @created="refreshBoard"
+        @created="board.refresh"
       />
       <DigestPanel v-if="showDigest" @close="showDigest = false" />
       <ApprovalsPanel
         v-if="showApprovals"
         :approvals="approvals"
-        @resolve="onResolveApproval"
+        @resolve="approvalsStore.resolve"
         @close="showApprovals = false"
       />
     </div>

@@ -1,8 +1,12 @@
-import { onMounted, onUnmounted } from "vue";
+import { getCurrentInstance, onMounted, onUnmounted } from "vue";
 
 export interface PolledResource {
   /** Run the loader now (also what the interval calls). Superseded runs see isStale() flip true. */
   refresh: () => Promise<void>;
+  /** Begin the initial load + poll cycle. Called automatically on mount when used inside a component. */
+  start: () => void;
+  /** Stop polling. Called automatically on unmount when used inside a component. */
+  stop: () => void;
 }
 
 /**
@@ -16,7 +20,11 @@ export interface PolledResource {
  *
  * `intervalMs` may be a getter, re-read after every completed load, so the
  * cadence can back off with resource state; returning null stops polling
- * until the next mount (manual refresh keeps working).
+ * until the next start (manual refresh keeps working).
+ *
+ * Inside a component, start/stop ride mount/unmount automatically. Inside a
+ * Pinia store there is no instance lifecycle, so the store exposes start/stop
+ * and the app shell calls them.
  */
 export function usePolledResource(
   load: (isStale: () => boolean) => Promise<void>,
@@ -41,13 +49,20 @@ export function usePolledResource(
     }, delay);
   }
 
-  onMounted(() => {
+  function start() {
+    stopped = false;
     void refresh().then(schedule);
-  });
-  onUnmounted(() => {
+  }
+
+  function stop() {
     stopped = true;
     clearTimeout(timer);
-  });
+  }
 
-  return { refresh };
+  if (getCurrentInstance()) {
+    onMounted(start);
+    onUnmounted(stop);
+  }
+
+  return { refresh, start, stop };
 }
