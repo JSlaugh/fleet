@@ -23,6 +23,7 @@ import {
   restartTicket,
   sendReply,
 } from "../lib/api.ts";
+import { machineReviewBadgeClass } from "../lib/statusColors.ts";
 import PrDiff from "./PrDiff.vue";
 
 function formatTokens(n: number): string {
@@ -33,19 +34,6 @@ function formatApprovalWait(latency: ApprovalLatencyStats | undefined): string {
   if (!latency || latency.count === 0) return "—";
   const meanMs = latency.totalWaitMs / latency.count;
   return `${formatDuration(meanMs)} / ${formatDuration(latency.maxWaitMs)}`;
-}
-
-function machineReviewBadgeClass(outcome: string): string {
-  switch (outcome) {
-    case "findings":
-      return "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300";
-    case "passed":
-      return "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300";
-    case "error":
-      return "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300";
-    default:
-      return "bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300";
-  }
 }
 
 function findingLocation(finding: TicketReportFinding): string {
