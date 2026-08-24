@@ -11,7 +11,7 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
+import { StderrCapture, checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -296,6 +296,13 @@ async function runReviewSession<T>(opts: {
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), timeoutMs);
   const toolTimings: ToolTimings = new Map();
+  const stderrCapture = new StderrCapture();
+  const journalStderrTail = () => {
+    const text = stderrCapture.take();
+    if (!text) return;
+    log("review", `${opts.scope}: ${opts.logLabel} CLI stderr tail: ${text.slice(-300)}`);
+    opts.journal.append({ type: "fleet", event: "stderr-tail", text, session: opts.journalSession });
+  };
   try {
     const q = query({
       prompt: opts.prompt,
@@ -304,9 +311,17 @@ async function runReviewSession<T>(opts: {
         model: opts.model,
         effort: opts.effort,
         abortController,
+        stderr: stderrCapture.append,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         title: sessionTitle(opts.scope, opts.journalSession),
         permissionMode: "default",
+        // `allowedTools` only auto-approves — it does not narrow what exists. Without
+        // `tools`, every built-in tool's schema still loads into the reviewer's context
+        // (paid on every review) and the model can burn turns trying tools that
+        // `canUseTool` below will just deny. `tools` removes the rest of the built-ins
+        // outright; the `canUseTool` denial stays as the backstop for anything `tools`
+        // doesn't govern (MCP tools from the target repo's project settings).
+        tools: ["Read", "Grep", "Glob"],
         allowedTools: ["Read", "Grep", "Glob"],
         canUseTool: async (toolName) => ({
           behavior: "deny",
@@ -338,6 +353,7 @@ async function runReviewSession<T>(opts: {
       }
       if (message.type === "result") {
         if (message.subtype !== "success") {
+          journalStderrTail();
           outcome.errorSubtype = message.subtype;
           return outcome;
         }
@@ -347,9 +363,11 @@ async function runReviewSession<T>(opts: {
         return outcome;
       }
     }
+    journalStderrTail();
     outcome.errorSubtype = "stream_ended_without_result";
     return outcome;
   } catch (err) {
+    journalStderrTail();
     if (err instanceof AbortError || abortController.signal.aborted) {
       outcome.errorSubtype = `timed out after ${Math.round(timeoutMs / 60_000)} minutes`;
     } else {
