@@ -312,6 +312,31 @@ export function sessionTitle(scope: string, suffix?: string): string {
   return suffix ? `fleet ${scope} ${suffix}` : `fleet ${scope}`;
 }
 
+/** Chars of subprocess stderr retained (and journaled) per drain — the newest output is what explains a death, so the buffer keeps the tail. */
+const STDERR_TAIL_CHARS = 4000;
+
+/**
+ * Rolling tail of the CLI subprocess's stderr, fed by the SDK's `stderr`
+ * callback. Without this, a turn that dies at the process level
+ * (`stream_ended_without_result`, an error-subtype result, a thrown transport
+ * error) leaves nothing to diagnose with — the subprocess's own complaint went
+ * to a pipe nobody read. `take()` drains, so one crash's output can't be
+ * re-journaled by a later turn on the same session.
+ */
+export class StderrCapture {
+  private buf = "";
+  constructor(private readonly limit = STDERR_TAIL_CHARS) {}
+  /** Bound method so it can be passed directly as the SDK's `stderr` option. */
+  readonly append = (data: string): void => {
+    this.buf = (this.buf + data).slice(-this.limit);
+  };
+  take(): string {
+    const text = this.buf.trim();
+    this.buf = "";
+    return text;
+  }
+}
+
 export class WorkerSession {
   readonly abortController = new AbortController();
   private readonly input = new MessageQueue<SDKUserMessage>();
@@ -336,6 +361,7 @@ export class WorkerSession {
    * SDK version starts echoing steering back.
    */
   private readonly pendingSends: string[] = [];
+  private readonly stderrCapture = new StderrCapture();
   sessionId?: string;
   costUsd = 0;
   model?: string;
@@ -371,6 +397,7 @@ export class WorkerSession {
         model: opts.model ?? opts.project.model,
         effort: opts.effort,
         abortController: this.abortController,
+        stderr: this.stderrCapture.append,
         pathToClaudeCodeExecutable: opts.claudeExecutable,
         resume: opts.resumeSessionId,
         // On resume the persisted title wins — this only names a fresh transcript.
@@ -416,7 +443,10 @@ export class WorkerSession {
     try {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
-        if (done || !message) return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
+        if (done || !message) {
+          this.journalStderrTail();
+          return { kind: this.kind, errorSubtype: "stream_ended_without_result" } as TurnResult;
+        }
         if (shouldJournal(message)) {
           const entry = summarize(message, { toolTimings: this.toolTimings, pendingSends: this.pendingSends });
           this.opts.onActivity(activityNote(entry));
@@ -450,10 +480,12 @@ export class WorkerSession {
             if (parsed.success) return { kind: "code", result: normalizeResult(parsed.data) };
             return { kind: "code", errorSubtype: "invalid_structured_output", terminalReason: message.terminal_reason };
           }
+          this.journalStderrTail();
           return { kind: this.kind, errorSubtype: message.subtype, terminalReason: message.terminal_reason } as TurnResult;
         }
       }
     } catch (err) {
+      this.journalStderrTail();
       if (err instanceof AbortError || this.abortController.signal.aborted) {
         return { kind: this.kind, errorSubtype: `timed out after ${Math.round(timeoutMs / 60_000)} minutes` } as TurnResult;
       }
@@ -461,6 +493,20 @@ export class WorkerSession {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * Journals whatever subprocess stderr accumulated since the last drain —
+   * called only on the process-level failure paths (stream ended, error-subtype
+   * result, thrown/aborted turn), where it's the only diagnostic left. Model-level
+   * outcomes (`plan_limit`, `invalid_structured_output`) skip it: stderr didn't
+   * cause those, and draining there would misattribute unrelated warnings.
+   */
+  private journalStderrTail(): void {
+    const text = this.stderrCapture.take();
+    if (!text) return;
+    log("worker", `${this.opts.scope}: CLI stderr tail: ${text.slice(-300)}`);
+    this.opts.journal.append({ type: "fleet", event: "stderr-tail", text });
   }
 
   close(): void {

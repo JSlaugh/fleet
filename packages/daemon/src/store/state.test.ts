@@ -384,9 +384,20 @@ describe("StateStore", () => {
 
   describe("getSpendSince", () => {
     it("sums entries at/after the given timestamp without pruning anything", () => {
-      const store = new StateStore(tempDataDir());
-      store.appendSpend(1, 100000); // old entry, well outside a normal window
-      const cutoff = new Date().toISOString();
+      const dataDir = tempDataDir();
+      // The pre-cutoff entry is seeded with an explicitly past timestamp (via the
+      // state.json import) rather than appendSpend, which stamps now(): a now()-stamped
+      // entry and a now() cutoff landing in the same millisecond made this flaky,
+      // since getSpendSince is inclusive (`at >= cutoff`).
+      writeFileSync(
+        join(dataDir, "state.json"),
+        JSON.stringify({
+          tickets: [],
+          spendLedger: [{ at: new Date(Date.now() - 60_000).toISOString(), usd: 1 }],
+        }),
+      );
+      const store = new StateStore(dataDir);
+      const cutoff = new Date(Date.now() - 1000).toISOString();
       store.appendSpend(2, 100000);
       expect(store.getSpendSince(cutoff)).toBeCloseTo(2);
       // The first entry is still there for a wider window — getSpendSince never deletes.
