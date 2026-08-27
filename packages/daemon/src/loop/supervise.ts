@@ -4,7 +4,7 @@ import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./f
 import { MAX_TICKET_TIMEOUT_MINUTES, getIssueComments, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
-import { extendPause, handlePlanLimit } from "./pause.ts";
+import { extendPause, handleAuthFailure, handlePlanLimit, pauseForAuthFailure } from "./pause.ts";
 import { recordSpend } from "./budget.ts";
 import { resolveTypeChecklist, resolveTypeContract, resolveTypeVerify } from "../github/buildspec.ts";
 import {
@@ -52,6 +52,11 @@ export async function supervise(
 
     if (turn.errorSubtype === "plan_limit") {
       await handlePlanLimit(ctx, project, issue, turn.limitResetAt);
+      return;
+    }
+
+    if (turn.errorSubtype === "auth_failed") {
+      await handleAuthFailure(ctx, project, issue);
       return;
     }
 
@@ -257,6 +262,7 @@ export async function machineReviewGate(
     journal.append({ type: "fleet", event: "machine-review-error", errorSubtype: outcome.errorSubtype });
     log("loop", `${scope}: machine review failed (${outcome.errorSubtype}) — proceeding to human review`);
     if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
+    if (outcome.errorSubtype === "auth_failed") pauseForAuthFailure(ctx, project, issue);
     ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
     return { action: "proceed" };
   }
@@ -361,6 +367,7 @@ export async function planReviewGate(
     journal.append({ type: "fleet", event: "plan-review-error", errorSubtype: outcome.errorSubtype });
     log("loop", `${scope}: plan review failed (${outcome.errorSubtype}) — proceeding to file the children`);
     if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
+    if (outcome.errorSubtype === "auth_failed") pauseForAuthFailure(ctx, project, issue);
     ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
     return { action: "proceed" };
   }
