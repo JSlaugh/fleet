@@ -9,6 +9,7 @@ const GATE_EVENT_TYPES: Record<string, DigestGateType> = {
   "gate-hold-budget": "budget",
   "gate-hold-work-hours": "work-hours",
   "gate-hold-plan-limit": "plan-limit",
+  "gate-hold-auth-probe": "auth",
 };
 
 export interface DigestInput {

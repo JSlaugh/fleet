@@ -245,6 +245,15 @@ describe("pauseForAuthFailure", () => {
     expect(state.getPaused()).toBe(true);
     expect(state.get("alpha", 7)?.status).toBe("running");
   });
+
+  it("invalidates the cached auth-probe result (fleet#217) so the next cycle re-probes instead of trusting a now-stale healthy cache", async () => {
+    const { ctx } = makeCtxFor(record({ status: "running" }));
+    ctx.authProbeCache = { healthy: true, checkedAt: Date.now() };
+
+    pauseForAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+    expect(ctx.authProbeCache).toBeUndefined();
+  });
 });
 
 describe("isPaused / updatePauseState", () => {

@@ -11,6 +11,7 @@ import type {
   WorkHoursReserveStatus,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
+import { checkAuthGate } from "./authGate.ts";
 import { cleanupFinished, dormantProjectNames, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
 import { budgetStatus } from "./budget.ts";
 import { cycleProject } from "./claim.ts";
@@ -60,6 +61,8 @@ export class FleetLoop {
   private readonly budgetBlockedNotified = new Set<string>();
   /** Project names currently logged for a work-hours reserve hold; see `LoopContext`. */
   private readonly workHoursReserveNotified = new Set<string>();
+  /** Whether the current auth-gate hold spell has already logged its event; see `LoopContext`. */
+  private readonly authGateNotified = new Set<"held">();
   private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
@@ -91,6 +94,8 @@ export class FleetLoop {
       contributorFloorSkipsLogged: this.contributorFloorSkipsLogged,
       budgetBlockedNotified: this.budgetBlockedNotified,
       workHoursReserveNotified: this.workHoursReserveNotified,
+      authGateNotified: this.authGateNotified,
+      authGateHeld: false,
       emitBoard: () => this.boardThrottle.trigger(),
       getProject: (name) => this.getProject(name),
       isShuttingDown: () => this.shuttingDown,
@@ -113,6 +118,7 @@ export class FleetLoop {
     this.recoverStalled();
     await refreshOwnHeartbeats(this.ctx);
     await checkDigestSchedule(this.ctx);
+    await checkAuthGate(this.ctx);
     for (const project of this.config.projects) {
       try {
         await cycleProject(this.ctx, project);

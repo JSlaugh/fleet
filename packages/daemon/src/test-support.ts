@@ -144,6 +144,8 @@ export function makeCtx(patch: Partial<LoopContext> = {}): LoopContext {
     contributorFloorSkipsLogged: new Set(),
     budgetBlockedNotified: new Set(),
     workHoursReserveNotified: new Set(),
+    authGateNotified: new Set(),
+    authGateHeld: false,
     emitBoard: () => {},
     getProject: (name) => config.projects.find((p) => p.name === name),
     isShuttingDown: () => false,

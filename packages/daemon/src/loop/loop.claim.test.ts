@@ -32,9 +32,18 @@ vi.mock("./runner.ts", () => ({
   runSession: vi.fn(async () => {}),
 }));
 
+// `FleetLoop.cycle()` runs the auth preflight probe (fleet#217) before the
+// per-project loop on every call — stub it healthy so `cycle()` never spawns
+// a real CLI session in this suite.
+vi.mock("../session/review.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../session/review.ts")>()),
+  runAuthProbe: vi.fn(async () => ({ healthy: true })),
+}));
+
 const github = await import("../github/github.ts");
 const worktree = await import("../github/worktree.ts");
 const runner = await import("./runner.ts");
+const review = await import("../session/review.ts");
 
 const issue = makeIssue;
 const project = makeProject({ maxConcurrent: 5, maxInReview: 2 });
@@ -321,6 +330,51 @@ describe("cycleProject work-hours reserve", () => {
 
     expect(loggedLines().some((l) => l.includes("would check alpha for PR review feedback"))).toBe(true);
   });
+});
+
+describe("cycleProject auth gate (fleet#217)", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.mocked(github.listFleetIssues).mockReset();
+  });
+
+  function loggedLines(): string[] {
+    return logSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it("claims normally when the auth probe reports healthy", async () => {
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim alpha#1"))).toBe(true);
+  });
+
+  it("holds all claims, with no worktree created and no label swap, when the auth probe reports unhealthy", async () => {
+    vi.mocked(review.runAuthProbe).mockResolvedValueOnce({ healthy: false });
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:ready"])]);
+    const { loop } = makeLiveLoop();
+
+    await loop.cycle();
+
+    expect(loggedLines().some((l) => l.includes("would claim") || l.includes("claiming alpha#1"))).toBe(false);
+    expect(loggedLines().some((l) => l.includes("auth gate held — holding claims"))).toBe(true);
+    expect(worktree.createWorktree).not.toHaveBeenCalled();
+    expect(github.swapLabel).not.toHaveBeenCalled();
+  });
+
+  // Automatic recovery once a later probe comes back healthy — with no
+  // operator action — and the once-per-spell dedup across repeated held
+  // cycles are both covered at the `checkAuthGate` unit level
+  // (loop.authgate.test.ts), where the probe cache can be forced stale
+  // directly instead of racing the real 15-minute TTL through `loop.cycle()`.
 });
 
 describe("cycleProject contributor floor", () => {

@@ -22,6 +22,14 @@ vi.mock("../github/github.ts", async (importActual) => ({
   getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
 }));
 
+// `FleetLoop.cycle()` runs the auth preflight probe (fleet#217) before the
+// per-project loop on every call — stub it healthy so `cycle()` never spawns
+// a real CLI session in this suite.
+vi.mock("../session/review.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../session/review.ts")>()),
+  runAuthProbe: vi.fn(async () => ({ healthy: true })),
+}));
+
 const github = await import("../github/github.ts");
 
 const project = makeProject();

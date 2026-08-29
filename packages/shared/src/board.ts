@@ -196,7 +196,7 @@ export interface DigestStaleRelease {
   at: string;
 }
 
-export type DigestGateType = "budget" | "work-hours" | "plan-limit";
+export type DigestGateType = "budget" | "work-hours" | "plan-limit" | "auth";
 
 /** One instance of a claim gate (budget/work-hours/plan-limit) actually holding claims during the digest window. */
 export interface DigestGateHold {
