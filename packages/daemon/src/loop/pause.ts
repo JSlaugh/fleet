@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "@fleet/shared";
+import { invalidateAuthProbeCache } from "./authGate.ts";
 import { key, type LoopContext } from "./context.ts";
 import { upsertStatusComment } from "../github/github.ts";
 import { log, logError } from "../log.ts";
@@ -134,6 +135,11 @@ export async function handlePlanLimit(
  */
 export function pauseForAuthFailure(ctx: LoopContext, project: ProjectConfig, issue: Pick<ReadyIssue, "number" | "title">): void {
   const scope = key(project.name, issue.number);
+  // A credential that dies mid-run (what this function handles) means any cached
+  // "healthy" preflight probe result (loop/authGate.ts) is now stale — invalidate
+  // it so the very next cycle re-probes instead of riding out the rest of its
+  // cache window.
+  invalidateAuthProbeCache(ctx);
   if (ctx.state.getPaused()) {
     log("loop", `${scope}: authentication failure detected again — daemon already paused`);
     return;

@@ -304,6 +304,15 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
   );
   if (capacity <= 0) return;
 
+  // Computed once per cycle in `FleetLoop.cycle()` (`checkAuthGate`), not per
+  // project — credentials are machine-wide, and the probe itself is a real
+  // (cached) session. The hold and its dedup event are logged there; this is
+  // just the per-project claim gate reading that verdict.
+  if (ctx.authGateHeld) {
+    log("loop", `${project.name}: auth gate held — holding claims until credentials recover`);
+    return;
+  }
+
   const reserve = computeWorkHoursReserveGate(ctx);
   if (reserve.active) {
     const holdLine = `work-hours reserve active — holding claims until ${reserve.releaseAt?.toLocaleTimeString()}`;

@@ -52,6 +52,18 @@ export interface LoopContext {
   readonly budgetBlockedNotified: Set<string>;
   /** Project names for which the current work-hours reserve spell has already logged a digest event — cleared once the gate lifts, same dedup shape as `budgetBlockedNotified`. */
   readonly workHoursReserveNotified: Set<string>;
+  /**
+   * Cached health of the last Anthropic-auth preflight probe (`loop/authGate.ts`,
+   * fleet#217) — `undefined` before the first probe ever runs. Unlike the
+   * dedup fields around it, this holds a single daemon-wide value plus its own
+   * staleness rather than a per-project multiset, so it's reassigned directly
+   * instead of mutated through Set/Map methods.
+   */
+  authProbeCache?: { healthy: boolean; checkedAt: number };
+  /** Whether the current auth-gate hold spell has already logged its `gate-hold-auth-probe` event — single-key by convention since credentials are machine-wide, not per-project like `budgetBlockedNotified`. */
+  readonly authGateNotified: Set<"held">;
+  /** This cycle's auth-gate verdict, set once by `checkAuthGate` before the per-project loop and read by `cycleProject` — computing the (async) probe once per cycle instead of once per project. */
+  authGateHeld: boolean;
   emitBoard(): void;
   getProject(name: string): ProjectConfig | undefined;
 }

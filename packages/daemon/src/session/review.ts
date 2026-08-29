@@ -252,6 +252,67 @@ export function buildPlanReviewFixPrompt(result: PlanReviewResult): string {
   ].join("\n\n");
 }
 
+/** Kept short — the probe is a one-word reply with no tools, so a real hang is itself diagnostic (nothing to wait out). */
+export const AUTH_PROBE_TIMEOUT_MS = 60_000;
+
+export interface AuthProbeOutcome {
+  /**
+   * False only on a confirmed `checkAuthFailure` match. Everything else —
+   * a clean success, a timeout, a thrown transport error — fails open to
+   * `true`: none of those are evidence credentials are dead, and misreading
+   * one as such would hold every project's claims (fleet#217) on what's more
+   * likely a network blip. The reactive detection in `nextResult`/
+   * `runReviewSession` remains the hard backstop for a credential that dies
+   * mid-run, which this preflight probe can't see at all.
+   */
+  healthy: boolean;
+  errorSubtype?: string;
+}
+
+/**
+ * The cheapest real session the CLI can run: one turn, no tools, a one-word
+ * reply — the only way to catch a dead/unrefreshable Anthropic OAuth session
+ * before it costs a claimed ticket (fleet#217). Deliberately not a
+ * `WorkerSession`/`runReviewSession`: this runs once per poll cycle before
+ * any ticket is claimed, so there's no worktree, journal, or ticket to
+ * attach the session to.
+ */
+export async function runAuthProbe(opts: { model?: string; claudeExecutable?: string; timeoutMs?: number }): Promise<AuthProbeOutcome> {
+  const timeoutMs = opts.timeoutMs ?? AUTH_PROBE_TIMEOUT_MS;
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
+  try {
+    const q = query({
+      prompt: "Reply with just the word: ok",
+      options: {
+        model: opts.model,
+        abortController,
+        pathToClaudeCodeExecutable: opts.claudeExecutable,
+        title: "fleet auth-probe",
+        permissionMode: "default",
+        tools: [],
+        allowedTools: [],
+        canUseTool: async (toolName: string) => ({
+          behavior: "deny" as const,
+          message: `${toolName} is not available to the auth probe.`,
+        }),
+        settingSources: [],
+      },
+    });
+    for await (const message of q) {
+      if (checkAuthFailure(message)) return { healthy: false };
+      if (message.type === "result") {
+        return { healthy: true, errorSubtype: message.subtype !== "success" ? message.subtype : undefined };
+      }
+    }
+    return { healthy: true, errorSubtype: "stream_ended_without_result" };
+  } catch (err) {
+    return { healthy: true, errorSubtype: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 interface ReviewSessionOutcome<T> {
   result?: T;
   /** "timed out" | "invalid_structured_output" | "plan_limit" | error-result subtype | thrown-error text. */

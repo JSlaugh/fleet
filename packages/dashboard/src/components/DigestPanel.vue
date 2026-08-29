@@ -30,6 +30,7 @@ const GATE_LABELS: Record<string, string> = {
   budget: "Budget",
   "work-hours": "Work-hours reserve",
   "plan-limit": "Plan usage limit",
+  auth: "Authentication",
 };
 
 function hasActivity(project: DigestResponse["projects"][number]): boolean {
