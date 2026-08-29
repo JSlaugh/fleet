@@ -364,6 +364,8 @@ export class WorkerSession {
   private readonly stderrCapture = new StderrCapture();
   sessionId?: string;
   costUsd = 0;
+  /** `message.num_turns` off the most recent `result` message — 0 until the session ever produces one (e.g. a crash before the first turn completes). */
+  numTurns = 0;
   model?: string;
   modelUsage?: Record<string, ModelUsageSummary>;
   readonly effort?: Effort;
@@ -460,6 +462,7 @@ export class WorkerSession {
         }
         if (message.type === "result") {
           this.costUsd = message.total_cost_usd;
+          this.numTurns = message.num_turns;
           this.modelUsage = summarizeModelUsage(message.modelUsage);
         }
         const planLimit = checkPlanLimit(message);

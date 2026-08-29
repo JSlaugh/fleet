@@ -70,7 +70,7 @@ export async function supervise(
         if (parked === "closed") return;
         continue;
       }
-      await finishFailed(ctx, project, issue, formatTurnError(turn));
+      await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns });
       return;
     }
 
@@ -88,7 +88,7 @@ export async function supervise(
       if (parked === "closed") return;
       continue;
     }
-    await finishFailed(ctx, project, issue, formatTurnError(turn));
+    await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns });
     return;
   }
 }

@@ -73,16 +73,25 @@ export function machineReviewLine(outcome: TicketRecord["machineReviewOutcome"])
  * fix, and with no record the `autoElevated: true` write-back would silently
  * no-op, turning "once" into an unbounded claim→fail→escalate loop. Those
  * failures park in `fleet:needs-input` for a human instead.
+ *
+ * Exactly-zero recorded cost is the same shape of problem: the session never
+ * reached the model (dead credentials, a network failure at startup, a crash
+ * during MCP server startup, a malformed worktree), so re-running on a
+ * stronger tier would only repeat the identical infrastructure failure while
+ * burning the ticket's once-only elevation. A genuine cheap-but-real failure
+ * still has some non-zero cost, so this stays conservative rather than
+ * guessing from turn count.
  */
 export function shouldAutoElevate(
   project: { elevatedModel?: string; autoElevateOnFailure?: boolean },
-  record: { elevated?: boolean; autoElevated?: boolean } | undefined,
+  record: { elevated?: boolean; autoElevated?: boolean; costUsd?: number } | undefined,
 ): boolean {
   if (!record) return false;
   if (!project.elevatedModel) return false;
   if (project.autoElevateOnFailure === false) return false;
   if (record.elevated) return false;
   if (record.autoElevated) return false;
+  if (record.costUsd === 0) return false;
   return true;
 }
 
@@ -343,7 +352,7 @@ export async function finishFailed(
   project: ProjectConfig,
   issue: ReadyIssue,
   error: string,
-  opts: { postCompletion?: boolean } = {},
+  opts: { postCompletion?: boolean; turnCount?: number } = {},
 ): Promise<void> {
   const scope = key(project.name, issue.number);
   if (ctx.restarting.has(scope)) {
@@ -407,6 +416,34 @@ export async function finishFailed(
       toModel: project.elevatedModel,
       error,
     });
+    return;
+  }
+
+  // Zero recorded cost means the session never actually reached the model —
+  // re-running it (on any tier) would just repeat the same infrastructure
+  // failure, so this is called out distinctly from a genuine model failure
+  // and, per `shouldAutoElevate`, never touches `autoElevated`.
+  if (record !== undefined && record.costUsd === 0) {
+    const turnCount = opts.turnCount ?? 0;
+    try {
+      await upsertStatusComment(
+        project,
+        issue.number,
+        [
+          `**Status: needs input**`,
+          `The run produced no output (${turnCount} turn${turnCount === 1 ? "" : "s"}, $0.00) — this looks like an infrastructure failure rather than a model failure, so it was not auto-elevated.`,
+          `Error: ${error}`,
+          `Re-label with \`fleet:ready\` to retry once the underlying issue is resolved, or reply from the dashboard to resume.`,
+        ].join("\n\n"),
+      );
+    } catch (err) {
+      logError("loop", `${scope}: could not post the needs-input status comment`, err);
+    }
+    await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+    ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
+    ctx.emitBoard();
+    log("loop", `${scope}: failed with no recorded work (${turnCount} turn(s), $0.00) — not auto-elevating, needs input: ${error}`);
+    await notify(ctx, "needs-input", project, { issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
     return;
   }
 
