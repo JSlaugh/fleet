@@ -121,3 +121,65 @@ export async function handlePlanLimit(
     logError("loop", `${scope}: could not post the plan-limit pause status comment`, err);
   }
 }
+
+/**
+ * Idempotent daemon-wide pause for an Anthropic authentication failure —
+ * shared by `handleAuthFailure` (the live-session path) and the machine-/plan-
+ * review gates' fail-open branch, which only needs the pause side effect since
+ * a completed turn's review failing open doesn't touch the ticket itself.
+ * Unlike `extendPause`'s timed `pausedUntil`, there is no reset time to
+ * compute: a dead credential doesn't fix itself on a schedule, so this sets
+ * the same daemon-wide `paused` flag the operator drain toggle uses — nothing
+ * auto-resumes it, only an operator un-pausing from the dashboard.
+ */
+export function pauseForAuthFailure(ctx: LoopContext, project: ProjectConfig, issue: Pick<ReadyIssue, "number" | "title">): void {
+  const scope = key(project.name, issue.number);
+  if (ctx.state.getPaused()) {
+    log("loop", `${scope}: authentication failure detected again — daemon already paused`);
+    return;
+  }
+  setPaused(ctx, true);
+  log("loop", `${scope}: authentication failure detected — daemon paused until an operator resumes`);
+  ctx.state.appendEvent("gate-hold-auth-failure", {
+    project: project.name,
+    issueNumber: issue.number,
+    data: { detail: "authentication failure detected — daemon paused until an operator resumes" },
+  });
+  void notify(ctx, "paused", project, {
+    issueNumber: issue.number,
+    title: issue.title,
+    detail: "authentication failure detected (Anthropic auth) — daemon paused until an operator resumes",
+    url: issueUrl(project, issue.number),
+  });
+}
+
+/**
+ * An authentication failure isn't the ticket's fault and isn't retryable — a
+ * dead/unrefreshable Anthropic credential fails every session across every
+ * project identically, and re-running on a stronger model (auto-elevation)
+ * can't fix it. Mirrors `handlePlanLimit`: pause the daemon and leave this
+ * ticket `stalled` with its session id intact so `recoverStalled` resumes it
+ * automatically once an operator lifts the pause, clearing `autoResumed` so
+ * the once-only stall guard doesn't swallow that resume.
+ */
+export async function handleAuthFailure(ctx: LoopContext, project: ProjectConfig, issue: Pick<ReadyIssue, "number" | "title">): Promise<void> {
+  const scope = key(project.name, issue.number);
+  pauseForAuthFailure(ctx, project, issue);
+
+  ctx.state.update(project.name, issue.number, {
+    status: "stalled",
+    lastActivityNote: "paused: authentication failure",
+    autoResumed: false,
+  });
+  ctx.emitBoard();
+
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [`**Status: paused**`, `Authentication failure detected — the daemon is paused until an operator resumes it.`].join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the auth-failure pause status comment`, err);
+  }
+}

@@ -251,6 +251,17 @@ describe("machineReviewGate", () => {
     expect(state.getPausedUntil()).toBe(new Date(Date.parse("2026-07-27T12:00:00.000Z") + 5 * 60_000).toISOString());
   });
 
+  it("pauses the daemon when the reviewer hits an auth failure, and still proceeds", async () => {
+    vi.mocked(review.runMachineReview).mockResolvedValue(reviewOutcome({ result: undefined, errorSubtype: "auth_failed" }));
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
+    expect(state.getPaused()).toBe(true);
+  });
+
   it("never runs when the project opts out", async () => {
     const optedOut = makeProject({ model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
     const { state, internals } = makeLoop(record());
@@ -353,6 +364,17 @@ describe("planReviewGate", () => {
     expect(gate).toEqual({ action: "proceed" });
     expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
     expect(state.getPausedUntil()).toBe(new Date(Date.parse("2026-07-27T12:00:00.000Z") + 5 * 60_000).toISOString());
+  });
+
+  it("pauses the daemon when the reviewer hits an auth failure, and still proceeds to file the children", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(planReviewOutcome({ result: undefined, errorSubtype: "auth_failed" }));
+    const { state, internals } = makeLoop(record());
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
+    expect(state.getPaused()).toBe(true);
   });
 
   it("never runs when the project opts out — shares the machineReview switch with the code-review gate", async () => {

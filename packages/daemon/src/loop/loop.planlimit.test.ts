@@ -1,7 +1,8 @@
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeCtx, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "./loop.ts";
+import { handleAuthFailure, pauseForAuthFailure } from "./pause.ts";
 
 vi.mock("../github/github.ts", () => ({
   createPullRequest: vi.fn(),
@@ -46,6 +47,15 @@ function makeLoop(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
     updatePauseState: () => void;
   };
   return { loop, state, internals };
+}
+
+/** `handleAuthFailure`/`pauseForAuthFailure` operate over a plain `LoopContext`, unlike `handlePlanLimit` above which is exercised through `FleetLoop`'s private wrapper. */
+function makeCtxFor(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
+  const { dataDir, state } = makeTempState("fleet-authfailure-");
+  if (seed) state.upsert(seed);
+  const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
+  const ctx = makeCtx({ config, state });
+  return { ctx, state };
 }
 
 beforeEach(() => {
@@ -151,6 +161,89 @@ describe("handlePlanLimit", () => {
 
       expect(fetch).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("handleAuthFailure", () => {
+  it("pauses the daemon via the operator-drain flag, with no reset time", async () => {
+    const { ctx, state } = makeCtxFor(record());
+
+    await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+    expect(state.getPaused()).toBe(true);
+    expect(state.getPausedUntil()).toBeUndefined();
+  });
+
+  it("does not mark the ticket failed — it goes stalled with the session preserved", async () => {
+    const { ctx, state } = makeCtxFor(record({ status: "running", autoResumed: true }));
+
+    await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    const updated = state.get("alpha", 7);
+    expect(updated?.status).toBe("stalled");
+    expect(updated?.sessionId).toBe("sess-7");
+    // the once-only auto-resume guard must not carry over and block the pause-triggered resume
+    expect(updated?.autoResumed).toBe(false);
+    expect(updated?.lastActivityNote).toContain("authentication failure");
+  });
+
+  it("posts a status comment describing the pause", async () => {
+    const { ctx } = makeCtxFor(record());
+
+    await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+    const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
+    expect(commentBody).toContain("Authentication failure");
+  });
+
+  it("does not re-pause (or re-notify) once the daemon is already paused", async () => {
+    const { ctx, state } = makeCtxFor(record());
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+
+    await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+    expect(state.getPaused()).toBe(true);
+    vi.mocked(fetch).mockClear();
+
+    await handleAuthFailure(ctx, project, { number: 8, title: "issue 8" });
+
+    expect(fetch).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  describe("Discord notifications", () => {
+    const notifications = { discordUrl: "https://discord.example/webhook" };
+
+    beforeEach(() => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("posts a paused notification the first time an auth failure sets the pause", async () => {
+      const { ctx } = makeCtxFor(record(), { notifications });
+
+      await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+      expect(fetch).toHaveBeenCalledOnce();
+      const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as { content: string };
+      expect(body.content).toContain("Paused");
+    });
+  });
+});
+
+describe("pauseForAuthFailure", () => {
+  it("sets the daemon-wide pause without touching any ticket state", async () => {
+    const { ctx, state } = makeCtxFor(record({ status: "running" }));
+
+    pauseForAuthFailure(ctx, project, { number: 7, title: "issue 7" });
+
+    expect(state.getPaused()).toBe(true);
+    expect(state.get("alpha", 7)?.status).toBe("running");
   });
 });
 

@@ -280,6 +280,40 @@ export function checkPlanLimit(message: SDKMessage): { limitResetAt?: Date } | u
   return { limitResetAt: parseLimitReset(limitText) };
 }
 
+/**
+ * The CLI's own message when its stored Anthropic OAuth session is dead and
+ * can't be refreshed: it exits cleanly (a `result` message, `subtype:
+ * "success"`, no `structured_output`) having only printed this as an ordinary
+ * assistant text block first — see fleet#215. Every worker session would then
+ * die on turn 1 identically until an operator fixes the credential, so unlike
+ * `checkPlanLimit` this needs no reset time, only detection.
+ *
+ * Anchored to the start of the (trimmed) text block rather than a bare
+ * substring match on "authenticate": a worker whose ticket genuinely touches
+ * auth code (JWT/OAuth handling, say) fills its own output with that word
+ * constantly, and a substring match would misfire on every such turn.
+ */
+const AUTH_FAILURE_PATTERN = /^Failed to authenticate:/i;
+
+/** Pure text-matching half of `checkAuthFailure`, split out for direct unit testing against known text shapes. */
+export function findAuthFailureText(message: SDKMessage): string | undefined {
+  if (message.type !== "assistant") return undefined;
+  const content = message.message.content;
+  if (!Array.isArray(content)) return undefined;
+  for (const block of content) {
+    if (typeof block === "object" && block !== null && (block as { type?: string }).type === "text") {
+      const text = (block as { text: string }).text.trim();
+      if (AUTH_FAILURE_PATTERN.test(text)) return text;
+    }
+  }
+  return undefined;
+}
+
+/** The one signal `WorkerSession.nextResult`/`runReviewSession` act on for an Anthropic auth failure — see `findAuthFailureText`. */
+export function checkAuthFailure(message: SDKMessage): boolean {
+  return findAuthFailureText(message) !== undefined;
+}
+
 /** `SDKMessage["type"]`s `summarize()` extracts real content for. */
 const JOURNALED_MESSAGE_TYPES = new Set<string>(["assistant", "user", "result", "rate_limit_event"]);
 
@@ -470,6 +504,10 @@ export class WorkerSession {
           const { limitResetAt } = planLimit;
           log("worker", `${this.opts.scope}: plan usage limit reached${limitResetAt ? ` — resets ${limitResetAt.toISOString()}` : " — no reset time parsed"}`);
           return { kind: this.kind, errorSubtype: "plan_limit", limitResetAt: limitResetAt?.toISOString() } as TurnResult;
+        }
+        if (checkAuthFailure(message)) {
+          log("worker", `${this.opts.scope}: authentication failure detected in the CLI output`);
+          return { kind: this.kind, errorSubtype: "auth_failed" } as TurnResult;
         }
         if (message.type === "result") {
           if (message.subtype === "success") {

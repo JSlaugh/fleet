@@ -1,11 +1,15 @@
 import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Worktree } from "../github/worktree.ts";
+import type { WorkerSession } from "../session/worker.ts";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { LoopContext } from "./context.ts";
 import { PostCompletionError, reportRunFailure, shouldAutoElevate } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
+import { supervise } from "./supervise.ts";
 
-vi.mock("../github/github.ts", () => ({
+vi.mock("../github/github.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../github/github.ts")>()),
   createPullRequest: vi.fn(),
   escalateToElevated: vi.fn(async () => {}),
   getIssueComments: vi.fn(async () => []),
@@ -200,6 +204,34 @@ describe("finishFailed auto-escalation", () => {
 
     expect(github.escalateToElevated).toHaveBeenCalledWith(project, 7);
     expect(state.get("alpha", 7)?.autoElevated).toBe(true);
+  });
+});
+
+describe("supervise — auth_failed routing", () => {
+  it("pauses the daemon instead of failing or auto-elevating, and leaves the ticket claimable", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false, status: "running" }));
+    const issue = { number: 7, title: "issue 7", body: "", labels: [], author: "collab-author" };
+    const worktree = { path: "/tmp/wt/7", branch: "fleet/7" } as Worktree;
+    const session = {
+      sessionId: "sess-7",
+      costUsd: 0,
+      model: undefined,
+      effort: undefined,
+      modelUsage: undefined,
+      nextResult: vi.fn(async () => ({ kind: "code", errorSubtype: "auth_failed" })),
+      send: vi.fn(),
+    } as unknown as WorkerSession;
+
+    await supervise(internals.ctx, project, issue, worktree, session, { costUsd: 0 });
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).not.toHaveBeenCalled();
+    const updated = state.get("alpha", 7);
+    expect(updated?.status).toBe("stalled");
+    expect(updated?.autoElevated).toBeFalsy();
+    expect(state.getPaused()).toBe(true);
+    const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
+    expect(commentBody).toContain("Authentication failure");
   });
 });
 

@@ -11,7 +11,7 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { StderrCapture, checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
+import { StderrCapture, checkAuthFailure, checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -349,6 +349,10 @@ async function runReviewSession<T>(opts: {
       if (planLimit) {
         outcome.errorSubtype = "plan_limit";
         outcome.limitResetAt = planLimit.limitResetAt?.toISOString();
+        return outcome;
+      }
+      if (checkAuthFailure(message)) {
+        outcome.errorSubtype = "auth_failed";
         return outcome;
       }
       if (message.type === "result") {
