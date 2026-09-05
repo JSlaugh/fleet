@@ -121,9 +121,14 @@ export async function restartTicket(project: string, issueNumber: number): Promi
   await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" }));
 }
 
-/** Closes a reviewed plan epic's issue; cleanup (worktree/branch/history) happens on the daemon's next poll cycle. */
-export async function acceptPlan(project: string, issueNumber: number): Promise<void> {
-  await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/accept-plan`, { method: "POST" }));
+/** Accepts a reviewed plan: releases its backlog children to fleet:ready and closes the epic issue; cleanup happens on the daemon's next poll cycle. */
+export async function acceptPlan(project: string, issueNumber: number): Promise<{ released: number[]; failed: number[] }> {
+  return json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/accept-plan`, { method: "POST" }));
+}
+
+/** Releases one backlog ticket to fleet:ready so the next poll cycle can claim it. */
+export async function markTicketReady(project: string, issueNumber: number): Promise<void> {
+  await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/ready`, { method: "POST" }));
 }
 
 /** Toggles drain mode: stops new claims/resumes while leaving running sessions to finish. */

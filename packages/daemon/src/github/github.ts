@@ -452,7 +452,7 @@ export async function escalateToElevated(project: ProjectConfig, issueNumber: nu
  */
 export function readyLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
   const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
-  for (const label of [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
+  for (const label of [FLEET_LABELS.backlog, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
     args.push("--remove-label", label);
   }
   args.push("--add-label", FLEET_LABELS.ready);

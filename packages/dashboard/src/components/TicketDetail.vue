@@ -97,8 +97,11 @@ async function acceptPlanNow() {
   accepting.value = true;
   acceptStatus.value = undefined;
   try {
-    await acceptPlan(props.ticket.project, props.ticket.issueNumber);
-    acceptStatus.value = "Accepted — issue closed.";
+    const { released, failed } = await acceptPlan(props.ticket.project, props.ticket.issueNumber);
+    acceptStatus.value = [
+      `Accepted — epic closed, ${released.length} child ticket${released.length === 1 ? "" : "s"} released to ready.`,
+      failed.length > 0 ? `Could not relabel #${failed.join(", #")} — mark them fleet:ready by hand.` : "",
+    ].filter(Boolean).join(" ");
     void refresh();
   } catch (err) {
     acceptStatus.value = err instanceof Error ? err.message : String(err);
@@ -248,7 +251,7 @@ watch(
               type="button"
               class="rounded border border-success/40 px-2 py-0.5 text-xs font-medium text-success hover:bg-success/10 disabled:opacity-50"
               :disabled="accepting"
-              title="Close this plan epic's issue — the worktree and branch are cleaned up on the next poll cycle"
+              title="Release every backlog child to fleet:ready and close this epic — planning is done"
             >
               {{ accepting ? "Accepting…" : "Accept plan" }}
             </button>
@@ -257,8 +260,10 @@ watch(
             <AlertDialogHeader>
               <AlertDialogTitle>Accept plan {{ ticket.project }}#{{ ticket.issueNumber }}?</AlertDialogTitle>
               <AlertDialogDescription>
-                This closes the epic issue. Its worktree and branch are cleaned up on the daemon's next poll cycle.
-                Child tickets are not affected — release each with its own fleet:ready label.
+                Every child still in the backlog is released to fleet:ready, and the epic issue is closed — the
+                planning is what this epic was for. Children keep their own lifecycle from here; ones with an
+                unsatisfied Depends-on wait in Ready until it clears. The epic's worktree and branch are cleaned up
+                on the daemon's next poll cycle.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

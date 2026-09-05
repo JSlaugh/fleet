@@ -66,6 +66,7 @@ describe("readyLabelArgs", () => {
     expect(readyLabelArgs(project, 7)).toEqual([
       "issue", "edit", "7",
       "--repo", "acme/alpha",
+      "--remove-label", "fleet:backlog",
       "--remove-label", "fleet:in-progress",
       "--remove-label", "fleet:needs-input",
       "--remove-label", "fleet:review",
