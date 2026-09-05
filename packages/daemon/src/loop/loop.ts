@@ -136,8 +136,13 @@ export class FleetLoop {
     return restartTicket(this.ctx, projectName, issueNumber);
   }
 
-  async acceptPlan(projectName: string, issueNumber: number): Promise<void> {
+  async acceptPlan(projectName: string, issueNumber: number): Promise<{ released: number[]; failed: number[] }> {
     return acceptPlan(this.ctx, projectName, issueNumber);
+  }
+
+  /** Ping dashboard clients to refetch the board (throttled). */
+  emitBoard(): void {
+    this.ctx.emitBoard();
   }
 
   ticketCapabilities(projectName: string, issueNumber: number, known: boolean): { canRestart: boolean; canReply: boolean } {

@@ -5,6 +5,8 @@ export const FLEET_LABELS = {
   inProgress: "fleet:in-progress",
   needsInput: "fleet:needs-input",
   review: "fleet:review",
+  /** Filed and visible on the board, but not yet released for pickup — plan children land here until the plan is accepted. */
+  backlog: "fleet:backlog",
 } as const;
 
 export const PRIORITY_LABELS = ["fleet:p1", "fleet:p2", "fleet:p3"] as const;
@@ -33,6 +35,7 @@ export const ALL_FLEET_LABELS: { name: string; color: string; description: strin
   { name: FLEET_LABELS.inProgress, color: "fbca04", description: "A fleet worker session is on it" },
   { name: FLEET_LABELS.needsInput, color: "d93f0b", description: "Worker is blocked on a human decision" },
   { name: FLEET_LABELS.review, color: "1d76db", description: "PR open, awaiting human review" },
+  { name: FLEET_LABELS.backlog, color: "c5def5", description: "Filed but not yet released — mark fleet:ready to start it" },
   { name: ELEVATE_LABEL, color: "5319e7", description: "Run this ticket on the project's elevated model" },
   { name: LIGHT_LABEL, color: "bfd4f2", description: "Run this ticket on the project's light model" },
   { name: PLAN_LABEL, color: "c2e0c6", description: "Decompose this epic into child tickets instead of coding it" },
@@ -46,6 +49,7 @@ export function boardStatusFromLabels(labels: string[]): BoardStatus | null {
   if (labels.includes(FLEET_LABELS.inProgress)) return "in-progress";
   if (labels.includes(FLEET_LABELS.needsInput)) return "needs-input";
   if (labels.includes(FLEET_LABELS.review)) return "review";
+  if (labels.includes(FLEET_LABELS.backlog)) return "backlog";
   return null;
 }
 

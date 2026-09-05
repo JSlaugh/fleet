@@ -30,7 +30,7 @@ Don't use this for the work you're currently doing — finish that yourself. Thi
 
 3. **Pick a priority.** `p1` for user-facing bugs or blockers, `p2` for the default case, `p3` for nice-to-haves and minor cleanups. Omit it if you're unsure — a human can triage.
 
-4. **File it** with `fleet_file_ticket`, passing `title`, `body`, and optionally `priority`, `ready`, and `dependsOn`. Leave `ready` at its default (true) unless the ticket needs human curation before a worker should pick it up. Use `dependsOn` (issue numbers) when this ticket shouldn't be picked up until other tickets close.
+4. **File it** with `fleet_file_ticket`, passing `title`, `body`, and optionally `priority`, `ready`, and `dependsOn`. Leave `ready` at its default (true) unless the ticket needs human curation before a worker should pick it up — `ready: false` files it as `fleet:backlog`, which shows in the dashboard's Backlog column with a **Ready** button. Use `dependsOn` (issue numbers) when this ticket shouldn't be picked up until other tickets close.
 
 5. **Tell the user** what you filed, with the issue number and URL the tool returns, and continue with your original task.
 

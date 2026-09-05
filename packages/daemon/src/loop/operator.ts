@@ -1,6 +1,15 @@
 import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
-import { clearAssignees, closeIssue, closePullRequest, markReady, upsertStatusComment } from "../github/github.ts";
+import {
+  clearAssignees,
+  closeIssue,
+  closePullRequest,
+  getIssue,
+  getIssueLabels,
+  markReady,
+  parseChildTaskList,
+  upsertStatusComment,
+} from "../github/github.ts";
 import { deleteRemoteBranch } from "../github/worktree.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
@@ -168,14 +177,55 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
  * maps each failure to its own status code; this only guards the race the
  * route can't see — the ticket moving mid-request.
  */
-export async function acceptPlan(ctx: LoopContext, projectName: string, issueNumber: number): Promise<void> {
+/**
+ * Accepting a plan means the *planning* is done: every still-open child in the
+ * epic's `## Children` task list is released from `fleet:backlog` to
+ * `fleet:ready`, and the epic issue itself is closed. The epic doesn't track
+ * its children's delivery — that's what the children's own PRs are for — so
+ * nothing waits on them. A child already carrying another fleet state label
+ * (someone released or started it by hand) is left alone, since `markReady`
+ * would otherwise yank an in-progress child back to ready. Children with an
+ * unsatisfied `Depends-on` sit in Ready until the claim loop's dependency gate
+ * lets them through. A child that fails to relabel is logged and named in the
+ * status comment rather than aborting the accept, so one flaky `gh` call can't
+ * leave the epic half-accepted.
+ */
+export async function acceptPlan(
+  ctx: LoopContext,
+  projectName: string,
+  issueNumber: number,
+): Promise<{ released: number[]; failed: number[] }> {
   const scope = key(projectName, issueNumber);
   const project = ctx.getProject(projectName);
   if (!project) throw new Error(`unknown project ${projectName}`);
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
 
+  const live = await getIssue(project, issueNumber);
+  const children = live ? parseChildTaskList(live.body).filter((c) => !c.checked) : [];
+  const released: number[] = [];
+  const failed: number[] = [];
+  for (const child of children) {
+    try {
+      const labels = await getIssueLabels(project, child.number);
+      if (STATE_LABELS_OTHER_THAN_BACKLOG.some((l) => labels.includes(l))) {
+        log("loop", `${scope}: child #${child.number} already carries a fleet state label — not relabeling`);
+        continue;
+      }
+      await markReady(project, child.number);
+      released.push(child.number);
+    } catch (err) {
+      failed.push(child.number);
+      logError("loop", `${scope}: could not release child #${child.number} to fleet:ready`, err);
+    }
+  }
+
   const record = ctx.state.get(projectName, issueNumber);
-  const comment = [record?.lastSummary, "**Plan accepted by operator.**"].filter(Boolean).join("\n\n");
+  const comment = [
+    record?.lastSummary,
+    "**Plan accepted by operator.**",
+    released.length > 0 ? `Released to \`fleet:ready\`: ${released.map((n) => `#${n}`).join(", ")}` : "",
+    failed.length > 0 ? `Could not relabel (mark \`fleet:ready\` by hand): ${failed.map((n) => `#${n}`).join(", ")}` : "",
+  ].filter(Boolean).join("\n\n");
   try {
     await upsertStatusComment(project, issueNumber, comment);
   } catch (err) {
@@ -183,8 +233,11 @@ export async function acceptPlan(ctx: LoopContext, projectName: string, issueNum
   }
   await closeIssue(project, issueNumber);
   ctx.emitBoard();
-  log("loop", `${scope}: plan accepted by operator — issue closed`);
+  log("loop", `${scope}: plan accepted by operator — released ${released.length} child(ren), issue closed`);
+  return { released, failed };
 }
+
+const STATE_LABELS_OTHER_THAN_BACKLOG = [FLEET_LABELS.ready, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review];
 
 /**
  * Drop everything that would make the next cycle resume rather than restart:

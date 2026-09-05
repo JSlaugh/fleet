@@ -16,7 +16,7 @@ import {
   type TicketTranscript,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { bodyWithDependsOn, createIssue, getPrDiff, setPriority } from "../github/github.ts";
+import { bodyWithDependsOn, createIssue, getPrDiff, markReady, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
@@ -28,8 +28,8 @@ import { readTicketTranscript } from "../store/transcripts.ts";
 const MAX_DIFF_CHARS = 200_000;
 
 /**
- * `ready: false` files a plain issue carrying only the priority label, so a
- * human can curate it before a worker picks it up.
+ * `ready: false` files the issue into `fleet:backlog` instead of `fleet:ready`:
+ * visible on the board, but held until a human releases it.
  */
 export const CreateTicketSchema = z.object({
   title: z.string().min(1),
@@ -41,7 +41,7 @@ export const CreateTicketSchema = z.object({
 
 export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): string[] {
   const labels: string[] = [];
-  if (input.ready) labels.push(FLEET_LABELS.ready);
+  labels.push(input.ready ? FLEET_LABELS.ready : FLEET_LABELS.backlog);
   if (input.priority) labels.push(input.priority);
   return labels;
 }
@@ -287,8 +287,9 @@ export function createApp(opts: {
     }
   });
 
-  // Closes out a reviewed plan epic: the issue close is the completion signal
-  // `cleanupFinished` acts on next cycle — this route does not touch the
+  // Accepts a reviewed plan epic: releases its backlog children to
+  // `fleet:ready` and closes the epic issue — the close is the completion
+  // signal `cleanupFinished` acts on next cycle; this route does not touch the
   // worktree/branch/history itself.
   app.post("/api/tickets/:project/:issue/accept-plan", async (c) => {
     const projectName = c.req.param("project");
@@ -301,11 +302,27 @@ export function createApp(opts: {
     if (!record.isPlan) return c.json({ error: `${projectName}#${issueNumber} is not a plan ticket` }, 400);
     if (record.status !== "review") return c.json({ error: `${projectName}#${issueNumber} is not awaiting review` }, 400);
     try {
-      await loop.acceptPlan(projectName, issueNumber);
-      return c.json({ ok: true });
+      const outcome = await loop.acceptPlan(projectName, issueNumber);
+      return c.json({ ok: true, ...outcome });
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
     }
+  });
+
+  // Releases one backlog ticket for pickup: `fleet:backlog` → `fleet:ready`.
+  // Only tickets the board currently shows in the backlog column qualify, so
+  // this can't yank a running or reviewed ticket back to ready (that's the
+  // destructive `restart` route's job).
+  app.post("/api/tickets/:project/:issue/ready", async (c) => {
+    const project = loop.getProject(c.req.param("project"));
+    const issueNumber = Number(c.req.param("issue"));
+    if (!project || !Number.isInteger(issueNumber)) return c.json({ error: "unknown project or issue" }, 404);
+    const ticket = loop.getBoard().find((t) => t.project === project.name && t.issueNumber === issueNumber);
+    if (!ticket) return c.json({ error: `${project.name}#${issueNumber} is not on the board` }, 404);
+    if (ticket.status !== "backlog") return c.json({ error: `${project.name}#${issueNumber} is not in the backlog` }, 400);
+    await markReady(project, issueNumber);
+    loop.emitBoard();
+    return c.json({ ok: true });
   });
 
   // Agent-facing intake: file a fleet ticket without touching `gh` directly, so
