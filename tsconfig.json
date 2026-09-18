@@ -12,7 +12,8 @@
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "paths": {
-      "@fleet/shared": ["./packages/shared/src/index.ts"]
+      "@fleet/shared": ["./packages/shared/src/index.ts"],
+      "@fleet/github": ["./packages/github/src/index.ts"]
     }
   }
 }
