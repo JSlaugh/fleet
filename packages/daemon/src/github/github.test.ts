@@ -12,7 +12,6 @@ vi.mock("./exec.ts", async (importActual) => ({
 const exec = await import("./exec.ts");
 const {
   bodyWithChildTaskList,
-  bodyWithDependsOn,
   bodyWithPartOf,
   buildConflictPrompt,
   buildPrFeedback,
@@ -27,7 +26,6 @@ const {
   issueNumberFromUrl,
   mergePullRequest,
   parseChildTaskList,
-  parseDependsOn,
   parseHeartbeat,
   parsePartOf,
   parseTicketTimeoutMinutes,
@@ -107,81 +105,6 @@ describe("issueNumberFromUrl", () => {
   it("throws when gh printed something unexpected", () => {
     expect(() => issueNumberFromUrl("")).toThrow();
     expect(() => issueNumberFromUrl("Creating issue in JSlaugh/fleet")).toThrow();
-  });
-});
-
-describe("parseDependsOn", () => {
-  it("returns [] when there is no Depends-on line", () => {
-    expect(parseDependsOn("Just a plain description.")).toEqual([]);
-  });
-
-  it("parses a single dependency", () => {
-    expect(parseDependsOn("Depends-on: #12")).toEqual([12]);
-  });
-
-  it("parses multiple comma-separated dependencies", () => {
-    expect(parseDependsOn("Depends-on: #12, #14")).toEqual([12, 14]);
-  });
-
-  it("accepts mixed comma and space separators", () => {
-    expect(parseDependsOn("Depends-on: #12 #14, #16")).toEqual([12, 14, 16]);
-  });
-
-  it("ignores malformed entries but keeps the valid ones", () => {
-    expect(parseDependsOn("Depends-on: #12, banana, 14, #16")).toEqual([12, 16]);
-  });
-
-  it("is case-insensitive on the key", () => {
-    expect(parseDependsOn("depends-on: #5")).toEqual([5]);
-    expect(parseDependsOn("DEPENDS-ON: #5")).toEqual([5]);
-  });
-
-  it("finds the line anywhere in a multi-line body", () => {
-    const body = ["## Problem", "Some description.", "", "Depends-on: #3", "", "## More"].join("\n");
-    expect(parseDependsOn(body)).toEqual([3]);
-  });
-
-  it("dedupes repeated references", () => {
-    expect(parseDependsOn("Depends-on: #4, #4")).toEqual([4]);
-  });
-
-  it("parses the issue-form-rendered section", () => {
-    const body = ["### Depends on", "", "#12 #14", "", "### Priority", "", "P2 - default"].join("\n");
-    expect(parseDependsOn(body)).toEqual([12, 14]);
-  });
-
-  it("is case-insensitive on the section heading", () => {
-    const body = ["### depends on", "", "#5"].join("\n");
-    expect(parseDependsOn(body)).toEqual([5]);
-  });
-
-  it("returns [] for an unfilled optional section", () => {
-    const body = ["### Depends on", "", "_No response_", "", "### Priority", "", "P2 - default"].join("\n");
-    expect(parseDependsOn(body)).toEqual([]);
-  });
-
-  it("unions dependencies from the line and section forms when both are present", () => {
-    const body = ["Depends-on: #1", "", "### Depends on", "", "#2"].join("\n");
-    expect(parseDependsOn(body)).toEqual([1, 2]);
-  });
-});
-
-describe("bodyWithDependsOn", () => {
-  it("leaves the body untouched when there are no dependencies", () => {
-    expect(bodyWithDependsOn("details", undefined)).toBe("details");
-    expect(bodyWithDependsOn("details", [])).toBe("details");
-  });
-
-  it("appends a Depends-on line for a single dependency", () => {
-    expect(bodyWithDependsOn("details", [12])).toBe("details\n\nDepends-on: #12");
-  });
-
-  it("appends a Depends-on line listing every dependency", () => {
-    expect(bodyWithDependsOn("details", [12, 14])).toBe("details\n\nDepends-on: #12, #14");
-  });
-
-  it("doesn't leave a leading blank line when the body is empty", () => {
-    expect(bodyWithDependsOn("", [12])).toBe("Depends-on: #12");
   });
 });
 

@@ -5,10 +5,11 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { WebSocketServer, type WebSocket } from "ws";
-import { z } from "zod";
 import {
-  FLEET_LABELS,
+  CreateTicketSchema,
   PRIORITY_LABELS,
+  bodyWithDependsOn,
+  labelsForNewTicket,
   type JournalEntry,
   type TicketDetail,
   type TicketDiff,
@@ -16,7 +17,7 @@ import {
   type TicketTranscript,
 } from "@fleet/shared";
 import type { ApprovalManager } from "../session/approvals.ts";
-import { bodyWithDependsOn, createIssue, getPrDiff, markReady, setPriority } from "../github/github.ts";
+import { createIssue, getPrDiff, markReady, setPriority } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { FleetLoop } from "../loop/loop.ts";
 import { RESTART_EXIT_CODE } from "../restart-code.ts";
@@ -26,25 +27,6 @@ import { readTicketTranscript } from "../store/transcripts.ts";
 
 /** Diff preview cap (#153): generous enough for a real PR, small enough to keep the dashboard responsive — past this the client is pointed at `prUrl` instead. */
 const MAX_DIFF_CHARS = 200_000;
-
-/**
- * `ready: false` files the issue into `fleet:backlog` instead of `fleet:ready`:
- * visible on the board, but held until a human releases it.
- */
-export const CreateTicketSchema = z.object({
-  title: z.string().min(1),
-  body: z.string(),
-  priority: z.enum(PRIORITY_LABELS).optional(),
-  ready: z.boolean().default(true),
-  dependsOn: z.array(z.number().int().positive()).optional(),
-});
-
-export function labelsForNewTicket(input: z.infer<typeof CreateTicketSchema>): string[] {
-  const labels: string[] = [];
-  labels.push(input.ready ? FLEET_LABELS.ready : FLEET_LABELS.backlog);
-  if (input.priority) labels.push(input.priority);
-  return labels;
-}
 
 /** Builds the Hono app without binding a port, so routes are testable via `app.request(...)`. */
 export function createApp(opts: {
