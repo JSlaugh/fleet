@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "fleet": {
+      "command": "pnpm",
+      "args": ["--dir", "{{FLEET_DIR}}", "--filter", "@fleet/mcp", "start"],
+      "env": {
+        "FLEET_REPO": "owner/repo"
+      }
+    }
+  }
+}

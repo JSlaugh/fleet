@@ -172,29 +172,29 @@ add a daemon: they extend the same file.
 
 Each phase ships on its own and leaves `pnpm typecheck && pnpm test` green.
 
-**Phase 0: consolidate the filing contract.** Move `CreateTicketSchema`,
+**Phase 0 (done): consolidate the filing contract.** Move `CreateTicketSchema`,
 `labelsForNewTicket`, `bodyWithDependsOn` from `server/server.ts` to
 `shared/src/ticket-intake.ts`, tests with them. The REST handler imports them. Worth doing on
 its own.
 
-**Phase 1: extract `@fleet/github`.** New workspace package. Move `exec.ts` and the issue and
+**Phase 1 (done): extract `@fleet/github`.** New workspace package. Move `exec.ts` and the issue and
 label helpers with their colocated tests. Declare `typecheck` and `test` scripts in its
 `package.json` and add it to daemon's and mcp's dependencies so turbo's `^typecheck` chain
 includes it (CLAUDE.md: a package missing those scripts breaks the cache chain silently). No
 call site outside `daemon/src/github/` changes.
 
-**Phase 2: restructure the MCP.** Add `resolve.ts`, `ProjectsOnlyConfigSchema`, split
+**Phase 2 (done): restructure the MCP.** Add `resolve.ts`, `ProjectsOnlyConfigSchema`, split
 `index.ts` into `tools/*.ts`, rename `client.ts` to `daemon.ts` and remove its two ticket
 functions. Register daemon tools conditionally. Tests: resolution table above as a unit test;
 a registration test asserting the tool list with and without `daemonUrl`.
 
-**Phase 3: GitHub-backed ticket tools.** Implement `tickets.ts`. Tests mock `run()` the way
+**Phase 3 (done): GitHub-backed ticket tools.** Implement `tickets.ts`. Tests mock `run()` the way
 `github.test.ts` does and assert argv, labels, and that lint rejection happens before any
 `gh` call. Manual check added to the verify skill: `FLEET_REPO=<sandbox repo> pnpm mcp`, file
 one ticket from Claude Code or Codex, confirm the daemon claims it unchanged on its next
 cycle.
 
-**Phase 4: docs and template.** README and CLAUDE.md gain the "MCP without a daemon"
+**Phase 4 (done): docs and template.** README and CLAUDE.md gain the "MCP without a daemon"
 recipe. `templates/mcp.json.example` gains a commented `FLEET_REPO`-only variant.
 
 **Phase 5: stamp projects for Claude and Codex.** Depends on phases 1 and 2.

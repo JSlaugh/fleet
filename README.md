@@ -41,8 +41,8 @@ This is a manual step — fleet never self-updates. It runs `git pull --ff-only`
 pnpm daemon -- --dry-run --once   # poll and report what would be claimed; changes nothing
 pnpm daemon -- --once             # one cycle: claim, run workers to completion, exit (no dashboard, so approvals auto-deny)
 pnpm daemon                       # the real loop + dashboard at http://localhost:4400
-pnpm typecheck                    # tsc for shared+daemon+mcp, then vue-tsc for the dashboard
-pnpm test                         # vitest: daemon loop/state/github logic, worker contract guards, mcp client
+pnpm typecheck                    # tsc for shared+github+daemon+mcp, then vue-tsc for the dashboard
+pnpm test                         # vitest: daemon loop/state/github logic, worker contract guards, mcp resolution/tickets/tools
 ```
 
 Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via turbo, cached) before the daemon starts, so the served bundle is never stale. The daemon serves that dashboard and a REST/WS API:
@@ -53,7 +53,7 @@ Every `pnpm daemon` run installs dependencies and rebuilds the dashboard (via tu
 - `POST /api/daemon/shutdown` — `{ mode: "drain" | "now" }`; stops the long-running daemon (below). 409s if a shutdown is already in progress.
 - `GET /api/tickets/:project/:issue` — a ticket's record plus a journal tail.
 - `POST /api/tickets/:project/:issue/priority`, `POST /api/tickets/:project/:issue/restart`, `POST /api/tickets/:project/:issue/reply` — dashboard actions (reprioritize, force-restart, steer or resume a session).
-- `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); this is what the `@fleet/mcp` server and the fleet-backlog skill call so an agent can queue follow-up work without touching `gh` directly.
+- `POST /api/projects/:project/tickets` — file a new ticket (`{ title, body, priority?, ready?, dependsOn? }`); the dashboard's ticket form calls this. It runs the same shared contract (`packages/shared/src/ticket-intake.ts`) the `@fleet/mcp` server runs against GitHub directly, so a ticket is shaped identically whichever way it was filed.
 - `GET /api/projects/:project/backlog` — that project's current tickets (number, title, status, priority), for dedup checks before filing.
 - `POST /api/tickets/:project/:issue/ready` — release a `fleet:backlog` ticket to `fleet:ready` (the board card's **Ready** button); `POST /api/tickets/:project/:issue/accept-plan` releases all of a reviewed epic's backlog children and closes the epic.
 - `GET /api/approvals`, `POST /api/approvals/:id` — the approvals inbox: tool calls outside the worker allowlist and `AskUserQuestion` park here until the dashboard answers, or `approvalTimeoutMinutes` denies them.
@@ -74,13 +74,23 @@ Operational state lives in `.fleet/` — ticket records, the closed-ticket archi
 
 ## Filing tickets from inside a project
 
-A registered project gets an MCP server (`@fleet/mcp`, registered via `.mcp.json`'s `fleet` entry — `sync-templates` stamps this in, pointed at this repo and the project's name) and a matching skill (`templates/fleet-backlog/SKILL.md`, stamped into `.claude/skills/fleet-backlog/`). Together they let an interactive session or another fleet worker queue follow-up work — a bug it noticed, a deferred refactor — as a real fleet ticket instead of losing it when the session ends:
+A registered project gets an MCP server (`@fleet/mcp`, registered via `.mcp.json`'s `fleet` entry — `sync-templates` stamps this in, pointed at this repo and the project's name) and a matching skill (`templates/fleet-backlog/SKILL.md`, stamped into `.claude/skills/fleet-backlog/`). Together they let an interactive session or another fleet worker queue follow-up work — a bug it noticed, a deferred refactor — as a real fleet ticket instead of losing it when the session ends.
 
-- `fleet_query_backlog` — lists the project's current tickets, for a dedup check before filing.
-- `fleet_file_ticket` — files a new ticket (`title`, `body`, optional `priority`, optional `ready` to file for human curation instead of immediate pickup, optional `dependsOn` issue numbers that hold it until they close).
-- `fleet_board_status` — per-column counts across all projects, plus currently-running tickets and their latest activity.
+The tools split by where their data lives. **Writes and backlog reads go to GitHub; derived-state reads go to the daemon.**
 
-All three are thin wrappers over the REST endpoints above; GitHub issues stay the single source of truth.
+- `fleet_query_backlog` — lists the project's open fleet tickets, live from GitHub, for a dedup check before filing.
+- `fleet_file_ticket` — files a new issue directly via `gh` (`title`, `body`, optional `priority`, optional `ready` to file for human curation instead of immediate pickup, optional `dependsOn` issue numbers that hold it until they close). It runs the same intake lint the claim path runs, so a malformed ready ticket is refused before it reaches GitHub, and creates the `fleet:*` labels on first use.
+- `fleet_board_status`, `fleet_ticket_history`, `fleet_ticket_report`, `fleet_ticket_journal` — read the daemon's `fleet.db` (running sessions, cost, archived outcomes, journals) over its REST API. These register only when a daemon is configured.
+
+Because labels are the source of truth and the daemon merely polls for them, the two ticket tools work with **no daemon running anywhere**. The MCP process resolves its target from its environment, most explicit first:
+
+| Variable | Effect |
+|---|---|
+| `FLEET_REPO=owner/name` | file into this repo; no config needed |
+| `FLEET_PROJECT=<name>` | look the repo up in a `fleet.config.json` found by searching upward from the working directory (or at `FLEET_CONFIG`) |
+| `FLEET_URL` | the daemon's URL; unset, it falls back to `localhost:<dashboardPort>` from that config, or to no daemon at all |
+
+A user who only files ideas — say, from Codex rather than Claude — needs just an authenticated `gh` and either `FLEET_REPO` in their MCP entry (`templates/mcp.standalone.json.example`) or a minimal `fleet.config.json` listing only `projects[].name` and `githubRepo`. The daemon parses that same file strictly and rejects it, which is correct: it describes projects, not a daemon. Add the daemon fields later and the same file serves both.
 
 ## Refining tickets
 

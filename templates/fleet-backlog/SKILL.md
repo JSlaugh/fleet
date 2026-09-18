@@ -5,7 +5,7 @@ description: File well-formed tickets into this project's fleet backlog via the 
 
 # fleet-backlog
 
-Fleet is this repo's backlog orchestrator: tickets are GitHub issues, and a daemon picks up ready ones and runs them as autonomous worker sessions. GitHub is the single source of truth — these tools only talk to the fleet daemon, which is the only thing that touches the issue queue.
+Fleet is this repo's backlog orchestrator: tickets are GitHub issues, and a daemon picks up ready ones and runs them as autonomous worker sessions. GitHub is the single source of truth — `fleet_file_ticket` and `fleet_query_backlog` talk to it directly through `gh`, so they work whether or not a daemon is running; the board/history/journal tools read the daemon and are only present when one is configured.
 
 ## When to use this
 
