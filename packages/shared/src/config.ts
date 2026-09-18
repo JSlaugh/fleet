@@ -134,6 +134,27 @@ export const FleetConfigSchema = z.object({
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;
 
+/**
+ * The projects-only view of `fleet.config.json`, for consumers that never run
+ * a daemon (the MCP server, `fleet init`). It validates just the fields those
+ * need — a project's name and GitHub repo — so a daemon-only field being wrong
+ * or missing can never stop a ticket from being filed. The same file parsed
+ * with `FleetConfigSchema` is what the daemon requires; a config that only
+ * satisfies this schema is a valid "ideas only" setup, not a broken daemon one.
+ */
+export const ProjectsOnlyConfigSchema = z.object({
+  dashboardPort: z.number().int().min(1).default(4400),
+  projects: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        githubRepo: z.string().regex(/^[^/]+\/[^/]+$/, "expected owner/repo"),
+      }),
+    )
+    .min(1),
+});
+export type ProjectsOnlyConfig = z.infer<typeof ProjectsOnlyConfigSchema>;
+
 function unwrapSchema(schema: any): any {
   let current = schema;
   // Only unwrap single-inner-type wrappers — ZodArray also exposes `.unwrap()`

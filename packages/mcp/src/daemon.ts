@@ -1,40 +1,8 @@
-export type Priority = "p1" | "p2" | "p3";
-
-export function priorityLabel(priority: Priority | undefined): string | undefined {
-  return priority ? `fleet:${priority}` : undefined;
-}
-
-export interface FileTicketInput {
-  title: string;
-  body: string;
-  priority?: Priority;
-  ready?: boolean;
-  dependsOn?: number[];
-}
-
-/** Builds the JSON body for `POST /api/projects/:project/tickets` from the MCP tool's input. */
-export function buildFileTicketRequest(input: FileTicketInput): Record<string, unknown> {
-  const payload: Record<string, unknown> = { title: input.title, body: input.body };
-  const priority = priorityLabel(input.priority);
-  if (priority) payload.priority = priority;
-  if (input.ready !== undefined) payload.ready = input.ready;
-  if (input.dependsOn !== undefined) payload.dependsOn = input.dependsOn;
-  return payload;
-}
-
-export interface FileTicketResult {
-  number: number;
-  url: string;
-}
-
-export interface BacklogTicket {
-  number: number;
-  title: string;
-  status: string;
-  priority: string | null;
-  url: string;
-}
-
+/**
+ * The daemon-backed half of the MCP: everything here reads state that exists
+ * only inside a running daemon (`fleet.db` — board, history, journals). Ticket
+ * filing and backlog reads live in `tickets.ts` and go to GitHub directly.
+ */
 export interface BoardTicketLike {
   project: string;
   issueNumber: number;
@@ -73,13 +41,6 @@ export function summarizeBoard(tickets: BoardTicketLike[]): BoardSummary {
   return { counts, running };
 }
 
-export function formatBacklogText(tickets: BacklogTicket[]): string {
-  if (tickets.length === 0) return "Backlog is empty.";
-  return tickets
-    .map((t) => `#${t.number} [${t.status}]${t.priority ? ` ${t.priority}` : ""} ${t.title}`)
-    .join("\n");
-}
-
 export function formatBoardStatusText(summary: BoardSummary): string {
   const countLines = Object.entries(summary.counts)
     .map(([status, count]) => `${status}: ${count}`)
@@ -93,8 +54,9 @@ export function formatBoardStatusText(summary: BoardSummary): string {
   return `${countLines || "No tickets"}\n\nRunning:\n${runningLines}`;
 }
 
-// Local mirrors of the daemon's response shapes (this package deliberately
-// doesn't depend on @fleet/shared): only the fields the formatters below read.
+// Local mirrors of the daemon's response shapes: only the fields the
+// formatters below read, so a daemon-side field rename can't break the MCP
+// unless the formatter actually used it.
 
 export interface HistoryRecordLike {
   project: string;
@@ -309,20 +271,6 @@ async function fleetFetch(fleetUrl: string, path: string, init?: RequestInit): P
     throw new Error(`Fleet daemon returned ${res.status} for ${path}: ${text}`);
   }
   return text ? JSON.parse(text) : {};
-}
-
-export async function fileTicket(fleetUrl: string, project: string, input: FileTicketInput): Promise<FileTicketResult> {
-  const data = (await fleetFetch(fleetUrl, `/api/projects/${encodeURIComponent(project)}/tickets`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(buildFileTicketRequest(input)),
-  })) as FileTicketResult;
-  return { number: data.number, url: data.url };
-}
-
-export async function queryBacklog(fleetUrl: string, project: string): Promise<BacklogTicket[]> {
-  const data = (await fleetFetch(fleetUrl, `/api/projects/${encodeURIComponent(project)}/backlog`)) as { tickets: BacklogTicket[] };
-  return data.tickets;
 }
 
 export async function fetchBoardStatus(fleetUrl: string): Promise<BoardSummary> {
