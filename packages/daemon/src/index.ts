@@ -13,7 +13,7 @@ import { parseUpdateArgs, performUpdate } from "./update.ts";
 const USAGE = `Usage:
   fleet-daemon [--config <path>] [--once] [--dry-run]   run the polling loop
   fleet-daemon init-labels [--config <path>]            create fleet:* labels in every configured repo
-  fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + .mcp.json into every configured repo
+  fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + MCP registration (per agents) into every configured repo
   fleet-daemon update [--config <path>] [--drain]        pull latest, install, restart the running daemon
 
 Options:
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
 
   const configIndex = args.indexOf("--config");
   const configPath = configIndex !== -1 ? args[configIndex + 1] : undefined;
-  const { config, configDir } = loadConfig(configPath);
+  const { config, configDir, configPath: loadedConfigPath } = loadConfig(configPath);
 
   if (args[0] === "init-labels") {
     for (const project of config.projects) {
@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "sync-templates") {
-    await syncTemplates(config.projects, { port: config.dashboardPort });
+    await syncTemplates(config.projects, { port: config.dashboardPort, configPath: loadedConfigPath, agents: config.agents });
     return;
   }
 

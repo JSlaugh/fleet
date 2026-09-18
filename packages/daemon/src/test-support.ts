@@ -56,6 +56,7 @@ export function makeFleetConfig(patch: Partial<FleetConfig> = {}): FleetConfig {
     usageWindowHours: 5,
     budgetLightThreshold: 0.85,
     dataDir: ".fleet",
+    agents: ["claude"],
     projects: [makeProject()],
     ...patch,
   };

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --root ../.. packages/mcp"
+    "test": "vitest run --root ../.. packages/mcp",
+    "fleet-init": "tsx src/init.ts"
   },
   "dependencies": {
     "@fleet/github": "workspace:*",
@@ -16,5 +17,9 @@
   },
   "devDependencies": {
     "tsx": "^4.19.0"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./stamp": "./src/stamp/index.ts"
   }
 }

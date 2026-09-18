@@ -1,53 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { FLEET_LABELS, PLAN_LABEL, profileNames, typeLabel, type BuildSpec, type ProjectConfig } from "@fleet/shared";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { DEFAULT_AGENTS, FLEET_LABELS, PLAN_LABEL, agentsFor, profileNames, typeLabel, type AgentKind, type BuildSpec, type ProjectConfig } from "@fleet/shared";
+import { buildFleetEntry, readSkillTemplate, stampProject } from "@fleet/mcp/stamp";
 import { readBuildSpec } from "./github/buildspec.ts";
 import { log, logError } from "./log.ts";
-
-const TEMPLATES_DIR = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..", "templates");
-const SKILL_TEMPLATE_PATH = join(TEMPLATES_DIR, "fleet-backlog", "SKILL.md");
-const MCP_TEMPLATE_PATH = join(TEMPLATES_DIR, "mcp.json.example");
-
-const BOM = String.fromCharCode(0xfeff);
-
-function stripBom(raw: string): string {
-  return raw.startsWith(BOM) ? raw.slice(BOM.length) : raw;
-}
-
-/**
- * The template carries `{{FLEET_DIR}}`/`{{FLEET_URL}}` placeholders rather
- * than literal values: the fleet checkout's path differs per machine and the
- * port is config, and a stamped-verbatim absolute path silently breaks the
- * MCP server in every registered repo on any other clone.
- */
-function loadFleetServerEntry(port: number): Record<string, unknown> {
-  const fleetDir = join(TEMPLATES_DIR, "..").replace(/\\/g, "/");
-  const raw = stripBom(readFileSync(MCP_TEMPLATE_PATH, "utf8"))
-    .replaceAll("{{FLEET_DIR}}", fleetDir)
-    .replaceAll("{{FLEET_URL}}", `http://localhost:${port}`);
-  const parsed = JSON.parse(raw) as { mcpServers: { fleet: Record<string, unknown> } };
-  return parsed.mcpServers.fleet;
-}
-
-/**
- * Pure merge: sets/replaces only `mcpServers.fleet`, preserving every other
- * key (and every other server) byte-for-byte semantically. `existingRaw` is
- * `undefined` when the repo has no `.mcp.json` yet.
- */
-export function mergeMcpConfig(existingRaw: string | undefined, fleetEntry: Record<string, unknown>): string {
-  let parsed: Record<string, unknown> = {};
-  if (existingRaw !== undefined) {
-    try {
-      parsed = JSON.parse(stripBom(existingRaw)) as Record<string, unknown>;
-    } catch (err) {
-      throw new Error(`existing .mcp.json is not valid JSON: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  const mcpServers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? (parsed.mcpServers as Record<string, unknown>) : {};
-  const merged = { ...parsed, mcpServers: { ...mcpServers, fleet: fleetEntry } };
-  return `${JSON.stringify(merged, null, 2)}\n`;
-}
 
 const GUIDANCE_BULLETS = `        - **Priority** is a label, not a field: add \`fleet:p1\` / \`fleet:p2\` / \`fleet:p3\` after filing (optional).
         - **Dependencies:** put a line \`Depends-on: #12, #14\` anywhere below and fleet won't claim this until those issues close.
@@ -197,14 +153,6 @@ function pruneStaleIssueForms(destDir: string, keep: Set<string>): string[] {
   return removed;
 }
 
-function syncSkill(project: ProjectConfig): string {
-  const skillTemplate = readFileSync(SKILL_TEMPLATE_PATH, "utf8");
-  const destPath = join(project.repoPath, ".claude", "skills", "fleet-backlog", "SKILL.md");
-  mkdirSync(dirname(destPath), { recursive: true });
-  writeFileSync(destPath, skillTemplate);
-  return destPath;
-}
-
 function syncIssueForms(project: ProjectConfig): string[] {
   const destDir = join(project.repoPath, ".github", "ISSUE_TEMPLATE");
   mkdirSync(destDir, { recursive: true });
@@ -230,31 +178,32 @@ function syncIssueForms(project: ProjectConfig): string[] {
   return written;
 }
 
-function syncMcpJson(project: ProjectConfig, fleetEntryTemplate: Record<string, unknown>): string {
-  const destPath = join(project.repoPath, ".mcp.json");
-  const existingRaw = existsSync(destPath) ? readFileSync(destPath, "utf8") : undefined;
-  const env = { ...(fleetEntryTemplate.env as Record<string, string> | undefined), FLEET_PROJECT: project.name };
-  const fleetEntry = { ...fleetEntryTemplate, env };
-  const merged = mergeMcpConfig(existingRaw, fleetEntry);
-  writeFileSync(destPath, merged);
-  return destPath;
+export interface SyncTemplatesOptions {
+  /** Absolute path of the daemon's fleet.config.json — stamped as FLEET_CONFIG so FLEET_PROJECT resolves from inside the target repo. */
+  configPath: string;
+  port?: number;
+  /** Fallback for projects with no `agents` of their own. */
+  agents?: readonly AgentKind[];
 }
 
-export async function syncTemplates(projects: ProjectConfig[], opts: { port?: number } = {}): Promise<void> {
-  const fleetEntryTemplate = loadFleetServerEntry(opts.port ?? 4400);
+export async function syncTemplates(projects: ProjectConfig[], opts: SyncTemplatesOptions): Promise<void> {
+  const skillMarkdown = readSkillTemplate();
   for (const project of projects) {
     if (!existsSync(project.repoPath)) {
       log("sync-templates", `WARNING: skipping ${project.name} — repoPath ${project.repoPath} does not exist`);
       continue;
     }
-    log("sync-templates", `wrote ${syncSkill(project)}`);
+    const agents = agentsFor(project, { agents: opts.agents ?? DEFAULT_AGENTS });
+    const entry = buildFleetEntry({ project: project.name, configPath: opts.configPath, daemonUrl: `http://localhost:${opts.port ?? 4400}` });
+    try {
+      const result = stampProject(project.repoPath, agents, entry, skillMarkdown);
+      for (const destPath of result.written) log("sync-templates", `wrote ${destPath}`);
+      for (const note of result.notes) log("sync-templates", `${project.name}: ${note}`);
+    } catch (err) {
+      logError("sync-templates", `failed to stamp ${project.name} for ${agents.join(", ")}`, err);
+    }
     for (const destPath of syncIssueForms(project)) {
       log("sync-templates", `wrote ${destPath}`);
-    }
-    try {
-      log("sync-templates", `wrote ${syncMcpJson(project, fleetEntryTemplate)}`);
-    } catch (err) {
-      logError("sync-templates", `failed to update .mcp.json for ${project.name}`, err);
     }
   }
   log("sync-templates", "done — these are working-tree changes only; review and commit them in each repo");

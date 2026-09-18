@@ -1,6 +1,6 @@
 # Plan: Fleet MCP server that works without a running daemon
 
-Status: approved, in progress. Phases are checked off as they land.
+Status: implemented. Every phase landed on the `claude/codex-claude-comparison-6h7i6w` branch; kept as the design record.
 
 ## 1. Problem
 
@@ -107,11 +107,14 @@ structurally compatible.
 | else `FLEET_PROJECT` set and a config found | `repo` = that project's `githubRepo` |
 | else | fail: "set FLEET_REPO, or FLEET_PROJECT with a reachable fleet.config.json" |
 | `FLEET_URL` set | `daemonUrl` = it |
-| else config found | `daemonUrl` = `http://localhost:<config port>` |
+| else config found **and it names `dashboardPort`** | `daemonUrl` = `http://localhost:<that port>` |
 | else | no daemon tools |
 
 Config discovery reuses the upward search `loadConfig` in the daemon already does, with an
-optional `FLEET_CONFIG` path override, but parses with `ProjectsOnlyConfigSchema`. That schema
+optional `FLEET_CONFIG` path override, but parses with `ProjectsOnlyConfigSchema`. (Decided
+during implementation: a projects-only config never implies a daemon — only an explicit
+`dashboardPort` does — so a no-daemon user's tool list stays to the two GitHub tools. The
+daemon's own `sync-templates` stamps `FLEET_URL` explicitly, so daemon users lose nothing.) That schema
 validates only `projects[].name` and `projects[].githubRepo`. A daemon-only field being wrong
 or missing must never stop a ticket from being filed.
 
@@ -197,7 +200,7 @@ cycle.
 **Phase 4 (done): docs and template.** README and CLAUDE.md gain the "MCP without a daemon"
 recipe. `templates/mcp.json.example` gains a commented `FLEET_REPO`-only variant.
 
-**Phase 5: stamp projects for Claude and Codex.** Depends on phases 1 and 2.
+**Phase 5 (done): stamp projects for Claude and Codex.** Depends on phases 1 and 2.
 
 - Config gains `agents: ("claude" | "codex")[]`, allowed per project and daemon-wide, default
   `["claude"]` so existing setups are unchanged. Per the `config-shape-change` skill this

@@ -5,6 +5,7 @@
       "args": ["--dir", "{{FLEET_DIR}}", "--filter", "@fleet/mcp", "start"],
       "env": {
         "FLEET_PROJECT": "<project-name-from-fleet.config>",
+        "FLEET_CONFIG": "{{FLEET_CONFIG}}",
         "FLEET_URL": "{{FLEET_URL}}"
       }
     }

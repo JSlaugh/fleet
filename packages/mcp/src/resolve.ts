@@ -32,7 +32,8 @@ const REPO_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 /**
  * Rules, most explicit first:
  *   repo:   FLEET_REPO → else FLEET_PROJECT looked up in a config → else fail.
- *   daemon: FLEET_URL → else a config's dashboardPort on localhost → else none.
+ *   daemon: FLEET_URL → else a config that names dashboardPort explicitly, on localhost → else none
+ *           (a projects-only config never implies a daemon).
  * No probing, no fallback: the tool list must not change between sessions for
  * reasons the agent can't see.
  */
@@ -70,15 +71,15 @@ export function resolveTarget(env: ResolveEnv, opts: ResolveOptions): ResolvedTa
     sources.push(`daemon ${daemonUrl} (FLEET_URL)`);
   } else {
     const found = config();
-    if (found) {
+    if (found?.config.dashboardPort !== undefined) {
       daemonUrl = `http://localhost:${found.config.dashboardPort}`;
       sources.push(`daemon ${daemonUrl} (${found.path})`);
-      if (!project) {
-        const byRepo = found.config.projects.find((p) => p.githubRepo === repo);
-        if (byRepo) project = byRepo.name;
-      }
     } else {
       sources.push("no daemon (board/history/journal tools off)");
+    }
+    if (found && !project) {
+      const byRepo = found.config.projects.find((p) => p.githubRepo === repo);
+      if (byRepo) project = byRepo.name;
     }
   }
 

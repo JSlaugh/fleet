@@ -35,7 +35,7 @@ describe("readProjectsConfig", () => {
     const root = tempRoot();
     const path = join(root, "fleet.config.json");
     writeFileSync(path, `﻿${JSON.stringify({ pollIntervalSeconds: "not a number", projects: [{ name: "x", githubRepo: "o/r", repoPath: 42 }] })}`);
-    expect(readProjectsConfig(path)).toEqual({ dashboardPort: 4400, projects: [{ name: "x", githubRepo: "o/r" }] });
+    expect(readProjectsConfig(path)).toEqual({ agents: ["claude"], projects: [{ name: "x", githubRepo: "o/r" }] });
   });
 
   it("rejects a config with no usable projects", () => {

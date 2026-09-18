@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       "@fleet/shared": fileURLToPath(new URL("./packages/shared/src/index.ts", import.meta.url)),
       "@fleet/github": fileURLToPath(new URL("./packages/github/src/index.ts", import.meta.url)),
+      "@fleet/mcp/stamp": fileURLToPath(new URL("./packages/mcp/src/stamp/index.ts", import.meta.url)),
       // The dashboard's shadcn-style "@/" alias — only its tests resolve through this.
       "@": fileURLToPath(new URL("./packages/dashboard/src", import.meta.url)),
     },

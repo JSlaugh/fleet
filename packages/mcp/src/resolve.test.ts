@@ -5,6 +5,7 @@ const config = {
   path: "/w/fleet.config.json",
   config: {
     dashboardPort: 4411,
+    agents: ["claude" as const],
     projects: [
       { name: "alpha", githubRepo: "acme/alpha" },
       { name: "beta", githubRepo: "acme/beta" },
@@ -63,9 +64,16 @@ describe("resolveTarget — daemon", () => {
     expect(t.daemonUrl).toBe("http://box:4400");
   });
 
-  it("falls back to the config's dashboardPort on localhost", () => {
+  it("falls back to the config's dashboardPort on localhost when the config names one", () => {
     const t = resolveTarget({ FLEET_PROJECT: "alpha" }, withConfig);
     expect(t.daemonUrl).toBe("http://localhost:4411");
+  });
+
+  it("implies no daemon from a projects-only config (no dashboardPort), but still infers the project name", () => {
+    const minimal: ResolveOptions = { loadConfig: () => ({ path: "/w/fleet.config.json", config: { agents: ["codex"], projects: [{ name: "alpha", githubRepo: "acme/alpha" }] } }) };
+    const t = resolveTarget({ FLEET_REPO: "acme/alpha" }, minimal);
+    expect(t.daemonUrl).toBeUndefined();
+    expect(t.project).toBe("alpha");
   });
 
   it("with FLEET_REPO and a config, still finds the daemon and infers the project name from the repo", () => {

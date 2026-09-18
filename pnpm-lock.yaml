@@ -38,6 +38,9 @@ importers:
       '@fleet/github':
         specifier: workspace:*
         version: link:../github
+      '@fleet/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@fleet/shared':
         specifier: workspace:*
         version: link:../shared

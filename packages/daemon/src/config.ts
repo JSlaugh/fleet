@@ -6,6 +6,8 @@ import { log } from "./log.ts";
 export interface LoadedConfig {
   config: FleetConfig;
   configDir: string;
+  /** Absolute path of the file that was loaded. */
+  configPath: string;
 }
 
 function findDefaultConfig(): string | undefined {
@@ -37,5 +39,5 @@ export function loadConfig(configPath: string | undefined): LoadedConfig {
   for (const key of findUnknownConfigKeys(FleetConfigSchema, json)) {
     log("config", `Unknown key "${key}" in ${absolute} \u2014 ignored. Check for a typo against fleet.config.example.json.`);
   }
-  return { config: parsed.data, configDir: dirname(absolute) };
+  return { config: parsed.data, configDir: dirname(absolute), configPath: absolute };
 }

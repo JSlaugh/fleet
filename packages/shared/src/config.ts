@@ -23,6 +23,12 @@ export type NotificationsConfig = z.infer<typeof NotificationsConfigSchema>;
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;
 
+/** Coding agents a project can be stamped for by `sync-templates` / `fleet init` — each gets its own skill location and MCP registration file. */
+export const AGENT_KINDS = ["claude", "codex"] as const;
+export const AgentKindSchema = z.enum(AGENT_KINDS);
+export type AgentKind = z.infer<typeof AgentKindSchema>;
+export const DEFAULT_AGENTS: readonly AgentKind[] = ["claude"];
+
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   repoPath: z.string().min(1),
@@ -65,6 +71,8 @@ export const ProjectConfigSchema = z.object({
   /** GitHub logins whose approval authorizes an auto-merge, case-insensitive. Unset defaults to the account the daemon's `gh` is logged in as. */
   approvers: z.array(z.string()).optional(),
   mergeMethod: z.enum(["squash", "merge", "rebase"]).default("squash"),
+  /** Which agents this repo gets stamped for; unset inherits the top-level `agents` (default `["claude"]`). */
+  agents: z.array(AgentKindSchema).min(1).optional(),
   /**
    * Per-project Discord webhook override, same shape as the global `notifications` block.
    * Resolved per-field against the global config — `discordUrl` and `events` each fall back
@@ -130,6 +138,8 @@ export const FleetConfigSchema = z.object({
   workHoursReserve: WorkHoursReserveSchema.optional(),
   /** Opt-in Discord webhook event pings. Unset (default) disables the feature entirely — no network calls. */
   notifications: NotificationsConfigSchema.optional(),
+  /** Default agents every project is stamped for (`sync-templates`); a project's own `agents` overrides it. */
+  agents: z.array(AgentKindSchema).min(1).default([...DEFAULT_AGENTS]),
   projects: z.array(ProjectConfigSchema).min(1),
 });
 export type FleetConfig = z.infer<typeof FleetConfigSchema>;
@@ -143,12 +153,15 @@ export type FleetConfig = z.infer<typeof FleetConfigSchema>;
  * satisfies this schema is a valid "ideas only" setup, not a broken daemon one.
  */
 export const ProjectsOnlyConfigSchema = z.object({
-  dashboardPort: z.number().int().min(1).default(4400),
+  /** Only when written explicitly does a config imply a local daemon — a projects-only file never does. */
+  dashboardPort: z.number().int().min(1).optional(),
+  agents: z.array(AgentKindSchema).min(1).default([...DEFAULT_AGENTS]),
   projects: z
     .array(
       z.object({
         name: z.string().min(1),
         githubRepo: z.string().regex(/^[^/]+\/[^/]+$/, "expected owner/repo"),
+        agents: z.array(AgentKindSchema).min(1).optional(),
       }),
     )
     .min(1),
@@ -196,4 +209,9 @@ export function findUnknownConfigKeys(schema: z.ZodObject<any>, value: unknown, 
     }
   }
   return warnings;
+}
+
+/** The agents a project is stamped for: its own list, else the config-wide default. */
+export function agentsFor(project: { agents?: readonly AgentKind[] }, config: { agents: readonly AgentKind[] }): readonly AgentKind[] {
+  return project.agents ?? config.agents;
 }
