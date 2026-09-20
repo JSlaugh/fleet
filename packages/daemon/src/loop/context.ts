@@ -1,4 +1,5 @@
 import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type ProjectConfig } from "@fleet/shared";
+import type { FleetEvents } from "../events.ts";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { swapLabel } from "../github/github.ts";
 import { logError } from "../log.ts";
@@ -23,6 +24,8 @@ export interface LoopContext {
   readonly history: HistoryStore;
   readonly dataDirPath: string;
   readonly approvals: ApprovalManager;
+  /** The daemon's single typed event bus — every cross-cutting integration (notifications, the dashboard WS broadcast) subscribes here instead of the loop calling out to them directly. See the "Integration boundary" section of `CLAUDE.md`. */
+  readonly events: FleetEvents;
   readonly dryRun: boolean;
   /** `--once` runs have no dashboard server, so approvals can never be answered — auto-deny instead of waiting out `approvalTimeoutMinutes`. */
   readonly once: boolean;

@@ -1,6 +1,6 @@
 import type { FleetConfig, PlanResult, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeCtx, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeCtx, makeEventsWithDiscord, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { readJournalTail } from "../store/journal.ts";
 import { finishPlanned, PostCompletionError, resolveDependsOnIndex } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
@@ -56,7 +56,8 @@ function makeLoop(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
   const { dataDir, state } = makeTempState("fleet-finish-");
   if (seed) state.upsert(seed);
   const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
-  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+  const events = makeEventsWithDiscord(config);
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false, false, events);
   const internals = loop as unknown as {
     finishCompleted: (
       p: ProjectConfig,
@@ -508,7 +509,10 @@ describe("Discord notifications", () => {
 
     expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("needs-input");
-    expect(errSpy).toHaveBeenCalled();
+    // The webhook subscriber is fire-and-forget (`FleetEvents.emit` never awaits a
+    // listener), so its rejection is caught on a later microtask than `finishBlocked`
+    // itself resolves on — wait for it instead of asserting immediately.
+    await vi.waitFor(() => expect(errSpy).toHaveBeenCalled());
     errSpy.mockRestore();
   });
 });

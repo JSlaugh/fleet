@@ -1,5 +1,5 @@
-import { EventEmitter } from "node:events";
 import type { PendingApproval } from "@fleet/shared";
+import { FleetEvents } from "../events.ts";
 import { log } from "../log.ts";
 
 export interface ApprovalOutcome {
@@ -18,9 +18,10 @@ interface PendingInternal {
 }
 
 export class ApprovalManager {
-  readonly events = new EventEmitter();
   private readonly pending = new Map<string, PendingInternal>();
   private counter = 0;
+
+  constructor(readonly events: FleetEvents = new FleetEvents()) {}
 
   request(opts: {
     project: string;
@@ -50,7 +51,7 @@ export class ApprovalManager {
         opts.signal.addEventListener("abort", entry.onAbort, { once: true });
       }
       this.pending.set(id, entry);
-      this.events.emit("approvals");
+      this.events.emit("approval:requested", { approval });
     });
   }
 
@@ -63,7 +64,7 @@ export class ApprovalManager {
     return this.settle(id, outcome, reason);
   }
 
-  private settle(id: string, outcome: ApprovalOutcome, reason: ApprovalOutcome["reason"]): boolean {
+  private settle(id: string, outcome: ApprovalOutcome, reason: NonNullable<ApprovalOutcome["reason"]>): boolean {
     const entry = this.pending.get(id);
     if (!entry) return false;
     this.pending.delete(id);
@@ -71,7 +72,7 @@ export class ApprovalManager {
     if (entry.onAbort) entry.signal?.removeEventListener("abort", entry.onAbort);
     log("approvals", `${entry.approval.project}#${entry.approval.issueNumber}: ${entry.approval.toolName} ${reason} (${id})`);
     entry.resolve({ ...outcome, reason });
-    this.events.emit("approvals");
+    this.events.emit("approval:settled", { approval: entry.approval, reason });
     return true;
   }
 }

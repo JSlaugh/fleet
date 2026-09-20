@@ -12,7 +12,6 @@ import {
   type PrApprovalReview as PrReview,
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
-import { notify } from "../notify.ts";
 
 /**
  * Ticket records eligible for auto-merge evaluation this cycle: sitting in
@@ -147,7 +146,8 @@ export async function autoMergeReady(
       issueNumber: record.issueNumber,
       data: { title: record.issueTitle, prUrl, costUsd: record.costUsd },
     });
-    await notify(ctx, "auto-merged", project, {
+    ctx.events.emit("ticket:auto-merged", {
+      project,
       issueNumber: record.issueNumber,
       title: record.issueTitle,
       detail: `merged (${project.mergeMethod ?? "squash"}), approved by @${approver?.author ?? "unknown"}`,

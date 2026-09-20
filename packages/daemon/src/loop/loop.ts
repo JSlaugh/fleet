@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import type {
   BoardTicket,
   BudgetStatus,
@@ -10,6 +9,7 @@ import type {
   ProjectConfig,
   WorkHoursReserveStatus,
 } from "@fleet/shared";
+import { FleetEvents } from "../events.ts";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { checkAuthGate } from "./authGate.ts";
 import { cleanupFinished, dormantProjectNames, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
@@ -63,10 +63,10 @@ export class FleetLoop {
   private readonly workHoursReserveNotified = new Set<string>();
   /** Whether the current auth-gate hold spell has already logged its event; see `LoopContext`. */
   private readonly authGateNotified = new Set<"held">();
-  private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
+  private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board:updated", {}));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
-  readonly events = new EventEmitter();
+  readonly events: FleetEvents;
 
   constructor(
     private readonly config: FleetConfig,
@@ -75,14 +75,17 @@ export class FleetLoop {
     approvals: ApprovalManager,
     dryRun: boolean,
     once: boolean = false,
+    events: FleetEvents = new FleetEvents(),
   ) {
     this.history = new HistoryStore(dataDirPath);
+    this.events = events;
     this.ctx = {
       config,
       state,
       history: this.history,
       dataDirPath,
       approvals,
+      events,
       dryRun,
       once,
       running: this.running,

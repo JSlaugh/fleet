@@ -1,6 +1,6 @@
 import type { FleetConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeEventsWithDiscord, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { LoopContext } from "./context.ts";
 import {
   autoMergeReady,
@@ -45,7 +45,7 @@ function makeCtx(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}): {
   const { dataDir, state } = makeTempState("fleet-automerge-");
   if (seed) state.upsert(seed);
   const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
-  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false, false, makeEventsWithDiscord(config));
   const ctx = (loop as unknown as { ctx: LoopContext }).ctx;
   return { ctx, state };
 }

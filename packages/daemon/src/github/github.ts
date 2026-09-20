@@ -71,6 +71,16 @@ function listComments(project: ProjectConfig, issueNumber: number): Promise<Rest
   return runJsonPaginated<RestComment>("gh", ["api", `repos/${project.githubRepo}/issues/${issueNumber}/comments`]);
 }
 
+/** The `github.com/owner/repo/issues/N` link for an issue-scoped event that has no PR of its own. */
+export function issueUrl(project: { githubRepo: string }, issueNumber: number): string {
+  return `https://github.com/${project.githubRepo}/issues/${issueNumber}`;
+}
+
+/** The `github.com/owner/repo` link for a project-wide event with no single triggering issue. */
+export function projectUrl(project: { githubRepo: string }): string {
+  return `https://github.com/${project.githubRepo}`;
+}
+
 export function priorityRank(labels: string[]): number {
   const index = PRIORITY_LABELS.findIndex((p) => labels.includes(p));
   return index === -1 ? PRIORITY_LABELS.length : index;

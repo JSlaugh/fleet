@@ -29,6 +29,7 @@ import {
   parseChildTaskList,
   parseDependsOn,
   parsePartOf,
+  projectUrl,
   removeAssignee,
   swapLabel,
   toBoardTicket,
@@ -36,7 +37,6 @@ import {
 } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
-import { notify, projectUrl } from "../notify.ts";
 import { addressComments } from "./comments.ts";
 import { teardownTicket } from "./teardown.ts";
 import { autoMergeReady } from "./automerge.ts";
@@ -346,7 +346,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     if (!ctx.budgetBlockedNotified.has(project.name)) {
       ctx.budgetBlockedNotified.add(project.name);
       ctx.state.appendEvent("gate-hold-budget", { project: project.name, data: { detail: holdLine } });
-      await notify(ctx, "paused", project, { title: "Budget gate", detail: holdLine, url: projectUrl(project) });
+      ctx.events.emit("daemon:paused", { project, title: "Budget gate", detail: holdLine, url: projectUrl(project) });
     }
     return;
   }

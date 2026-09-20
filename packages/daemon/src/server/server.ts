@@ -430,8 +430,9 @@ export function startServer(opts: {
       if (client.readyState === client.OPEN) client.send(payload);
     }
   };
-  loop.events.on("board", () => broadcast("board-updated"));
-  approvals.events.on("approvals", () => broadcast("approvals-updated"));
+  loop.events.on("board:updated", () => broadcast("board-updated"));
+  approvals.events.on("approval:requested", () => broadcast("approvals-updated"));
+  approvals.events.on("approval:settled", () => broadcast("approvals-updated"));
 
   log("server", `dashboard + API listening on http://localhost:${port}`);
 }

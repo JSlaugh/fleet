@@ -2,6 +2,7 @@ import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, type LoopContext } from "./context.ts";
 import {
   getStatusCommentInfo,
+  issueUrl,
   markReady,
   refreshHeartbeat,
   refreshHeartbeatIfStale,
@@ -11,7 +12,6 @@ import {
   type StatusCommentInfo,
 } from "../github/github.ts";
 import { log, logError } from "../log.ts";
-import { issueUrl, notify } from "../notify.ts";
 import { Journal } from "../store/journal.ts";
 
 /** `TicketRecord` statuses this daemon should keep a fresh heartbeat on, once per cycle, while it's the one actually working the ticket. */
@@ -182,7 +182,8 @@ export async function releaseStaleClaims(
         issueNumber: issue.number,
         data: { title: issue.title, owners: others },
       });
-      await notify(ctx, "stale-released", project, {
+      ctx.events.emit("ticket:stale-released", {
+        project,
         issueNumber: issue.number,
         title: issue.title,
         detail: `stale claim from @${ownerList} released back to the pool`,

@@ -1,5 +1,10 @@
 import type { DigestResponse, FleetConfig, NotificationEvent, ProjectConfig } from "@fleet/shared";
+import { issueUrl, projectUrl } from "./github/github.ts";
 import { logError } from "./log.ts";
+import type { FleetEvents } from "./events.ts";
+
+/** Re-exported so existing importers of these URL builders don't need to change; the canonical home is `github/github.ts` — a plain GitHub link builder, not a notification concern. */
+export { issueUrl, projectUrl };
 
 export interface NotifyDetail {
   /** Omitted for a project-wide event with no single triggering issue (e.g. the budget gate holding all claims). */
@@ -28,16 +33,6 @@ const EVENT_TITLES: Record<NotificationEvent, string> = {
 
 /** Hard cap on the webhook request so an unresponsive (not just erroring) Discord host can never stall the awaiting ticket path. */
 const WEBHOOK_TIMEOUT_MS = 5_000;
-
-/** The `github.com/owner/repo/issues/N` link for an issue-scoped event that has no PR of its own. */
-export function issueUrl(project: { githubRepo: string }, issueNumber: number): string {
-  return `https://github.com/${project.githubRepo}/issues/${issueNumber}`;
-}
-
-/** The `github.com/owner/repo` link for a project-wide event with no single triggering issue. */
-export function projectUrl(project: { githubRepo: string }): string {
-  return `https://github.com/${project.githubRepo}`;
-}
 
 /** Whether `event` should be posted under `config` — unset `events` (or no config at all) means every event fires, resp. none does. */
 export function shouldNotify(config: FleetConfig["notifications"], event: NotificationEvent): boolean {
@@ -126,6 +121,26 @@ export function buildDigestMessage(digest: DigestResponse): string {
   if (digest.budget) lines.push(`Spend: $${digest.totalSpendUsd.toFixed(2)} / $${digest.budget.budgetUsd.toFixed(2)} (${digest.budget.windowHours}h)`);
   if (lines.length === 1) lines.push("Nothing happened.");
   return lines.join("\n");
+}
+
+/**
+ * Registers the Discord webhook as a subscriber on the daemon event bus,
+ * translating each bus event's payload into the equivalent `notify()` call —
+ * message format and the dry-run/once/config-filter contract are unchanged,
+ * only the trigger moved from a direct call at each lifecycle site to this
+ * subscription. `FleetEvents.emit` already isolates a throwing/slow
+ * subscriber from its emitter, so `notify`'s own internal try/catch is
+ * belt-and-suspenders, not the only thing standing between a bad webhook and
+ * the ticket path.
+ */
+export function subscribeDiscordWebhook(events: FleetEvents, ctx: NotifyContext): void {
+  events.on("ticket:needs-input", ({ project, ...detail }) => notify(ctx, "needs-input", project, detail));
+  events.on("ticket:pr-opened", ({ project, ...detail }) => notify(ctx, "pr-opened", project, detail));
+  events.on("ticket:failed", ({ project, ...detail }) => notify(ctx, "failed", project, detail));
+  events.on("ticket:auto-merged", ({ project, ...detail }) => notify(ctx, "auto-merged", project, detail));
+  events.on("ticket:stale-released", ({ project, ...detail }) => notify(ctx, "stale-released", project, detail));
+  events.on("daemon:paused", ({ project, ...detail }) => notify(ctx, "paused", project, detail));
+  events.on("digest:ready", ({ digest }) => postDigest(ctx, digest));
 }
 
 /** Fire-and-forget Discord digest post — same dry-run/once/error-swallow contract as `notify`, but daemon-wide rather than per-issue. */
