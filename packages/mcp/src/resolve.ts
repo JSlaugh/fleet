@@ -34,13 +34,29 @@ const REPO_PATTERN = /^[^/\s]+\/[^/\s]+$/;
  *   repo:   FLEET_REPO → else FLEET_PROJECT looked up in a config → else fail.
  *   daemon: FLEET_URL → else a config that names dashboardPort explicitly, on localhost → else none
  *           (a projects-only config never implies a daemon).
+ *   project: FLEET_PROJECT → else the config project whose githubRepo is the repo.
  * No probing, no fallback: the tool list must not change between sessions for
  * reasons the agent can't see.
+ *
+ * With FLEET_REPO set the config is optional (it can only add a daemon and a
+ * project name), so a config that fails to parse is reported and skipped
+ * rather than taking the whole server down.
  */
 export function resolveTarget(env: ResolveEnv, opts: ResolveOptions): ResolvedTarget {
   const sources: string[] = [];
   let loaded: ReturnType<ResolveOptions["loadConfig"]> | undefined;
-  const config = () => (loaded ??= opts.loadConfig(env.FLEET_CONFIG));
+  let attempted = false;
+  const config = () => {
+    if (attempted) return loaded;
+    attempted = true;
+    try {
+      loaded = opts.loadConfig(env.FLEET_CONFIG);
+    } catch (err) {
+      if (!env.FLEET_REPO) throw err;
+      sources.push(`config ignored (${err instanceof Error ? err.message.split("\n")[0] : String(err)})`);
+    }
+    return loaded;
+  };
 
   let repo: string | undefined;
   let project = env.FLEET_PROJECT;
@@ -77,10 +93,10 @@ export function resolveTarget(env: ResolveEnv, opts: ResolveOptions): ResolvedTa
     } else {
       sources.push("no daemon (board/history/journal tools off)");
     }
-    if (found && !project) {
-      const byRepo = found.config.projects.find((p) => p.githubRepo === repo);
-      if (byRepo) project = byRepo.name;
-    }
+  }
+
+  if (!project) {
+    project = config()?.config.projects.find((p) => p.githubRepo === repo)?.name;
   }
 
   return { repo, project, daemonUrl, describe: sources.join("; ") };

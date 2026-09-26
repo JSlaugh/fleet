@@ -82,6 +82,19 @@ describe("resolveTarget — daemon", () => {
     expect(t.project).toBe("beta");
   });
 
+  it("infers the project name from the repo even when FLEET_URL supplies the daemon", () => {
+    const t = resolveTarget({ FLEET_REPO: "acme/beta", FLEET_URL: "http://box:4400" }, withConfig);
+    expect(t.project).toBe("beta");
+  });
+
+  it("with FLEET_REPO set, skips a config that fails to parse instead of failing", () => {
+    const broken: ResolveOptions = { loadConfig: () => { throw new Error("/w/fleet.config.json is not a usable fleet config:\n  projects: Required"); } };
+    const t = resolveTarget({ FLEET_REPO: "acme/solo" }, broken);
+    expect(t.repo).toBe("acme/solo");
+    expect(t.describe).toMatch(/config ignored/);
+    expect(() => resolveTarget({ FLEET_PROJECT: "x" }, broken)).toThrow(/not a usable fleet config/);
+  });
+
   it("leaves the daemon unset with FLEET_REPO alone, and says so", () => {
     const t = resolveTarget({ FLEET_REPO: "acme/solo" }, noConfig);
     expect(t.daemonUrl).toBeUndefined();

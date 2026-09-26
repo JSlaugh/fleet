@@ -18,7 +18,7 @@ export const fileTicketTool: FleetTool = {
           title: z.string().min(1).describe("Short, specific issue title"),
           body: z.string().min(1).describe("Problem statement, acceptance criteria, and verification steps, in markdown"),
           priority: z.enum(["p1", "p2", "p3"]).optional().describe("p1 = highest priority, p3 = lowest"),
-          ready: z.boolean().optional().describe("True (default) to make the ticket immediately pickable; false to file it for human curation first"),
+          ready: z.boolean().optional().describe("True (default) to make the ticket immediately pickable; false to park it in the fleet:backlog column until a human releases it"),
           dependsOn: z.array(z.number().int().positive()).optional().describe("issue numbers this ticket depends on; it stays blocked until they close"),
         },
       },

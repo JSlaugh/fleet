@@ -2,13 +2,26 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parseInitArgs, runInit } from "./init.ts";
+import { invocationDir, parseInitArgs, runInit } from "./init.ts";
+import { FLEET_DIR } from "./stamp/index.ts";
 
 describe("parseInitArgs", () => {
   it("parses every flag and ignores a leading `init`", () => {
     const args = parseInitArgs(["init", "--path", "/r", "--repo", "o/n", "--project", "p", "--agents", "codex, claude", "--config", "/c.json"]);
-    expect(args).toMatchObject({ repo: "o/n", project: "p", agents: ["codex", "claude"], config: "/c.json", help: false });
+    expect(args).toMatchObject({ repo: "o/n", project: "p", agents: ["codex", "claude"], pathGiven: true, help: false });
+    expect(args.config?.endsWith("c.json")).toBe(true);
     expect(args.path.endsWith("r")).toBe(true);
+  });
+
+  it("resolves relative --path and --config against the invocation directory, not packages/mcp", () => {
+    const args = parseInitArgs(["--path", "repo", "--config", "cfg/fleet.config.json"], join(tmpdir(), "where-i-ran-pnpm"));
+    expect(args.path).toBe(join(tmpdir(), "where-i-ran-pnpm", "repo"));
+    expect(args.config).toBe(join(tmpdir(), "where-i-ran-pnpm", "cfg", "fleet.config.json"));
+    expect(parseInitArgs([], "/somewhere").path).toBe("/somewhere");
+  });
+
+  it("prefers INIT_CWD as the invocation directory", () => {
+    expect(invocationDir({ INIT_CWD: "/target" })).toBe("/target");
   });
 
   it("rejects an unknown agent, a malformed repo, and an unknown flag", () => {
@@ -24,11 +37,11 @@ describe("runInit", () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
-  it("with --repo and no config, writes a projects-only config then stamps for codex by default", () => {
+  it("with --repo and no config, writes a projects-only config then stamps the requested agent", () => {
     const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
     dirs.push(repo);
     const lines: string[] = [];
-    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), (l) => lines.push(l));
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--agents", "codex"]), (l) => lines.push(l));
 
     const config = JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8"));
     expect(config).toEqual({ agents: ["codex"], projects: [{ name: "widgets", githubRepo: "acme/widgets" }] });
@@ -39,6 +52,22 @@ describe("runInit", () => {
     expect(toml).toContain(`FLEET_CONFIG = "${join(repo, "fleet.config.json").replace(/\\/g, "/")}"`);
     expect(toml).not.toContain("FLEET_URL");
     expect(lines.join("\n")).toMatch(/done — stamped widgets/);
+    expect(lines.join("\n")).toMatch(/--daemon-url/);
+  });
+
+  it("defaults a newly written config to claude, as the usage text says", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
+    dirs.push(repo);
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), () => {});
+    expect(JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8")).agents).toEqual(["claude"]);
+    expect(existsSync(join(repo, ".mcp.json"))).toBe(true);
+  });
+
+  it("stamps an explicit --daemon-url even when the config names no dashboardPort", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
+    dirs.push(repo);
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--daemon-url", "http://localhost:4400/"]), () => {});
+    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8")).mcpServers.fleet.env.FLEET_URL).toBe("http://localhost:4400");
   });
 
   it("uses an existing config found upward from the repo, honouring the project's own agents", () => {
@@ -62,6 +91,10 @@ describe("runInit", () => {
     dirs.push(root);
     writeFileSync(join(root, "fleet.config.json"), JSON.stringify({ projects: [{ name: "a", githubRepo: "o/a" }, { name: "b", githubRepo: "o/b" }] }));
     expect(() => runInit(parseInitArgs(["--path", root]), () => {})).toThrow(/pass --project/);
+  });
+
+  it("refuses to stamp the fleet checkout when --path was defaulted (pnpm --dir reports it as the invocation dir)", () => {
+    expect(() => runInit(parseInitArgs(["--repo", "acme/widgets"], FLEET_DIR), () => {})).toThrow(/Pass --path/);
   });
 
   it("fails clearly with no config and no --repo", () => {

@@ -8,7 +8,7 @@ vi.mock("@fleet/github", async (importActual) => ({
 }));
 
 const github = await import("@fleet/github");
-const { GithubTickets, formatBacklogText, intakeProblem, priorityLabel, toCreateTicketInput } = await import("./tickets.ts");
+const { DaemonFirstTickets, GithubTickets, formatBacklogText, intakeProblem, priorityLabel, toCreateTicketInput } = await import("./tickets.ts");
 
 const GOOD_BODY = "## Problem\n\nx\n\n## Acceptance criteria\n\n- y\n\n## Verification\n\nz";
 
@@ -79,16 +79,67 @@ describe("GithubTickets.fileTicket", () => {
       body: `${GOOD_BODY}\n\nDepends-on: #3`,
       labels: ["fleet:ready", "fleet:p1"],
     });
-    expect(github.createIssue).toHaveBeenNthCalledWith(2, { githubRepo: "acme/alpha" }, { title: "u", body: GOOD_BODY, labels: [] });
+    expect(github.createIssue).toHaveBeenNthCalledWith(2, { githubRepo: "acme/alpha" }, { title: "u", body: GOOD_BODY, labels: ["fleet:backlog"] });
   });
 
-  it("retries label creation on the next call if it failed", async () => {
-    vi.mocked(github.ensureFleetLabels).mockRejectedValueOnce(new Error("gh down"));
+  it("still files when label creation fails (e.g. no write access), and retries it on the next call", async () => {
+    vi.mocked(github.ensureFleetLabels).mockRejectedValueOnce(new Error("gh: HTTP 403"));
     vi.mocked(github.createIssue).mockResolvedValue({ number: 1, url: "u" });
-    const tickets = new GithubTickets("acme/alpha");
-    await expect(tickets.fileTicket({ title: "t", body: GOOD_BODY })).rejects.toThrow(/gh down/);
+    const warnings: string[] = [];
+    const tickets = new GithubTickets("acme/alpha", (l) => warnings.push(l));
+
+    await expect(tickets.fileTicket({ title: "t", body: GOOD_BODY })).resolves.toEqual({ number: 1, url: "u" });
     await tickets.fileTicket({ title: "t", body: GOOD_BODY });
+
+    expect(warnings.join("\n")).toMatch(/HTTP 403/);
+    expect(github.createIssue).toHaveBeenCalledTimes(2);
     expect(github.ensureFleetLabels).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("DaemonFirstTickets.fileTicket", () => {
+  const daemon = { url: "http://localhost:4400", project: "alpha" };
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+  });
+
+  it("files through the daemon's REST route, so the daemon's identity opens the issue", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true, number: 5, url: "u5" })));
+    const tickets = new DaemonFirstTickets(new GithubTickets("acme/alpha"), daemon);
+
+    await expect(tickets.fileTicket({ title: "t", body: GOOD_BODY, priority: "p2", ready: false })).resolves.toEqual({ number: 5, url: "u5" });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("http://localhost:4400/api/projects/alpha/tickets");
+    expect(JSON.parse(String(init?.body))).toEqual({ title: "t", body: GOOD_BODY, priority: "fleet:p2", ready: false });
+    expect(github.createIssue).not.toHaveBeenCalled();
+  });
+
+  it("falls back to GitHub only when the daemon does not answer", async () => {
+    fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+    vi.mocked(github.createIssue).mockResolvedValue({ number: 6, url: "u6" });
+    const warnings: string[] = [];
+    const tickets = new DaemonFirstTickets(new GithubTickets("acme/alpha"), daemon, (l) => warnings.push(l));
+
+    await expect(tickets.fileTicket({ title: "t", body: GOOD_BODY })).resolves.toEqual({ number: 6, url: "u6" });
+    expect(warnings.join("\n")).toMatch(/filing straight to GitHub/);
+  });
+
+  it("surfaces an error the daemon returns instead of filing twice", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: "unknown project alpha" }), { status: 404 }));
+    const tickets = new DaemonFirstTickets(new GithubTickets("acme/alpha"), daemon);
+
+    await expect(tickets.fileTicket({ title: "t", body: GOOD_BODY })).rejects.toThrow(/404/);
+    expect(github.createIssue).not.toHaveBeenCalled();
+  });
+
+  it("lints locally before reaching the daemon", async () => {
+    const tickets = new DaemonFirstTickets(new GithubTickets("acme/alpha"), daemon);
+    await expect(tickets.fileTicket({ title: "t", body: "no headings" })).rejects.toThrow(/missing required sections/);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

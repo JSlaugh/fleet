@@ -259,18 +259,35 @@ export function formatJournalText(entries: JournalEntryLike[]): string {
   return entries.map(formatJournalEntryLine).join("\n");
 }
 
+/** The daemon didn't answer at all (as opposed to answering with an error) — lets ticket filing fall back to GitHub. */
+export class DaemonUnreachableError extends Error {}
+
 async function fleetFetch(fleetUrl: string, path: string, init?: RequestInit): Promise<unknown> {
   let res: Response;
   try {
     res = await fetch(`${fleetUrl}${path}`, init);
   } catch {
-    throw new Error(`Could not reach the fleet daemon at ${fleetUrl}. Is the fleet daemon running at ${fleetUrl}?`);
+    throw new DaemonUnreachableError(`Could not reach the fleet daemon at ${fleetUrl}. Is the fleet daemon running at ${fleetUrl}?`);
   }
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`Fleet daemon returned ${res.status} for ${path}: ${text}`);
   }
   return text ? JSON.parse(text) : {};
+}
+
+/** Files through the daemon's REST route, so the issue is opened by the daemon's `gh` identity. */
+export async function fileTicketViaDaemon(
+  fleetUrl: string,
+  project: string,
+  input: { title: string; body: string; priority?: string; ready: boolean; dependsOn?: number[] },
+): Promise<{ number: number; url: string }> {
+  const data = (await fleetFetch(fleetUrl, `/api/projects/${encodeURIComponent(project)}/tickets`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })) as { number: number; url: string };
+  return { number: data.number, url: data.url };
 }
 
 export async function fetchBoardStatus(fleetUrl: string): Promise<BoardSummary> {

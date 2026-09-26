@@ -15,7 +15,12 @@ export function readSkillTemplate(): string {
 
 export interface EntryTarget {
   project: string;
-  /** Absolute path of the `fleet.config.json` the project name resolves through; the MCP is launched from the target repo, whose upward search would not find it. */
+  /**
+   * Absolute path of the `fleet.config.json` the project name resolves through.
+   * The MCP runs from `packages/mcp` in the fleet checkout, so without this its
+   * upward search finds whatever config sits at the checkout root — not
+   * necessarily the one this project was stamped from.
+   */
   configPath: string;
   /** Set when a daemon is known to run at this URL; omitted for a daemon-less setup, where the config decides. */
   daemonUrl?: string;

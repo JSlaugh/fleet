@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildFleetEntry, mergeCodexConfig, mergeMcpConfig, renderCodexFleetTable, stampProject, type McpEntry } from "./index.ts";
+import { codexEntry } from "./codex.ts";
+import { FLEET_DIR, buildFleetEntry, mergeCodexConfig, mergeMcpConfig, renderCodexFleetTable, stampProject, type McpEntry } from "./index.ts";
 
 const ENTRY: McpEntry = {
   command: "pnpm",
@@ -107,15 +108,68 @@ describe("mergeCodexConfig", () => {
     expect(merged).not.toContain('"old"');
   });
 
-  it("tolerates a BOM and CRLF line endings", () => {
+  it("tolerates a BOM and keeps CRLF line endings, so a sync on Windows is not a whole-file diff", () => {
     const existing = `\uFEFF[mcp_servers.other]\r\ncommand = "node"\r\n`;
     const merged = mergeCodexConfig(existing, ENTRY);
-    expect(merged.startsWith("[mcp_servers.other]\ncommand = \"node\"\n\n[mcp_servers.fleet]")).toBe(true);
+    expect(merged.startsWith("[mcp_servers.other]\r\ncommand = \"node\"\r\n\r\n[mcp_servers.fleet]\r\n")).toBe(true);
+    expect(merged.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(mergeCodexConfig(merged, ENTRY)).toBe(merged);
+  });
+
+  it("recognises a fleet table written with quoted keys", () => {
+    for (const header of ['[mcp_servers."fleet"]', "[mcp_servers.'fleet']", '[ "mcp_servers" . fleet ]', '[mcp_servers."fleet".env]']) {
+      const merged = mergeCodexConfig(`${header}\ncommand = "stale"\n`, ENTRY);
+      expect(merged).not.toContain("stale");
+      expect(merged.match(/\[mcp_servers\.fleet\]/g)).toHaveLength(1);
+    }
+  });
+
+  it("does not mistake a line of a multi-line array or string for a table header", () => {
+    const existing = [
+      "[mcp_servers.fleet]",
+      "args = [",
+      '  ["a", "b"],',
+      '  ["c"]',
+      "]",
+      "description = '''",
+      "[not.a.header]",
+      "'''",
+      "",
+      "[mcp_servers.other]",
+      'command = "node"',
+    ].join("\n");
+    const merged = mergeCodexConfig(existing, ENTRY);
+    expect(merged).not.toContain('"a"');
+    expect(merged).not.toContain("not.a.header");
+    expect(merged.startsWith('[mcp_servers.other]\ncommand = "node"\n\n[mcp_servers.fleet]')).toBe(true);
+  });
+
+  it("keeps comments sitting directly above the table after the fleet table", () => {
+    const existing = ["[mcp_servers.fleet]", 'command = "stale"', "", "# my other server", "[mcp_servers.other]", 'command = "node"'].join("\n");
+    expect(mergeCodexConfig(existing, ENTRY)).toContain("# my other server\n[mcp_servers.other]");
+  });
+
+  it("refuses a fleet server defined as a dotted key or inline table rather than emitting a duplicate", () => {
+    expect(() => mergeCodexConfig('[mcp_servers]\nfleet = { command = "x" }\n', ENTRY)).toThrow(/can't rewrite safely/);
+    expect(() => mergeCodexConfig('mcp_servers.fleet.command = "x"\n', ENTRY)).toThrow(/can't rewrite safely/);
+    expect(() => mergeCodexConfig('[mcp_servers]\nother = { command = "x" }\n', ENTRY)).not.toThrow();
   });
 
   it("is idempotent", () => {
     const first = mergeCodexConfig('[mcp_servers.other]\ncommand = "node"\n', ENTRY);
     expect(mergeCodexConfig(first, ENTRY)).toBe(first);
+  });
+});
+
+describe("codexEntry", () => {
+  it("routes a bare command through cmd /c on Windows, where Codex's direct spawn can't resolve a .cmd shim", () => {
+    expect(codexEntry(ENTRY, "win32")).toEqual({ ...ENTRY, command: "cmd", args: ["/c", "pnpm", ...ENTRY.args] });
+  });
+
+  it("leaves the entry alone elsewhere, or when the command is already a path or has an extension", () => {
+    expect(codexEntry(ENTRY, "linux")).toBe(ENTRY);
+    expect(codexEntry({ ...ENTRY, command: "pnpm.cmd" }, "win32").command).toBe("pnpm.cmd");
+    expect(codexEntry({ ...ENTRY, command: "C:/tools/pnpm" }, "win32").command).toBe("C:/tools/pnpm");
   });
 });
 
@@ -160,7 +214,7 @@ describe("buildFleetEntry", () => {
     const withDaemon = buildFleetEntry({ project: "p", configPath: "/w/fleet.config.json", daemonUrl: "http://localhost:4400" });
     expect(withDaemon.command).toBe("pnpm");
     expect(withDaemon.args.slice(2)).toEqual(["--filter", "@fleet/mcp", "start"]);
-    expect(withDaemon.args[1]).toMatch(/fleet\/?$/);
+    expect(withDaemon.args[1]).toBe(FLEET_DIR.replace(/\\/g, "/"));
     expect(withDaemon.args[1]).not.toContain("{{");
     expect(withDaemon.env).toEqual({ FLEET_PROJECT: "p", FLEET_CONFIG: "/w/fleet.config.json", FLEET_URL: "http://localhost:4400" });
 
