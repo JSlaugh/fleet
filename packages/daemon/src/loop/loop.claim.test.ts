@@ -82,6 +82,54 @@ function makeLiveLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverr
   return { loop, state };
 }
 
+describe("cycleProject with approval yield", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    logSpy.mockRestore();
+    vi.mocked(github.listFleetIssues).mockReset();
+  });
+  const lines = () => logSpy.mock.calls.map((call) => String(call[0]));
+
+  /** A dry-run loop with `maxConcurrent: 1` and `alpha#1` already in flight, parked on an approval requested `pendingMinutes` ago (or none). */
+  function parkedLoop(pendingMinutes: number | undefined, inFlight = ["alpha#1"]) {
+    const { dataDir, state } = makeTempState("fleet-claim-yield-");
+    const approvals = makeApprovals();
+    if (pendingMinutes !== undefined) {
+      vi.mocked(approvals.list).mockReturnValue([
+        { id: "a", project: "alpha", issueNumber: 1, toolName: "Bash", kind: "permission", input: {}, createdAt: new Date(Date.now() - pendingMinutes * 60_000).toISOString() },
+      ]);
+    }
+    const config = makeFleetConfig({ dataDir, projects: [{ ...project, maxConcurrent: 1, maxInReview: 5 }], approvalYieldMinutes: 30 });
+    const loop = new FleetLoop(config, state, dataDir, approvals, true);
+    const internals = loop as unknown as { running: Map<string, Promise<void>> };
+    for (const scope of inFlight) internals.running.set(scope, new Promise(() => {}));
+    vi.mocked(github.listFleetIssues).mockResolvedValue([issue(1, ["fleet:in-progress"]), issue(2, ["fleet:ready"])]);
+    return loop;
+  }
+
+  it("claims the next ready ticket once the only running one has been parked on an approval past approvalYieldMinutes", async () => {
+    await parkedLoop(31).cycle();
+    expect(lines().some((l) => l.includes("would claim") && l.includes("alpha#2"))).toBe(true);
+    expect(lines().some((l) => l.includes("claiming with 1 yielded ticket(s) parked on approvals"))).toBe(true);
+  });
+
+  it("keeps holding the slot while the approval is younger than the window", async () => {
+    await parkedLoop(10).cycle();
+    expect(lines().some((l) => l.includes("would claim"))).toBe(false);
+  });
+
+  it("over cap after a yielded approval comes back: no claims, logged once across cycles", async () => {
+    const loop = parkedLoop(undefined, ["alpha#1", "alpha#3"]);
+    await loop.cycle();
+    await loop.cycle();
+    expect(lines().some((l) => l.includes("would claim"))).toBe(false);
+    expect(lines().filter((l) => l.includes("active > maxConcurrent 1"))).toHaveLength(1);
+  });
+});
+
 describe("cycleProject with maxInReview backpressure", () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 

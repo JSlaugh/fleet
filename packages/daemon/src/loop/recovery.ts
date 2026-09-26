@@ -1,5 +1,5 @@
 import type { TicketRecord } from "@fleet/shared";
-import { countRunning, key, track, type LoopContext } from "./context.ts";
+import { activeCount, countRunning, key, track, type LoopContext } from "./context.ts";
 import { log } from "../log.ts";
 import { isProjectPaused } from "./pause.ts";
 import { Journal } from "../store/journal.ts";
@@ -15,15 +15,17 @@ const STALL_NUDGE = [
  * Stalled tickets that should be auto-resumed for `project`: they have a session
  * to resume, are not already in flight, and have not been auto-resumed before
  * (a second stall is left for a human). Capped by the project's `maxConcurrent`,
- * counting tickets already running.
+ * counting tickets already running — minus any yielded on a long-pending
+ * approval, when the caller passes `activeRunning` (see `countActive`).
  */
 export function pickAutoResumable(
   records: TicketRecord[],
   project: { name: string; maxConcurrent: number },
   runningKeys: Iterable<string>,
+  activeRunning?: number,
 ): TicketRecord[] {
   const running = new Set(runningKeys);
-  const capacity = project.maxConcurrent - countRunning(running, project.name);
+  const capacity = project.maxConcurrent - (activeRunning ?? countRunning(running, project.name));
   if (capacity <= 0) return [];
   return records
     .filter(
@@ -71,7 +73,7 @@ export function flagStalled(ctx: LoopContext): void {
 export function recoverStalled(ctx: LoopContext): void {
   for (const project of ctx.config.projects) {
     if (isProjectPaused(ctx, project.name)) continue;
-    for (const record of pickAutoResumable(ctx.state.all(), project, ctx.running.keys())) {
+    for (const record of pickAutoResumable(ctx.state.all(), project, ctx.running.keys(), activeCount(ctx, project.name).active)) {
       const scope = key(record.project, record.issueNumber);
       if (ctx.dryRun) {
         log("loop", `[dry-run] would auto-resume stalled ${scope} from session ${record.sessionId}`);

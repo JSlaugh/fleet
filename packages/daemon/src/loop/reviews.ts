@@ -1,5 +1,5 @@
 import { FLEET_LABELS, type ProjectConfig, type TicketRecord } from "@fleet/shared";
-import { countRunning, key, track, type LoopContext } from "./context.ts";
+import { activeCount, key, track, type LoopContext } from "./context.ts";
 import {
   buildConflictPrompt,
   buildReviewFeedbackPrompt,
@@ -71,7 +71,7 @@ export async function addressReviews(
   const candidates = pickReviewCandidates(ctx.state.all(), project, openIssueNumbers, ctx.running.keys());
 
   for (const record of candidates) {
-    if (countRunning(ctx.running.keys(), project.name) >= project.maxConcurrent) return;
+    if (activeCount(ctx, project.name).active >= project.maxConcurrent) return;
     // Best-effort: several GitHub calls happen below before this candidate
     // could reach `track()`, so this can't be perfectly race-free the way the
     // no-further-awaits checks in `claim.ts`/`recovery.ts` are — but it stops

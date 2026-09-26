@@ -47,10 +47,16 @@ export function synthesizeDoneTickets(
 
 /** The dashboard board: this cycle's polled tickets joined to their live records, plus the Done column. */
 export function getBoard(ctx: LoopContext): BoardTicket[] {
-  const active = [...ctx.boardCache.values()].flat().map((t) => ({
-    ...t,
-    record: ctx.state.get(t.project, t.issueNumber),
-  }));
+  const awaiting = new Map<string, string>();
+  for (const a of ctx.approvals.list()) {
+    const scope = `${a.project}#${a.issueNumber}`;
+    const prior = awaiting.get(scope);
+    if (prior === undefined || a.createdAt < prior) awaiting.set(scope, a.createdAt);
+  }
+  const active = [...ctx.boardCache.values()].flat().map((t) => {
+    const since = awaiting.get(`${t.project}#${t.issueNumber}`);
+    return { ...t, record: ctx.state.get(t.project, t.issueNumber), ...(since ? { awaitingApprovalSince: since } : {}) };
+  });
   return [...active, ...synthesizeDoneTickets(ctx.history.all(), ctx.config.projects)];
 }
 
