@@ -3,64 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
+import { LAUNCHER_BOOTSTRAP } from "@fleet/mcp/stamp";
 import { makeProject } from "./test-support.ts";
-import { issueFormFiles, mergeMcpConfig, syncTemplates } from "./sync-templates.ts";
+import { issueFormFiles, syncTemplates } from "./sync-templates.ts";
 
-const FLEET_ENTRY = {
-  command: "pnpm",
-  args: ["--dir", "C:/Users/j/github/fleet", "--filter", "@fleet/mcp", "start"],
-  env: { FLEET_PROJECT: "example", FLEET_URL: "http://localhost:4400" },
-};
-
-describe("mergeMcpConfig", () => {
-  it("creates a fresh file with only the fleet entry when none exists", () => {
-    const result = mergeMcpConfig(undefined, FLEET_ENTRY);
-    expect(JSON.parse(result)).toEqual({ mcpServers: { fleet: FLEET_ENTRY } });
-  });
-
-  it("replaces only the fleet entry, preserving other servers and top-level keys", () => {
-    const existing = JSON.stringify({
-      mcpServers: {
-        other: { command: "node", args: ["other-server.js"] },
-        fleet: { command: "stale", args: [] },
-      },
-      someOtherTopLevelKey: true,
-    });
-    const result = mergeMcpConfig(existing, FLEET_ENTRY);
-    expect(JSON.parse(result)).toEqual({
-      mcpServers: {
-        other: { command: "node", args: ["other-server.js"] },
-        fleet: FLEET_ENTRY,
-      },
-      someOtherTopLevelKey: true,
-    });
-  });
-
-  it("tolerates a UTF-8 BOM-prefixed existing file", () => {
-    const bom = String.fromCharCode(0xfeff);
-    const existing = `${bom}${JSON.stringify({ mcpServers: { other: { command: "node" } } })}`;
-    const result = mergeMcpConfig(existing, FLEET_ENTRY);
-    expect(JSON.parse(result)).toEqual({
-      mcpServers: { other: { command: "node" }, fleet: FLEET_ENTRY },
-    });
-  });
-
-  it("throws a clear error on malformed existing JSON", () => {
-    expect(() => mergeMcpConfig("{ not valid json", FLEET_ENTRY)).toThrow(/not valid JSON/);
-  });
-
-  it("adds an mcpServers object when the existing file lacks one", () => {
-    const existing = JSON.stringify({ unrelated: "value" });
-    const result = mergeMcpConfig(existing, FLEET_ENTRY);
-    expect(JSON.parse(result)).toEqual({ unrelated: "value", mcpServers: { fleet: FLEET_ENTRY } });
-  });
-
-  it("is idempotent: merging the same entry twice produces the same result", () => {
-    const first = mergeMcpConfig(undefined, FLEET_ENTRY);
-    const second = mergeMcpConfig(first, FLEET_ENTRY);
-    expect(JSON.parse(second)).toEqual(JSON.parse(first));
-  });
-});
+const OPTS = { port: 4400 };
 
 describe("syncTemplates", () => {
   const repoDirs: string[] = [];
@@ -75,9 +22,20 @@ describe("syncTemplates", () => {
     const repoPath = mkdtempSync(join(tmpdir(), "fleet-sync-"));
     repoDirs.push(repoPath);
 
-    await syncTemplates([makeProject({ repoPath })]);
+    await syncTemplates([makeProject({ repoPath })], OPTS);
 
     expect(existsSync(join(repoPath, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(repoPath, ".agents"))).toBe(false);
+    const mcp = JSON.parse(readFileSync(join(repoPath, ".mcp.json"), "utf8")) as { mcpServers: { fleet: { args: string[]; env: Record<string, string> } } };
+    // Committed files name no path; this machine's paths live in the repo's gitignored config.
+    expect(mcp.mcpServers.fleet.env).toEqual({ FLEET_PROJECT: "alpha" });
+    expect(mcp.mcpServers.fleet.args).toEqual(["-e", LAUNCHER_BOOTSTRAP]);
+    expect(existsSync(join(repoPath, ".fleet-mcp", "launch.mjs"))).toBe(true);
+    const repoConfig = JSON.parse(readFileSync(join(repoPath, "fleet.config.json"), "utf8")) as { fleetDir: string; dashboardPort: number; projects: { name: string }[] };
+    expect(repoConfig.dashboardPort).toBe(4400);
+    expect(repoConfig.projects.map((p) => p.name)).toEqual(["alpha"]);
+    expect(existsSync(join(repoConfig.fleetDir, "packages", "mcp", "package.json"))).toBe(true);
+    expect(readFileSync(join(repoPath, ".gitignore"), "utf8")).toContain("fleet.config.json");
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
@@ -112,7 +70,7 @@ describe("syncTemplates", () => {
       ].join("\n"),
     );
 
-    await syncTemplates([makeProject({ repoPath })]);
+    await syncTemplates([makeProject({ repoPath })], OPTS);
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual([
@@ -158,7 +116,7 @@ describe("syncTemplates", () => {
         "        run: pnpm install",
       ].join("\n"),
     );
-    await syncTemplates([project]);
+    await syncTemplates([project], OPTS);
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual([
       "01-fleet-task.yml",
@@ -175,7 +133,7 @@ describe("syncTemplates", () => {
       fleetYamlPath,
       ["setup:", "  default:", "    - name: install", "      run: pnpm install", "  backend:", "    setup:", "      - name: install", "        run: pnpm install"].join("\n"),
     );
-    await syncTemplates([project]);
+    await syncTemplates([project], OPTS);
 
     expect(readdirSync(issueTemplateDir).sort()).toEqual([
       "01-fleet-task.yml",
@@ -190,7 +148,7 @@ describe("syncTemplates", () => {
     repoDirs.push(repoPath);
     writeFileSync(join(repoPath, "fleet.yaml"), "setup:\n  - name: install\n    run: pnpm install\n");
 
-    await syncTemplates([makeProject({ repoPath })]);
+    await syncTemplates([makeProject({ repoPath })], OPTS);
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
@@ -201,7 +159,7 @@ describe("syncTemplates", () => {
     repoDirs.push(repoPath);
     writeFileSync(join(repoPath, "fleet.yaml"), "setup: not-a-list-or-map\n");
 
-    await expect(syncTemplates([makeProject({ repoPath })])).resolves.toBeUndefined();
+    await expect(syncTemplates([makeProject({ repoPath })], OPTS)).resolves.toBeUndefined();
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);
@@ -212,18 +170,18 @@ describe("syncTemplates", () => {
     repoDirs.push(repoPath);
     const project = makeProject({ repoPath });
 
-    await syncTemplates([project]);
+    await syncTemplates([project], OPTS);
     const destPath = join(repoPath, ".github", "ISSUE_TEMPLATE", "01-fleet-task.yml");
     const first = readFileSync(destPath, "utf8");
 
-    await syncTemplates([project]);
+    await syncTemplates([project], OPTS);
     const second = readFileSync(destPath, "utf8");
 
     expect(second).toEqual(first);
   });
 
   it("skips a project whose repoPath does not exist", async () => {
-    await expect(syncTemplates([makeProject({ repoPath: join(tmpdir(), "fleet-sync-missing-project") })])).resolves.toBeUndefined();
+    await expect(syncTemplates([makeProject({ repoPath: join(tmpdir(), "fleet-sync-missing-project") })], OPTS)).resolves.toBeUndefined();
   });
 });
 

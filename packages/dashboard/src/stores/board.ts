@@ -4,6 +4,7 @@ import type { BoardTicket, BudgetStatus, WorkHoursReserveStatus } from "@fleet/s
 import {
   connectBoardSocket,
   fetchBoard,
+  markTicketReady,
   restartDaemon,
   setDaemonPaused,
   setProjectDormant,
@@ -86,6 +87,15 @@ export const useBoardStore = defineStore("board", () => {
     }
   }
 
+  async function markReady(ticket: BoardTicket) {
+    try {
+      await markTicketReady(ticket.project, ticket.issueNumber);
+      await poll.refresh();
+    } catch (err) {
+      toastActionError(`Failed to release ${ticket.project}#${ticket.issueNumber} to ready`, err);
+    }
+  }
+
   async function togglePaused() {
     pauseToggling.value = true;
     try {
@@ -153,6 +163,7 @@ export const useBoardStore = defineStore("board", () => {
     start,
     stop,
     setPriority,
+    markReady,
     togglePaused,
     restartDaemonNow,
     toggleProjectPaused,

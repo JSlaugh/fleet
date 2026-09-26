@@ -3,6 +3,7 @@ import {
   FLEET_LABELS,
   LIGHT_LABEL,
   PLAN_LABEL,
+  parseDependsOn,
   type BoardTicket,
   type ProjectConfig,
   type TicketRecord,
@@ -27,9 +28,9 @@ import {
   listFleetIssues,
   listIssueStates,
   parseChildTaskList,
-  parseDependsOn,
   parsePartOf,
   removeAssignee,
+  removeLabel,
   swapLabel,
   toBoardTicket,
   type ReadyIssue,
@@ -410,6 +411,13 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
 
   try {
     await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.inProgress);
+    // A backlog ticket released by hand on GitHub (adding `fleet:ready` without
+    // removing `fleet:backlog`) would otherwise carry the stale label forever.
+    if (issue.labels.includes(FLEET_LABELS.backlog)) {
+      await removeLabel(project, issue.number, FLEET_LABELS.backlog).catch((err) =>
+        logError("loop", `${scope}: could not remove stale ${FLEET_LABELS.backlog}`, err),
+      );
+    }
 
     const myLogin = await getAuthenticatedLogin();
     await addAssignee(project, issue.number, myLogin);

@@ -2,6 +2,7 @@ import {
   ELEVATE_LABEL,
   FLEET_LABELS,
   LIGHT_LABEL,
+  bodyWithDependsOn,
   type PlanResult,
   type ProjectConfig,
   type TicketRecord,
@@ -9,7 +10,6 @@ import {
 import { key, type LoopContext } from "./context.ts";
 import {
   bodyWithChildTaskList,
-  bodyWithDependsOn,
   bodyWithPartOf,
   createIssue,
   createPullRequest,
@@ -242,7 +242,9 @@ export async function finishPlanned(
     const labels = [
       ...(ticket.priority ? [ticket.priority] : []),
       ...(tierLabel ? [tierLabel] : []),
-      ...(autoReady ? [FLEET_LABELS.ready] : []),
+      // Backlog rather than unlabeled: the board only shows `fleet:*` issues, so
+      // an unlabeled child would be invisible until someone found it on GitHub.
+      autoReady ? FLEET_LABELS.ready : FLEET_LABELS.backlog,
     ];
     const { valid, dropped } = resolveDependsOnIndex(index, ticket.dependsOnIndex, result.tickets.length);
     if (dropped.length > 0) {
@@ -283,7 +285,7 @@ export async function finishPlanned(
         ? `Child tickets:\n${created.map((c) => `- #${c.number} ${c.title} — ${c.url}`).join("\n")}`
         : "No child tickets were proposed.",
       droppedNotes.length > 0 ? `Dropped invalid dependencies:\n${droppedNotes.join("\n")}` : "",
-      autoReady ? "" : "Label a child `fleet:ready` to start it.",
+      autoReady ? "" : "Children are in the backlog. **Accept plan** in the dashboard releases them all to `fleet:ready` and closes this epic; or label one `fleet:ready` to start it individually.",
     ].filter(Boolean).join("\n\n"),
     update: { lastSummary: result.summary },
     logLine: `planned ${created.length} child ticket(s)`,

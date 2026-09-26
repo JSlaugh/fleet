@@ -14,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [];
   setPriority: [priority: string | null];
+  markReady: [];
 }>();
 
 function onPriorityChange(event: Event) {
@@ -24,6 +25,7 @@ function onPriorityChange(event: Event) {
 const priorityShort = (label: string) => label.replace("fleet:", "");
 
 const isDone = computed(() => props.ticket.status === "done");
+const isBacklog = computed(() => props.ticket.status === "backlog");
 
 const closedRecord = computed(() => (isDone.value ? (props.ticket.record as ClosedTicketRecord | undefined) : undefined));
 
@@ -48,6 +50,15 @@ const blurb = computed(() => {
       <h3 class="min-w-0 flex-1 text-sm font-medium text-card-foreground">
         {{ ticket.title }}
       </h3>
+      <button
+        v-if="isBacklog"
+        type="button"
+        class="rounded border border-success/40 px-1.5 py-0.5 text-xs font-medium text-success hover:bg-success/10"
+        title="Release this ticket: fleet:backlog → fleet:ready, so the next poll cycle can claim it"
+        @click.stop="emit('markReady')"
+      >
+        Ready
+      </button>
       <select
         v-if="!isDone"
         :aria-label="`Priority for ${ticket.project} issue ${ticket.issueNumber}`"

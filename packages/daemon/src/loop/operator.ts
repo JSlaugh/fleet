@@ -1,6 +1,17 @@
 import { FLEET_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, track, type LoopContext } from "./context.ts";
-import { clearAssignees, closeIssue, closePullRequest, markReady, upsertStatusComment } from "../github/github.ts";
+import {
+  clearAssignees,
+  closeIssue,
+  closePullRequest,
+  findChildIssues,
+  getIssue,
+  getIssueLabels,
+  listIssueStates,
+  markReady,
+  parseChildTaskList,
+  upsertStatusComment,
+} from "../github/github.ts";
 import { deleteRemoteBranch } from "../github/worktree.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
@@ -162,29 +173,89 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
 }
 
 /**
- * Closes a reviewed plan epic's issue — the completion signal `cleanupFinished`
- * (`board.ts`) needs to retire a PR-less plan record on the next poll cycle.
- * Validation (must be a plan, must be in review) is the route's job, since it
- * maps each failure to its own status code; this only guards the race the
- * route can't see — the ticket moving mid-request.
+ * Accepting a plan means the *planning* is done: every still-open child in the
+ * epic's `## Children` task list is released from `fleet:backlog` to
+ * `fleet:ready`, and the epic issue itself is closed. The epic doesn't track
+ * its children's delivery — that's what the children's own PRs are for — so
+ * nothing waits on them. A child already carrying another fleet state label
+ * (someone released or started it by hand) is left alone, since `markReady`
+ * would otherwise yank an in-progress child back to ready. Children with an
+ * unsatisfied `Depends-on` sit in Ready until the claim loop's dependency gate
+ * lets them through. A child that fails to relabel is logged and named in the
+ * status comment, and the epic is then left open (re-running Accept plan is
+ * idempotent) rather than closed with children still stranded in the backlog.
+ * Children are found from the `## Children` task list, falling back to the
+ * `Part-of: #<epic>` search when the list is missing or was edited away, and
+ * only still-open children are touched. An epic that can't be read at all is
+ * refused outright, never closed blind. Closing the epic is the completion signal
+ * `cleanupFinished` (`board.ts`) needs to retire the PR-less plan record next
+ * cycle. Validation (must be a plan, must be in review) is the route's job,
+ * since it maps each failure to its own status code; this only guards the race
+ * the route can't see — the ticket moving mid-request.
  */
-export async function acceptPlan(ctx: LoopContext, projectName: string, issueNumber: number): Promise<void> {
+export async function acceptPlan(
+  ctx: LoopContext,
+  projectName: string,
+  issueNumber: number,
+): Promise<AcceptPlanOutcome> {
   const scope = key(projectName, issueNumber);
   const project = ctx.getProject(projectName);
   if (!project) throw new Error(`unknown project ${projectName}`);
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
 
+  const live = await getIssue(project, issueNumber);
+  if (!live) throw new Error(`could not read ${scope} from GitHub — the epic was left open; try again`);
+  let childNumbers = parseChildTaskList(live.body).map((c) => c.number);
+  if (childNumbers.length === 0) childNumbers = await findChildIssues(project, issueNumber);
+  // The task-list checkboxes are never ticked by fleet, so issue state — not
+  // `checked` — is what says a child is still worth releasing.
+  const { open } = await listIssueStates(project);
+  const children = childNumbers.filter((n) => open.has(n));
+
+  const released: number[] = [];
+  const failed: number[] = [];
+  for (const child of children) {
+    try {
+      const labels = await getIssueLabels(project, child);
+      if (STATE_LABELS_OTHER_THAN_BACKLOG.some((l) => labels.includes(l))) {
+        log("loop", `${scope}: child #${child} already carries a fleet state label — not relabeling`);
+        continue;
+      }
+      await markReady(project, child);
+      released.push(child);
+    } catch (err) {
+      failed.push(child);
+      logError("loop", `${scope}: could not release child #${child} to fleet:ready`, err);
+    }
+  }
+  const closed = failed.length === 0;
+
   const record = ctx.state.get(projectName, issueNumber);
-  const comment = [record?.lastSummary, "**Plan accepted by operator.**"].filter(Boolean).join("\n\n");
+  const comment = [
+    record?.lastSummary,
+    closed ? "**Plan accepted by operator.**" : "**Plan acceptance incomplete — epic left open.**",
+    released.length > 0 ? `Released to \`fleet:ready\`: ${released.map((n) => `#${n}`).join(", ")}` : "",
+    failed.length > 0 ? `Could not relabel: ${failed.map((n) => `#${n}`).join(", ")} — Accept plan again to retry, or mark them \`fleet:ready\` by hand.` : "",
+  ].filter(Boolean).join("\n\n");
   try {
     await upsertStatusComment(project, issueNumber, comment);
   } catch (err) {
     logError("loop", `${scope}: could not post the plan-accepted status comment`, err);
   }
-  await closeIssue(project, issueNumber);
+  if (closed) await closeIssue(project, issueNumber);
   ctx.emitBoard();
-  log("loop", `${scope}: plan accepted by operator — issue closed`);
+  log("loop", `${scope}: plan accept — released ${released.length} child(ren), ${closed ? "issue closed" : `${failed.length} failed, epic left open`}`);
+  return { released, failed, closed };
 }
+
+export interface AcceptPlanOutcome {
+  released: number[];
+  failed: number[];
+  /** False when any child failed to relabel — the epic stays open so Accept plan can be retried. */
+  closed: boolean;
+}
+
+const STATE_LABELS_OTHER_THAN_BACKLOG = [FLEET_LABELS.ready, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review];
 
 /**
  * Drop everything that would make the next cycle resume rather than restart:

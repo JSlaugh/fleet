@@ -264,6 +264,38 @@ describe("finishPlanned — dependsOnIndex translation", () => {
     expect(calls[1]?.[1]?.body).toBe("use it\n\nPart-of: #7\n\nDepends-on: #101");
   });
 
+  it("files children into fleet:backlog by default so they show on the board without being claimable", async () => {
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [{ title: "child", body: "body", tier: "light" }],
+    };
+
+    await finishPlanned(ctx, project, planIssue, result);
+
+    expect(vi.mocked(github.createIssue).mock.calls[0]?.[1]?.labels).toEqual(["fleet:light", "fleet:backlog"]);
+    expect(github.upsertStatusComment).toHaveBeenCalledWith(project, 7, expect.stringContaining("Accept plan"));
+  });
+
+  it("files children straight into fleet:ready when the project sets planChildrenReady", async () => {
+    const readyProject = makeProject({ planChildrenReady: true });
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [readyProject] }) });
+    ctx.state.upsert(record());
+    const result: PlanResult = {
+      status: "completed",
+      summary: "epic summary",
+      confidence: "high",
+      tickets: [{ title: "child", body: "body" }],
+    };
+
+    await finishPlanned(ctx, readyProject, planIssue, result);
+
+    expect(vi.mocked(github.createIssue).mock.calls[0]?.[1]?.labels).toEqual(["fleet:ready"]);
+  });
+
   it("drops an out-of-range/self/forward dependsOnIndex, files the rest normally, and notes it in the status comment", async () => {
     const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
     ctx.state.upsert(record());
