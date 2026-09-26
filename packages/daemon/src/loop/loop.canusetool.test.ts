@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { makeCtx as makeLoopCtx, makeProject } from "../test-support.ts";
+import { makeCtx as makeLoopCtx, makeProject, makeRecord } from "../test-support.ts";
 import { Journal, readJournalTail } from "../store/journal.ts";
 import { makeCanUseTool } from "./runner.ts";
 
@@ -69,5 +69,76 @@ describe("makeCanUseTool outside --once mode", () => {
     const [entry] = readJournalTail(dataDirPath, project.name, 7, 10);
     expect(entry).toMatchObject({ type: "fleet", event: "approval-decided", toolName: "Bash", outcome: "allowed" });
     expect(typeof entry?.waitMs).toBe("number");
+  });
+
+  it("bumps lastActivityNote to say it's awaiting approval, then clears it once the approval settles", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    ctx.state.upsert(makeRecord({ issueNumber: 7, status: "running", lastActivityAt: new Date(Date.now() - 60_000).toISOString() }));
+    const journal = new Journal(ctx.dataDirPath, project.name, 7);
+    const canUseTool = makeCanUseTool(ctx, project, 7, journal);
+    let resolveApproval!: (outcome: { allowed: boolean }) => void;
+    vi.mocked(ctx.approvals.request).mockReturnValue(new Promise((resolve) => (resolveApproval = resolve)));
+
+    const pending = canUseTool("Bash", { command: "ls" }, options);
+    await Promise.resolve(); // let the pre-request state update run
+    expect(ctx.state.get(project.name, 7)?.lastActivityNote).toBe("awaiting approval: Bash");
+
+    resolveApproval({ allowed: true });
+    await pending;
+    expect(ctx.state.get(project.name, 7)?.lastActivityNote).toBeUndefined();
+  });
+
+  it("keeps the awaiting-approval note while a parallel approval for the same ticket is still parked", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    ctx.state.upsert(makeRecord({ issueNumber: 7, status: "running" }));
+    const canUseTool = makeCanUseTool(ctx, project, 7, new Journal(ctx.dataDirPath, project.name, 7));
+    vi.mocked(ctx.approvals.request).mockResolvedValue({ allowed: true });
+    vi.mocked(ctx.approvals.list).mockReturnValue([
+      { id: "b", project: project.name, issueNumber: 7, toolName: "WebFetch", kind: "permission", input: {}, createdAt: new Date().toISOString() },
+    ]);
+
+    await canUseTool("Bash", { command: "ls" }, options);
+
+    expect(ctx.state.get(project.name, 7)?.lastActivityNote).toBe("awaiting approval: WebFetch");
+  });
+
+  it("pauses the turn clock before the approval settles, not after", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    const turnClock = { pauseTurnClock: vi.fn(), resumeTurnClock: vi.fn() };
+    const canUseTool = makeCanUseTool(ctx, project, 7, new Journal(ctx.dataDirPath, project.name, 7), () => turnClock);
+    let resolveApproval!: (outcome: { allowed: boolean }) => void;
+    vi.mocked(ctx.approvals.request).mockReturnValue(new Promise((resolve) => (resolveApproval = resolve)));
+
+    const pending = canUseTool("Bash", { command: "ls" }, options);
+    await Promise.resolve();
+    expect(turnClock.pauseTurnClock).toHaveBeenCalledOnce();
+    expect(turnClock.resumeTurnClock).not.toHaveBeenCalled();
+
+    resolveApproval({ allowed: true });
+    await pending;
+    expect(turnClock.resumeTurnClock).toHaveBeenCalledOnce();
+  });
+
+  it("pauses the session's turn clock for the approval wait and resumes it once settled, on every outcome", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    const { approvals } = ctx;
+    const journal = new Journal(ctx.dataDirPath, project.name, 7);
+    const turnClock = { pauseTurnClock: vi.fn(), resumeTurnClock: vi.fn() };
+    const canUseTool = makeCanUseTool(ctx, project, 7, journal, () => turnClock);
+
+    vi.mocked(approvals.request).mockResolvedValueOnce({ allowed: true });
+    await canUseTool("Bash", { command: "ls" }, options);
+    expect(turnClock.pauseTurnClock).toHaveBeenCalledOnce();
+    expect(turnClock.resumeTurnClock).toHaveBeenCalledOnce();
+
+    vi.mocked(approvals.request).mockResolvedValueOnce({ allowed: false, reason: "timed out" });
+    await canUseTool("Bash", { command: "ls" }, options);
+    expect(turnClock.pauseTurnClock).toHaveBeenCalledTimes(2);
+    expect(turnClock.resumeTurnClock).toHaveBeenCalledTimes(2);
+
+    vi.mocked(approvals.request).mockResolvedValueOnce({ allowed: false, reason: "session aborted" });
+    await canUseTool("Bash", { command: "ls" }, options);
+    expect(turnClock.pauseTurnClock).toHaveBeenCalledTimes(3);
+    expect(turnClock.resumeTurnClock).toHaveBeenCalledTimes(3);
   });
 });

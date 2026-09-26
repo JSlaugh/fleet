@@ -14,6 +14,7 @@ import {
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
 import { MessageQueue } from "./queue.ts";
+import { TurnClock } from "./turn-clock.ts";
 
 export type SessionKind = "code" | "plan";
 
@@ -396,6 +397,12 @@ export class WorkerSession {
    */
   private readonly pendingSends: string[] = [];
   private readonly stderrCapture = new StderrCapture();
+  /**
+   * Backs the turn timeout in `nextResult` — paused for the duration of a
+   * parked tool approval (see `makeCanUseTool` in loop/runner.ts) so time
+   * spent waiting on a human doesn't count against `ticketTimeoutMinutes`.
+   */
+  private readonly turnClock = new TurnClock();
   sessionId?: string;
   costUsd = 0;
   /** `message.num_turns` off the most recent `result` message — 0 until the session ever produces one (e.g. a crash before the first turn completes). */
@@ -474,8 +481,18 @@ export class WorkerSession {
     });
   }
 
+  /** Pauses the turn timeout — held for the duration of one parked tool approval. Reference-counted; see `TurnClock`. */
+  pauseTurnClock(): void {
+    this.turnClock.pause();
+  }
+
+  /** Releases one `pauseTurnClock()`; the timeout only resumes once every outstanding pause is released. */
+  resumeTurnClock(): void {
+    this.turnClock.resume();
+  }
+
   async nextResult(timeoutMs: number): Promise<TurnResult> {
-    const timer = setTimeout(() => this.abortController.abort(), timeoutMs);
+    this.turnClock.start(timeoutMs, () => this.abortController.abort());
     try {
       for (;;) {
         const { value: message, done } = await this.iterator.next();
@@ -532,7 +549,7 @@ export class WorkerSession {
       }
       throw err;
     } finally {
-      clearTimeout(timer);
+      this.turnClock.stop();
     }
   }
 

@@ -1,5 +1,5 @@
 import type { TicketRecord } from "@fleet/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeCtx, makeRecord } from "../test-support.ts";
 import { readJournalTail } from "../store/journal.ts";
 import { flagStalled, pickAutoResumable } from "./recovery.ts";
@@ -83,5 +83,32 @@ describe("flagStalled", () => {
 
     expect(ctx.state.get("alpha", 1)?.status).toBe("running");
     expect(readJournalTail(ctx.dataDirPath, "alpha", 1, 10)).toEqual([]);
+  });
+
+  it("never flags a ticket with a pending approval, no matter how stale its last activity", () => {
+    const ctx = makeCtx();
+    const stale = new Date(Date.now() - 60 * 60_000).toISOString();
+    ctx.state.upsert(record(1, { status: "running", lastActivityAt: stale }));
+    vi.mocked(ctx.approvals.list).mockReturnValue([
+      { id: "apr-1", project: "alpha", issueNumber: 1, toolName: "Bash", kind: "permission", input: {}, createdAt: stale },
+    ]);
+
+    flagStalled(ctx);
+
+    expect(ctx.state.get("alpha", 1)?.status).toBe("running");
+    expect(readJournalTail(ctx.dataDirPath, "alpha", 1, 10)).toEqual([]);
+  });
+
+  it("still flags a stale ticket whose pending approval belongs to a different ticket", () => {
+    const ctx = makeCtx();
+    const stale = new Date(Date.now() - 60 * 60_000).toISOString();
+    ctx.state.upsert(record(1, { status: "running", lastActivityAt: stale }));
+    vi.mocked(ctx.approvals.list).mockReturnValue([
+      { id: "apr-1", project: "alpha", issueNumber: 2, toolName: "Bash", kind: "permission", input: {}, createdAt: stale },
+    ]);
+
+    flagStalled(ctx);
+
+    expect(ctx.state.get("alpha", 1)?.status).toBe("stalled");
   });
 });
