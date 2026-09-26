@@ -88,6 +88,37 @@ describe("makeCanUseTool outside --once mode", () => {
     expect(ctx.state.get(project.name, 7)?.lastActivityNote).toBeUndefined();
   });
 
+  it("keeps the awaiting-approval note while a parallel approval for the same ticket is still parked", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    ctx.state.upsert(makeRecord({ issueNumber: 7, status: "running" }));
+    const canUseTool = makeCanUseTool(ctx, project, 7, new Journal(ctx.dataDirPath, project.name, 7));
+    vi.mocked(ctx.approvals.request).mockResolvedValue({ allowed: true });
+    vi.mocked(ctx.approvals.list).mockReturnValue([
+      { id: "b", project: project.name, issueNumber: 7, toolName: "WebFetch", kind: "permission", input: {}, createdAt: new Date().toISOString() },
+    ]);
+
+    await canUseTool("Bash", { command: "ls" }, options);
+
+    expect(ctx.state.get(project.name, 7)?.lastActivityNote).toBe("awaiting approval: WebFetch");
+  });
+
+  it("pauses the turn clock before the approval settles, not after", async () => {
+    const ctx = makeLoopCtx({ once: false });
+    const turnClock = { pauseTurnClock: vi.fn(), resumeTurnClock: vi.fn() };
+    const canUseTool = makeCanUseTool(ctx, project, 7, new Journal(ctx.dataDirPath, project.name, 7), () => turnClock);
+    let resolveApproval!: (outcome: { allowed: boolean }) => void;
+    vi.mocked(ctx.approvals.request).mockReturnValue(new Promise((resolve) => (resolveApproval = resolve)));
+
+    const pending = canUseTool("Bash", { command: "ls" }, options);
+    await Promise.resolve();
+    expect(turnClock.pauseTurnClock).toHaveBeenCalledOnce();
+    expect(turnClock.resumeTurnClock).not.toHaveBeenCalled();
+
+    resolveApproval({ allowed: true });
+    await pending;
+    expect(turnClock.resumeTurnClock).toHaveBeenCalledOnce();
+  });
+
   it("pauses the session's turn clock for the approval wait and resumes it once settled, on every outcome", async () => {
     const ctx = makeLoopCtx({ once: false });
     const { approvals } = ctx;

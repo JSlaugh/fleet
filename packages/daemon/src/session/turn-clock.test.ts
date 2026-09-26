@@ -88,6 +88,41 @@ describe("TurnClock", () => {
     expect(onExpire).toHaveBeenCalledOnce();
   });
 
+  it("a pause taken before start holds: the full budget only starts counting at the last resume", () => {
+    const clock = new TurnClock();
+    const onExpire = vi.fn();
+    clock.pause();
+    clock.start(1000, onExpire);
+
+    vi.advanceTimersByTime(60_000);
+    expect(onExpire).not.toHaveBeenCalled();
+    clock.resume();
+    vi.advanceTimersByTime(999);
+    expect(onExpire).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onExpire).toHaveBeenCalledOnce();
+  });
+
+  it("an approval spanning a turn boundary keeps the next turn frozen, and its resume releases only its own pause", () => {
+    const clock = new TurnClock();
+    const turn1 = vi.fn();
+    const turn2 = vi.fn();
+    clock.start(1000, turn1);
+    clock.pause(); // approval A, requested during turn 1
+    clock.stop(); // turn 1 ends while A is still pending
+
+    clock.start(1000, turn2);
+    clock.pause(); // approval B, in turn 2
+    clock.resume(); // A settles — B still pending, so the clock must stay frozen
+    vi.advanceTimersByTime(60_000);
+    expect(turn2).not.toHaveBeenCalled();
+
+    clock.resume(); // B settles
+    vi.advanceTimersByTime(1000);
+    expect(turn2).toHaveBeenCalledOnce();
+    expect(turn1).not.toHaveBeenCalled();
+  });
+
   it("start replaces a still-running countdown rather than stacking timers", () => {
     const clock = new TurnClock();
     const first = vi.fn();

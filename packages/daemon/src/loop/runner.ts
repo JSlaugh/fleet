@@ -131,9 +131,11 @@ export function makeCanUseTool(
       };
     } finally {
       getSession?.()?.resumeTurnClock();
+      // A parallel approval for this ticket may still be parked: keep the note naming it.
+      const stillWaiting = ctx.approvals.list().find((a) => a.project === project.name && a.issueNumber === issueNumber);
       ctx.state.update(project.name, issueNumber, {
         lastActivityAt: new Date().toISOString(),
-        lastActivityNote: undefined,
+        lastActivityNote: stillWaiting ? `awaiting approval: ${stillWaiting.toolName}` : undefined,
       });
       ctx.emitBoard();
     }
