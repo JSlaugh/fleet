@@ -135,4 +135,77 @@ describe("TurnClock", () => {
     expect(first).not.toHaveBeenCalled();
     expect(second).toHaveBeenCalledOnce();
   });
+
+  describe("per-turn pause cap", () => {
+    it("once a turn has been frozen for maxPausedMs, the countdown runs again under the still-outstanding pause", () => {
+      const clock = new TurnClock();
+      const onExpire = vi.fn();
+      clock.start(1000, onExpire, 5_000);
+      vi.advanceTimersByTime(400);
+      clock.pause(); // 600ms of budget left, frozen
+
+      vi.advanceTimersByTime(5_000); // allowance used up — countdown resumes
+      vi.advanceTimersByTime(599);
+      expect(onExpire).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onExpire).toHaveBeenCalledOnce();
+    });
+
+    it("sums every pause in the turn against one allowance", () => {
+      const clock = new TurnClock();
+      const onExpire = vi.fn();
+      clock.start(1000, onExpire, 5_000);
+      clock.pause();
+      vi.advanceTimersByTime(3_000);
+      clock.resume(); // 3s of the 5s allowance spent, full 1000ms budget left
+      clock.pause();
+      vi.advanceTimersByTime(2_000); // allowance exhausted here
+      vi.advanceTimersByTime(999);
+      expect(onExpire).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(onExpire).toHaveBeenCalledOnce();
+    });
+
+    it("gives each turn a fresh allowance", () => {
+      const clock = new TurnClock();
+      clock.start(1000, vi.fn(), 5_000);
+      clock.pause();
+      vi.advanceTimersByTime(4_000);
+      clock.resume();
+      clock.stop();
+
+      const turn2 = vi.fn();
+      clock.start(1000, turn2, 5_000);
+      clock.pause();
+      vi.advanceTimersByTime(4_999);
+      expect(turn2).not.toHaveBeenCalled();
+      clock.resume();
+      vi.advanceTimersByTime(1000);
+      expect(turn2).toHaveBeenCalledOnce();
+    });
+
+    it("a cap of 0 means approval waits always count", () => {
+      const clock = new TurnClock();
+      const onExpire = vi.fn();
+      clock.start(1000, onExpire, 0);
+      clock.pause();
+      vi.advanceTimersByTime(1000);
+      expect(onExpire).toHaveBeenCalledOnce();
+    });
+
+    it("a pause carried across a turn boundary counts against the new turn's allowance from its start", () => {
+      const clock = new TurnClock();
+      clock.start(1000, vi.fn(), 5_000);
+      clock.pause();
+      clock.stop();
+      vi.advanceTimersByTime(60_000); // between turns: no allowance being spent
+
+      const turn2 = vi.fn();
+      clock.start(1000, turn2, 5_000);
+      vi.advanceTimersByTime(5_000 + 999);
+      expect(turn2).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(turn2).toHaveBeenCalledOnce();
+    });
+  });
 });

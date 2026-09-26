@@ -34,6 +34,32 @@ const EVENT_TITLES: Record<NotificationEvent, string> = {
 /** Hard cap on the webhook request so an unresponsive (not just erroring) Discord host can never stall the awaiting ticket path. */
 const WEBHOOK_TIMEOUT_MS = 5_000;
 
+/**
+ * One promise chain per webhook URL: posts to the same webhook go out one at a
+ * time, in emit order. Since the event bus fires listeners without awaiting
+ * them, a burst (e.g. several stale claims released in one cycle) would
+ * otherwise hit Discord in parallel and trip its per-webhook rate limit —
+ * dropping messages — and could arrive out of order. Each post is still
+ * bounded by `WEBHOOK_TIMEOUT_MS`, so one stuck request delays the queue by at
+ * most that long.
+ */
+const webhookQueues = new Map<string, Promise<void>>();
+
+/**
+ * Runs `send` after every earlier post to `url` has settled; resolves once this
+ * one has. Never rejects. With nothing queued it starts immediately (same tick),
+ * so an unqueued post behaves exactly like a direct call.
+ */
+export function postSerially(url: string, send: () => Promise<void>): Promise<void> {
+  const previous = webhookQueues.get(url);
+  const next = (previous ? previous.then(send) : send()).catch(() => {});
+  webhookQueues.set(url, next);
+  void next.finally(() => {
+    if (webhookQueues.get(url) === next) webhookQueues.delete(url);
+  });
+  return next;
+}
+
 /** Whether `event` should be posted under `config` — unset `events` (or no config at all) means every event fires, resp. none does. */
 export function shouldNotify(config: FleetConfig["notifications"], event: NotificationEvent): boolean {
   if (!config) return false;
@@ -88,19 +114,22 @@ export async function notify(
   const config = resolveNotifications(ctx, project);
   if (!shouldNotify(config, event)) return;
   const scope = scopeLabel(project, detail);
-  try {
-    const res = await fetch(config!.discordUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: buildNotificationMessage(event, project, detail) }),
-      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      logError("notify", `discord webhook returned ${res.status} for ${event} on ${scope}`);
+  const url = config!.discordUrl;
+  await postSerially(url, async () => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: buildNotificationMessage(event, project, detail) }),
+        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        logError("notify", `discord webhook returned ${res.status} for ${event} on ${scope}`);
+      }
+    } catch (err) {
+      logError("notify", `discord webhook failed for ${event} on ${scope}`, err);
     }
-  } catch (err) {
-    logError("notify", `discord webhook failed for ${event} on ${scope}`, err);
-  }
+  });
 }
 
 /** The compact Discord message body for a daily digest — pure so it's cheaply testable without a network mock. */
@@ -148,17 +177,19 @@ export async function postDigest(ctx: NotifyContext, digest: DigestResponse): Pr
   if (ctx.dryRun || ctx.once) return;
   const url = ctx.config.notifications?.discordUrl;
   if (!url) return;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: buildDigestMessage(digest) }),
-      signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      logError("notify", `discord webhook returned ${res.status} for the daily digest`);
+  await postSerially(url, async () => {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: buildDigestMessage(digest) }),
+        signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        logError("notify", `discord webhook returned ${res.status} for the daily digest`);
+      }
+    } catch (err) {
+      logError("notify", `discord webhook failed for the daily digest`, err);
     }
-  } catch (err) {
-    logError("notify", `discord webhook failed for the daily digest`, err);
-  }
+  });
 }

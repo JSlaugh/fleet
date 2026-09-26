@@ -1,7 +1,7 @@
 import type { DigestResponse, NotificationsConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeProject } from "./test-support.ts";
-import { buildDigestMessage, buildNotificationMessage, issueUrl, notify, postDigest, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
+import { buildDigestMessage, buildNotificationMessage, issueUrl, notify, postDigest, postSerially, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
 
 const project = makeProject();
 
@@ -300,3 +300,59 @@ describe("postDigest", () => {
     errSpy.mockRestore();
   });
 });
+
+describe("postSerially", () => {
+  it("sends posts to one webhook one at a time, in call order", async () => {
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const first = postSerially("https://hook/a", () => new Promise<void>((resolve) => {
+      order.push("first:start");
+      releaseFirst = () => { order.push("first:end"); resolve(); };
+    }));
+    const second = postSerially("https://hook/a", async () => { order.push("second"); });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(order).toEqual(["first:start"]);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(order).toEqual(["first:start", "first:end", "second"]);
+  });
+
+  it("keeps different webhooks independent", async () => {
+    let releaseA!: () => void;
+    const a = postSerially("https://hook/x", () => new Promise<void>((resolve) => (releaseA = resolve)));
+    const sentB = vi.fn(async () => {});
+    await postSerially("https://hook/y", sentB);
+    expect(sentB).toHaveBeenCalledOnce();
+    releaseA();
+    await a;
+  });
+
+  it("a failed post doesn't stall the queue behind it", async () => {
+    const failing = postSerially("https://hook/z", async () => { throw new Error("boom"); });
+    const next = vi.fn(async () => {});
+    await expect(failing).resolves.toBeUndefined();
+    await postSerially("https://hook/z", next);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("notify serializes a burst: the second post only starts after the first finishes", async () => {
+    let active = 0;
+    let maxActive = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return new Response(null, { status: 204 });
+    }));
+    const ctx = { config: { notifications: { discordUrl: "https://hook/burst" } }, dryRun: false, once: false } as never;
+    const project = makeProject();
+    await Promise.all([1, 2, 3].map((i) => notify(ctx, "stale-released", project, { issueNumber: i, title: "t", detail: "d", url: "u" })));
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(maxActive).toBe(1);
+    vi.unstubAllGlobals();
+  });
+});
+

@@ -51,6 +51,7 @@ export function makeFleetConfig(patch: Partial<FleetConfig> = {}): FleetConfig {
     stalledAfterMinutes: 10,
     ticketTimeoutMinutes: 30,
     approvalTimeoutMinutes: 10,
+    approvalPauseCapMinutes: 120,
     replyWaitMinutes: 60,
     limitResumeSlackMinutes: 5,
     limitDefaultBackoffMinutes: 300,
