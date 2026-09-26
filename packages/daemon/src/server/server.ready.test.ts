@@ -65,6 +65,16 @@ describe("POST /api/tickets/:project/:issue/ready", () => {
     expect(github.markReady).not.toHaveBeenCalled();
   });
 
+  it("returns a JSON error when the relabel fails", async () => {
+    vi.mocked(github.markReady).mockRejectedValueOnce(new Error("gh: rate limited"));
+    const { app } = makeApp([boardTicket()]);
+
+    const res = await post(app, "/api/tickets/alpha/41/ready");
+
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toMatch(/rate limited/);
+  });
+
   it("404s on a ticket the board does not show", async () => {
     const { app } = makeApp([]);
     const res = await post(app, "/api/tickets/alpha/41/ready");

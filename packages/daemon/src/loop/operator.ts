@@ -171,13 +171,6 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
 }
 
 /**
- * Closes a reviewed plan epic's issue — the completion signal `cleanupFinished`
- * (`board.ts`) needs to retire a PR-less plan record on the next poll cycle.
- * Validation (must be a plan, must be in review) is the route's job, since it
- * maps each failure to its own status code; this only guards the race the
- * route can't see — the ticket moving mid-request.
- */
-/**
  * Accepting a plan means the *planning* is done: every still-open child in the
  * epic's `## Children` task list is released from `fleet:backlog` to
  * `fleet:ready`, and the epic issue itself is closed. The epic doesn't track
@@ -188,7 +181,11 @@ export async function restartTicket(ctx: LoopContext, projectName: string, issue
  * unsatisfied `Depends-on` sit in Ready until the claim loop's dependency gate
  * lets them through. A child that fails to relabel is logged and named in the
  * status comment rather than aborting the accept, so one flaky `gh` call can't
- * leave the epic half-accepted.
+ * leave the epic half-accepted. Closing the epic is the completion signal
+ * `cleanupFinished` (`board.ts`) needs to retire the PR-less plan record next
+ * cycle. Validation (must be a plan, must be in review) is the route's job,
+ * since it maps each failure to its own status code; this only guards the race
+ * the route can't see — the ticket moving mid-request.
  */
 export async function acceptPlan(
   ctx: LoopContext,

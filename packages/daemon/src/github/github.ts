@@ -424,6 +424,11 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
   ]);
 }
 
+/** Drop one label from an issue. */
+export async function removeLabel(project: ProjectConfig, issueNumber: number, label: string): Promise<void> {
+  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--remove-label", label]);
+}
+
 /**
  * Move an issue from in-progress back to ready, tagged `fleet:elevate`, so the
  * next poll cycle re-claims it on the project's elevated model. Used for the

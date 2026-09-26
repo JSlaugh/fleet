@@ -320,7 +320,12 @@ export function createApp(opts: {
     const ticket = loop.getBoard().find((t) => t.project === project.name && t.issueNumber === issueNumber);
     if (!ticket) return c.json({ error: `${project.name}#${issueNumber} is not on the board` }, 404);
     if (ticket.status !== "backlog") return c.json({ error: `${project.name}#${issueNumber} is not in the backlog` }, 400);
-    await markReady(project, issueNumber);
+    try {
+      await markReady(project, issueNumber);
+    } catch (err) {
+      logError("server", `failed to release ${project.name}#${issueNumber} to ready`, err);
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 502);
+    }
     loop.emitBoard();
     return c.json({ ok: true });
   });

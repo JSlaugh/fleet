@@ -52,7 +52,7 @@ export function mergeMcpConfig(existingRaw: string | undefined, fleetEntry: Reco
 const GUIDANCE_BULLETS = `        - **Priority** is a label, not a field: add \`fleet:p1\` / \`fleet:p2\` / \`fleet:p3\` after filing (optional).
         - **Dependencies:** put a line \`Depends-on: #12, #14\` anywhere below and fleet won't claim this until those issues close.
         - **Timeout:** put a line \`Timeout: 60m\` (or \`2h\`) anywhere below to override the default per-turn timeout for this ticket, up to a 240m max.
-        - Not ready to queue it yet? Remove the \`${FLEET_LABELS.ready}\` label after filing.`;
+        - Not ready to queue it yet? Swap \`${FLEET_LABELS.ready}\` for \`${FLEET_LABELS.backlog}\` after filing — it stays on the board until you release it.`;
 
 const TASK_BODY_FIELDS = `  - type: textarea
     id: problem
@@ -131,7 +131,7 @@ body:
         (linked back here via \`Part-of:\`), so the problem statement carries all the weight —
         acceptance criteria and verification belong on the children, not here.
 
-        Not ready to kick off decomposition yet? Remove the \`${FLEET_LABELS.ready}\` label after filing.
+        Not ready to kick off decomposition yet? Swap \`${FLEET_LABELS.ready}\` for \`${FLEET_LABELS.backlog}\` after filing.
   - type: textarea
     id: problem
     attributes:
