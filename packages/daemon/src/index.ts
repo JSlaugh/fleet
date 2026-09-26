@@ -7,6 +7,8 @@ import { FleetEvents } from "./events.ts";
 import { ensureLabels, ensureMissingLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
 import { log, logError, suppressCanUseToolShadowedWarning } from "./log.ts";
+import { maybeStartDiscordBot } from "./discord.ts";
+import { issueUrl } from "./github/github.ts";
 import { subscribeDiscordWebhook } from "./notify.ts";
 import { startServer } from "./server/server.ts";
 import { StateStore } from "./store/state.ts";
@@ -111,6 +113,17 @@ async function main(): Promise<void> {
 
   const dashboardDist = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "dashboard", "dist");
   startServer({ port: config.dashboardPort, loop, state, approvals, dataDir, dashboardDist });
+  await maybeStartDiscordBot({
+    config,
+    approvals,
+    events,
+    dryRun,
+    once,
+    describeTicket: (projectName, issueNumber) => {
+      const project = config.projects.find((p) => p.name === projectName);
+      return { title: state.get(projectName, issueNumber)?.issueTitle, url: project ? issueUrl(project, issueNumber) : undefined };
+    },
+  });
 
   // Ctrl+C (or a process manager's SIGTERM) is a stop-now: abort live sessions
   // rather than let the OS kill them mid-turn, so the next boot can auto-resume
