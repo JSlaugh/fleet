@@ -17,6 +17,9 @@ vi.mock("../github/github.ts", async (importActual) => ({
   })),
   getIssueLabels: vi.fn(async () => ["fleet:backlog"]),
   markReady: vi.fn(async () => {}),
+  findChildIssues: vi.fn(async () => []),
+  // #43 is closed; everything else is open.
+  listIssueStates: vi.fn(async () => ({ open: new Set([7, 41, 42, 44]), all: new Set([7, 41, 42, 43, 44]) })),
 }));
 
 const github = await import("../github/github.ts");
@@ -55,6 +58,7 @@ beforeEach(() => {
   // clearAllMocks keeps per-test mockImplementation overrides — reset the defaults explicitly.
   vi.mocked(github.getIssueLabels).mockResolvedValue(["fleet:backlog"]);
   vi.mocked(github.markReady).mockResolvedValue(undefined);
+  vi.mocked(github.findChildIssues).mockResolvedValue([]);
 });
 
 describe("POST /api/tickets/:project/:issue/accept-plan", () => {
@@ -64,7 +68,7 @@ describe("POST /api/tickets/:project/:issue/accept-plan", () => {
     const res = await post(app, "/api/tickets/alpha/7/accept-plan");
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, released: [41, 42], failed: [] });
+    expect(await res.json()).toEqual({ ok: true, released: [41, 42], failed: [], closed: true });
     expect(github.markReady).toHaveBeenCalledTimes(2);
     expect(github.markReady).toHaveBeenCalledWith(project, 41);
     expect(github.markReady).toHaveBeenCalledWith(project, 42);
@@ -79,12 +83,12 @@ describe("POST /api/tickets/:project/:issue/accept-plan", () => {
 
     const res = await post(app, "/api/tickets/alpha/7/accept-plan");
 
-    expect(await res.json()).toEqual({ ok: true, released: [42], failed: [] });
+    expect(await res.json()).toEqual({ ok: true, released: [42], failed: [], closed: true });
     expect(github.markReady).not.toHaveBeenCalledWith(project, 41);
     expect(github.closeIssue).toHaveBeenCalledWith(project, 7);
   });
 
-  it("still closes the epic when a child fails to relabel, naming it for manual follow-up", async () => {
+  it("leaves the epic open when a child fails to relabel, so Accept plan can be retried", async () => {
     vi.mocked(github.markReady).mockImplementation(async (_p, n) => {
       if (n === 42) throw new Error("gh exploded");
     });
@@ -93,20 +97,53 @@ describe("POST /api/tickets/:project/:issue/accept-plan", () => {
     const res = await post(app, "/api/tickets/alpha/7/accept-plan");
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, released: [41], failed: [42] });
-    expect(github.closeIssue).toHaveBeenCalledWith(project, 7);
-    expect(github.upsertStatusComment).toHaveBeenCalledWith(project, 7, expect.stringContaining("Could not relabel (mark `fleet:ready` by hand): #42"));
+    expect(await res.json()).toEqual({ ok: true, released: [41], failed: [42], closed: false });
+    expect(github.closeIssue).not.toHaveBeenCalled();
+    expect(github.upsertStatusComment).toHaveBeenCalledWith(project, 7, expect.stringContaining("Could not relabel: #42"));
   });
 
-  it("closes an epic with no children stamped on its body without touching any labels", async () => {
+  it("never adds fleet:ready to a child that is already closed", async () => {
+    vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "epic 7", body: "## Children\n- [ ] #41 a\n- [ ] #43 abandoned", labels: [] });
+    const { app } = makeApp(record());
+
+    const res = await post(app, "/api/tickets/alpha/7/accept-plan");
+
+    expect(await res.json()).toEqual({ ok: true, released: [41], failed: [], closed: true });
+    expect(github.markReady).not.toHaveBeenCalledWith(project, 43);
+  });
+
+  it("falls back to the Part-of search when the epic's children list is missing", async () => {
+    vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "epic 7", body: "children list was edited away", labels: [] });
+    vi.mocked(github.findChildIssues).mockResolvedValue([44]);
+    const { app } = makeApp(record());
+
+    const res = await post(app, "/api/tickets/alpha/7/accept-plan");
+
+    expect(await res.json()).toEqual({ ok: true, released: [44], failed: [], closed: true });
+    expect(github.findChildIssues).toHaveBeenCalledWith(project, 7);
+  });
+
+  it("closes an epic that genuinely has no children without touching any labels", async () => {
     vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "epic 7", body: "no children here", labels: [] });
     const { app } = makeApp(record());
 
     const res = await post(app, "/api/tickets/alpha/7/accept-plan");
 
-    expect(await res.json()).toEqual({ ok: true, released: [], failed: [] });
+    expect(await res.json()).toEqual({ ok: true, released: [], failed: [], closed: true });
     expect(github.markReady).not.toHaveBeenCalled();
     expect(github.closeIssue).toHaveBeenCalledWith(project, 7);
+  });
+
+  it("refuses, leaving the epic open, when the epic can't be read from GitHub", async () => {
+    vi.mocked(github.getIssue).mockResolvedValueOnce(undefined);
+    const { app } = makeApp(record());
+
+    const res = await post(app, "/api/tickets/alpha/7/accept-plan");
+
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toMatch(/left open/);
+    expect(github.closeIssue).not.toHaveBeenCalled();
+    expect(github.markReady).not.toHaveBeenCalled();
   });
 
   it("404s on an unknown project", async () => {

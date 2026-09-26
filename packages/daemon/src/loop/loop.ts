@@ -22,7 +22,7 @@ import { refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbea
 import type { ReadyIssue } from "../github/github.ts";
 import { type HistoryQuery, queryHistory } from "../store/history.ts";
 import { logError } from "../log.ts";
-import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities } from "./operator.ts";
+import { acceptPlan, reply, resetForFreshClaim, restartTicket, ticketCapabilities, type AcceptPlanOutcome } from "./operator.ts";
 import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseState } from "./pause.ts";
 import { setProjectDormant } from "./pin.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
@@ -136,7 +136,7 @@ export class FleetLoop {
     return restartTicket(this.ctx, projectName, issueNumber);
   }
 
-  async acceptPlan(projectName: string, issueNumber: number): Promise<{ released: number[]; failed: number[] }> {
+  async acceptPlan(projectName: string, issueNumber: number): Promise<AcceptPlanOutcome> {
     return acceptPlan(this.ctx, projectName, issueNumber);
   }
 

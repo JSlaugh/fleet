@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalManager } from "./session/approvals.ts";
 import { loadConfig } from "./config.ts";
-import { ensureLabels, getAuthenticatedLogin } from "./github/github.ts";
+import { ensureLabels, ensureMissingLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
 import { log, logError, suppressCanUseToolShadowedWarning } from "./log.ts";
 import { startServer } from "./server/server.ts";
@@ -69,6 +69,16 @@ async function main(): Promise<void> {
 
   const once = args.includes("--once");
   const dryRun = args.includes("--dry-run");
+  if (!dryRun) {
+    for (const project of config.projects) {
+      try {
+        const created = await ensureMissingLabels(project);
+        if (created.length > 0) log("labels", `${project.githubRepo}: created missing ${created.join(", ")}`);
+      } catch (err) {
+        logError("labels", `${project.githubRepo}: could not check for missing fleet labels`, err);
+      }
+    }
+  }
   const dataDir = join(configDir, config.dataDir);
   const state = new StateStore(dataDir);
   state.clearLiveFlags();

@@ -97,11 +97,11 @@ async function acceptPlanNow() {
   accepting.value = true;
   acceptStatus.value = undefined;
   try {
-    const { released, failed } = await acceptPlan(props.ticket.project, props.ticket.issueNumber);
-    acceptStatus.value = [
-      `Accepted — epic closed, ${released.length} child ticket${released.length === 1 ? "" : "s"} released to ready.`,
-      failed.length > 0 ? `Could not relabel #${failed.join(", #")} — mark them fleet:ready by hand.` : "",
-    ].filter(Boolean).join(" ");
+    const { released, failed, closed } = await acceptPlan(props.ticket.project, props.ticket.issueNumber);
+    const releasedText = `${released.length} child ticket${released.length === 1 ? "" : "s"} released to ready`;
+    acceptStatus.value = closed
+      ? `Accepted — epic closed, ${releasedText}.`
+      : `${releasedText}, but #${failed.join(", #")} could not be relabeled — the epic was left open; Accept plan again to retry.`;
     void refresh();
   } catch (err) {
     acceptStatus.value = err instanceof Error ? err.message : String(err);

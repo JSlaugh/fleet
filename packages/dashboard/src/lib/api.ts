@@ -121,8 +121,8 @@ export async function restartTicket(project: string, issueNumber: number): Promi
   await json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/restart`, { method: "POST" }));
 }
 
-/** Accepts a reviewed plan: releases its backlog children to fleet:ready and closes the epic issue; cleanup happens on the daemon's next poll cycle. */
-export async function acceptPlan(project: string, issueNumber: number): Promise<{ released: number[]; failed: number[] }> {
+/** Accepts a reviewed plan: releases its backlog children to fleet:ready and closes the epic issue (left open if any child failed); cleanup happens on the daemon's next poll cycle. */
+export async function acceptPlan(project: string, issueNumber: number): Promise<{ released: number[]; failed: number[]; closed: boolean }> {
   return json(await fetch(`/api/tickets/${encodeURIComponent(project)}/${issueNumber}/accept-plan`, { method: "POST" }));
 }
 

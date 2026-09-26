@@ -1019,6 +1019,25 @@ export async function closeIssue(project: ProjectConfig, issueNumber: number): P
   await run("gh", ["issue", "close", String(issueNumber), "--repo", project.githubRepo]);
 }
 
+/**
+ * Creates any fleet label the repo lacks, leaving existing ones untouched —
+ * one `gh label list` plus a create per missing label, so it's cheap enough to
+ * run at every boot. Without it, a label added in a fleet upgrade (e.g.
+ * `fleet:backlog`) makes `gh issue create --label` fail until someone
+ * remembers `init-labels`.
+ */
+export async function ensureMissingLabels(project: ProjectConfig): Promise<string[]> {
+  const existing = await runJson<{ name: string }[]>("gh", ["label", "list", "--repo", project.githubRepo, "--json", "name", "--limit", "500"]);
+  const have = new Set(existing.map((l) => l.name));
+  const created: string[] = [];
+  for (const label of ALL_FLEET_LABELS) {
+    if (have.has(label.name)) continue;
+    await run("gh", ["label", "create", label.name, "--repo", project.githubRepo, "--color", label.color, "--description", label.description]);
+    created.push(label.name);
+  }
+  return created;
+}
+
 export async function ensureLabels(project: ProjectConfig): Promise<void> {
   for (const label of ALL_FLEET_LABELS) {
     await run("gh", [
