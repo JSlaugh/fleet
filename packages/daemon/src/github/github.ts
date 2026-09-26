@@ -424,6 +424,11 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
   ]);
 }
 
+/** Drop one label from an issue. */
+export async function removeLabel(project: ProjectConfig, issueNumber: number, label: string): Promise<void> {
+  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--remove-label", label]);
+}
+
 /**
  * Move an issue from in-progress back to ready, tagged `fleet:elevate`, so the
  * next poll cycle re-claims it on the project's elevated model. Used for the
@@ -452,7 +457,7 @@ export async function escalateToElevated(project: ProjectConfig, issueNumber: nu
  */
 export function readyLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
   const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
-  for (const label of [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
+  for (const label of [FLEET_LABELS.backlog, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
     args.push("--remove-label", label);
   }
   args.push("--add-label", FLEET_LABELS.ready);
@@ -1012,6 +1017,25 @@ export async function mergePullRequest(project: ProjectConfig, prUrl: string, me
 
 export async function closeIssue(project: ProjectConfig, issueNumber: number): Promise<void> {
   await run("gh", ["issue", "close", String(issueNumber), "--repo", project.githubRepo]);
+}
+
+/**
+ * Creates any fleet label the repo lacks, leaving existing ones untouched —
+ * one `gh label list` plus a create per missing label, so it's cheap enough to
+ * run at every boot. Without it, a label added in a fleet upgrade (e.g.
+ * `fleet:backlog`) makes `gh issue create --label` fail until someone
+ * remembers `init-labels`.
+ */
+export async function ensureMissingLabels(project: ProjectConfig): Promise<string[]> {
+  const existing = await runJson<{ name: string }[]>("gh", ["label", "list", "--repo", project.githubRepo, "--json", "name", "--limit", "500"]);
+  const have = new Set(existing.map((l) => l.name));
+  const created: string[] = [];
+  for (const label of ALL_FLEET_LABELS) {
+    if (have.has(label.name)) continue;
+    await run("gh", ["label", "create", label.name, "--repo", project.githubRepo, "--color", label.color, "--description", label.description]);
+    created.push(label.name);
+  }
+  return created;
 }
 
 export async function ensureLabels(project: ProjectConfig): Promise<void> {

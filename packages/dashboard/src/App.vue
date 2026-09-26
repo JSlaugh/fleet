@@ -324,6 +324,7 @@ onUnmounted(() => {
               :pending-approvals="approvalCounts.get(`${ticket.project}#${ticket.issueNumber}`) ?? 0"
               @select="selected = ui.isSelected(ticket) ? undefined : ticket"
               @set-priority="(p) => board.setPriority(ticket, p)"
+              @mark-ready="board.markReady(ticket)"
             />
           </BoardColumn>
         </div>

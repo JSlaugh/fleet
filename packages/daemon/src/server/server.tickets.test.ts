@@ -42,8 +42,8 @@ describe("labelsForNewTicket", () => {
     ]);
   });
 
-  it("omits fleet:ready when ready is false, keeping the priority for curation", () => {
-    expect(labelsForNewTicket({ title: "t", body: "b", ready: false, priority: "fleet:p2" })).toEqual(["fleet:p2"]);
-    expect(labelsForNewTicket({ title: "t", body: "b", ready: false })).toEqual([]);
+  it("files into fleet:backlog instead of fleet:ready when ready is false, keeping the priority", () => {
+    expect(labelsForNewTicket({ title: "t", body: "b", ready: false, priority: "fleet:p2" })).toEqual(["fleet:backlog", "fleet:p2"]);
+    expect(labelsForNewTicket({ title: "t", body: "b", ready: false })).toEqual(["fleet:backlog"]);
   });
 });

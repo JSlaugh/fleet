@@ -5,6 +5,7 @@ import type { BoardStatus } from "@fleet/shared";
 
 /** Solid accent dot/bar per board column. */
 export const STATUS_ACCENTS: Record<BoardStatus, string> = {
+  backlog: "bg-muted-foreground/50",
   ready: "bg-success",
   "in-progress": "bg-warning",
   "needs-input": "bg-destructive",

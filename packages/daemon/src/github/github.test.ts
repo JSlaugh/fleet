@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ALL_FLEET_LABELS } from "@fleet/shared";
 import { makeProject } from "../test-support.ts";
 
 vi.mock("./exec.ts", async (importActual) => ({
@@ -17,6 +18,7 @@ const {
   buildPrFeedback,
   buildReviewFeedbackPrompt,
   dependencyStatus,
+  ensureMissingLabels,
   escalateLabelArgs,
   getPrChecks,
   getPrDiff,
@@ -66,6 +68,7 @@ describe("readyLabelArgs", () => {
     expect(readyLabelArgs(project, 7)).toEqual([
       "issue", "edit", "7",
       "--repo", "acme/alpha",
+      "--remove-label", "fleet:backlog",
       "--remove-label", "fleet:in-progress",
       "--remove-label", "fleet:needs-input",
       "--remove-label", "fleet:review",
@@ -881,5 +884,24 @@ describe("getPrOutcome", () => {
     const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
     expect(outcome.reviewRounds).toBe(2);
     expect(outcome.reviewCommentCount).toBe(1);
+  });
+});
+
+describe("ensureMissingLabels", () => {
+  it("creates only the fleet labels the repo lacks, leaving existing ones untouched", async () => {
+    vi.mocked(exec.runJson).mockResolvedValueOnce(ALL_FLEET_LABELS.filter((l) => l.name !== "fleet:backlog").map((l) => ({ name: l.name })));
+    vi.mocked(exec.run).mockResolvedValue({ stdout: "", stderr: "" });
+
+    const created = await ensureMissingLabels(makeProject());
+
+    expect(created).toEqual(["fleet:backlog"]);
+    expect(exec.run).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(exec.run).mock.calls[0]?.[1]).toEqual(expect.arrayContaining(["label", "create", "fleet:backlog"]));
+  });
+
+  it("creates nothing when every label exists", async () => {
+    vi.mocked(exec.runJson).mockResolvedValueOnce(ALL_FLEET_LABELS.map((l) => ({ name: l.name })));
+    expect(await ensureMissingLabels(makeProject())).toEqual([]);
+    expect(exec.run).not.toHaveBeenCalled();
   });
 });
