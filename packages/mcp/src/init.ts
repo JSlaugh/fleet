@@ -118,7 +118,7 @@ export function runInit(args: InitArgs, out: (line: string) => void = (l) => con
     repoConfig: {
       fleetDir: FLEET_DIR,
       dashboardPort,
-      project: { name: project.name, githubRepo: project.githubRepo, ...(args.agents ? { agents: args.agents } : {}) },
+      project: { name: project.name, githubRepo: project.githubRepo, agents: [...agents] },
     },
   });
   for (const path of result.written) out(`wrote ${path}`);

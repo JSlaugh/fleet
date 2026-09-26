@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +7,7 @@ import {
   FLEET_DIR,
   LAUNCHER_PATH,
   buildFleetEntry,
-  claudeEntry,
+  LAUNCHER_BOOTSTRAP,
   ensureIgnored,
   mergeCodexConfig,
   mergeMcpConfig,
@@ -186,7 +187,7 @@ describe("stampProject", () => {
     expect(readFileSync(join(repo, ".fleet-mcp", "launch.mjs"), "utf8")).toBe("// launcher\n");
     expect(readFileSync(join(repo, ".claude", "skills", "fleet-backlog", "SKILL.md"), "utf8")).toBe("# skill\n");
     expect(readFileSync(join(repo, ".agents", "skills", "fleet-backlog", "SKILL.md"), "utf8")).toBe("# skill\n");
-    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"))).toEqual({ mcpServers: { fleet: claudeEntry(ENTRY) } });
+    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"))).toEqual({ mcpServers: { fleet: ENTRY } });
     expect(readFileSync(join(repo, ".codex", "config.toml"), "utf8")).toContain('args = [".fleet-mcp/launch.mjs"]');
     expect(result.written).toHaveLength(5);
     expect(result.notes.join("\n")).toMatch(/trusted directory/);
@@ -252,6 +253,39 @@ describe("writeRepoConfig", () => {
   it("writes nothing into the fleet checkout itself, whose daemon config already sits there", () => {
     expect(writeRepoConfig(FLEET_DIR, { fleetDir: FLEET_DIR, project: { name: "fleet", githubRepo: "acme/fleet" } })).toEqual([]);
   });
+
+  it.runIf(process.platform === "win32")("recognises the fleet checkout through a differently-cased path on Windows", () => {
+    expect(writeRepoConfig(FLEET_DIR.toLowerCase(), { fleetDir: FLEET_DIR.toUpperCase(), project: { name: "fleet", githubRepo: "acme/fleet" } })).toEqual([]);
+  });
+
+  it("keeps project keys the caller doesn't set (e.g. intakeLint) when refreshing an entry", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-repocfg-"));
+    dirs.push(repo);
+    writeFileSync(join(repo, "fleet.config.json"), JSON.stringify({ projects: [{ name: "example", githubRepo: "acme/example", intakeLint: false, agents: ["codex"] }] }));
+    writeRepoConfig(repo, { fleetDir: "/opt/fleet", project: { name: "example", githubRepo: "acme/example" } });
+    expect(JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8")).projects).toEqual([
+      { name: "example", githubRepo: "acme/example", intakeLint: false, agents: ["codex"] },
+    ]);
+  });
+
+  it("refuses to write over a fleet daemon config", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-repocfg-"));
+    dirs.push(repo);
+    const daemonConfig = JSON.stringify({ worktreeRoot: "/wt", projects: [{ name: "x", repoPath: "/x", githubRepo: "o/x" }] });
+    writeFileSync(join(repo, "fleet.config.json"), daemonConfig);
+    expect(() => writeRepoConfig(repo, { fleetDir: "/opt/fleet", project: { name: "x", githubRepo: "o/x" } })).toThrow(/daemon config/);
+    expect(readFileSync(join(repo, "fleet.config.json"), "utf8")).toBe(daemonConfig);
+  });
+
+  it("refuses when git already tracks fleet.config.json, since the path would be committed", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-repocfg-"));
+    dirs.push(repo);
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    writeFileSync(join(repo, "fleet.config.json"), "{}\n");
+    execFileSync("git", ["add", "fleet.config.json"], { cwd: repo });
+    expect(() => writeRepoConfig(repo, { fleetDir: "/opt/fleet", project: { name: "x", githubRepo: "o/x" } })).toThrow(/tracked by git/);
+    expect(readFileSync(join(repo, "fleet.config.json"), "utf8")).toBe("{}\n");
+  });
 });
 
 describe("ensureIgnored", () => {
@@ -269,11 +303,21 @@ describe("ensureIgnored", () => {
 });
 
 describe("buildFleetEntry", () => {
-  it("names no path: it runs the stamped launcher with just the project name", () => {
-    expect(buildFleetEntry({ project: "p" })).toEqual({ command: "node", args: [LAUNCHER_PATH], env: { FLEET_PROJECT: "p" } });
+  it("names no path: a node -e bootstrap plus just the project name", () => {
+    expect(buildFleetEntry({ project: "p" })).toEqual({ command: "node", args: ["-e", LAUNCHER_BOOTSTRAP], env: { FLEET_PROJECT: "p" } });
+    expect(LAUNCHER_BOOTSTRAP).not.toMatch(/[A-Za-z]:[\\/]|\/(home|Users)\//);
   });
 
-  it("addresses the launcher from the project root for Claude, via its env-var expansion", () => {
-    expect(claudeEntry(buildFleetEntry({ project: "p" })).args).toEqual(["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"]);
+  it("the bootstrap finds the launcher from a subdirectory the agent was started in", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-boot-"));
+    try {
+      mkdirSync(join(repo, LAUNCHER_PATH, ".."), { recursive: true });
+      writeFileSync(join(repo, LAUNCHER_PATH), 'console.log("launched");\n');
+      mkdirSync(join(repo, "packages", "deep"), { recursive: true });
+      const out = execFileSync(process.execPath, ["-e", LAUNCHER_BOOTSTRAP], { cwd: join(repo, "packages", "deep"), encoding: "utf8" });
+      expect(out.trim()).toBe("launched");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

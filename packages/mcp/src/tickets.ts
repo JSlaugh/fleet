@@ -91,6 +91,8 @@ export class GithubTickets implements TicketGateway {
   constructor(
     repo: string,
     private readonly warn: (line: string) => void = (l) => console.error(l),
+    /** False for a project with `intakeLint: false` — the claim path wouldn't lint it either. */
+    readonly lint = true,
   ) {
     this.repo = { githubRepo: repo };
   }
@@ -110,7 +112,7 @@ export class GithubTickets implements TicketGateway {
   }
 
   async fileTicket(input: FileTicketInput): Promise<FileTicketResult> {
-    return this.fileParsed(checkedInput(input));
+    return this.fileParsed(checkedInput(input, this.lint));
   }
 
   /** Files an already-validated ticket; `DaemonFirstTickets` falls back to this. */
@@ -136,9 +138,9 @@ export class GithubTickets implements TicketGateway {
   }
 }
 
-function checkedInput(input: FileTicketInput): CreateTicketInput {
+function checkedInput(input: FileTicketInput, lint: boolean): CreateTicketInput {
   const parsed = toCreateTicketInput(input);
-  const problem = intakeProblem(parsed);
+  const problem = lint ? intakeProblem(parsed) : undefined;
   if (problem) throw new Error(problem);
   return parsed;
 }
@@ -157,7 +159,7 @@ export class DaemonFirstTickets implements TicketGateway {
   ) {}
 
   async fileTicket(input: FileTicketInput): Promise<FileTicketResult> {
-    const parsed = checkedInput(input);
+    const parsed = checkedInput(input, this.github.lint);
     try {
       return await fileTicketViaDaemon(this.daemon.url, this.daemon.project, parsed);
     } catch (err) {

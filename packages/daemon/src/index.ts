@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalManager } from "./session/approvals.ts";
+import { FLEET_DIR } from "@fleet/mcp/stamp";
 import { loadConfig } from "./config.ts";
 import { ensureLabels, ensureMissingLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
@@ -39,8 +40,12 @@ async function main(): Promise<void> {
   const { config, configDir, configPath: loadedConfigPath } = loadConfig(configPath);
   // Worker sessions run in worktrees, which don't carry a repo's gitignored
   // fleet.config.json — so the stamped fleet MCP launcher inside them finds
-  // this daemon's config through the inherited environment instead.
-  process.env.FLEET_CONFIG ??= loadedConfigPath;
+  // this daemon's config and checkout through the inherited environment
+  // instead. Assigned unconditionally: a FLEET_CONFIG left in the operator's
+  // shell may name some other repo's config, and a `--config` outside the
+  // checkout means the config's directory isn't where fleet lives.
+  process.env.FLEET_CONFIG = loadedConfigPath;
+  process.env.FLEET_DIR = FLEET_DIR;
 
   if (args[0] === "init-labels") {
     for (const project of config.projects) {

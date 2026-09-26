@@ -44,8 +44,8 @@ export function stampProject(
   return result;
 }
 
-export { buildFleetEntry, FLEET_DIR, LAUNCHER_PATH, readSkillTemplate, type EntryTarget } from "./entry.ts";
-export { claudeEntry, mergeMcpConfig } from "./claude.ts";
+export { buildFleetEntry, FLEET_DIR, LAUNCHER_BOOTSTRAP, LAUNCHER_PATH, readSkillTemplate, type EntryTarget } from "./entry.ts";
+export { mergeMcpConfig } from "./claude.ts";
 export { mergeCodexConfig, renderCodexFleetTable } from "./codex.ts";
 export { ensureIgnored, writeRepoConfig, type RepoConfigInput } from "./repo-config.ts";
 export type { AgentStamper, McpEntry, StampResult } from "./types.ts";

@@ -24,7 +24,7 @@ try {
 }
 
 const server = new McpServer({ name: "fleet", version: "0.0.1" });
-const github = new GithubTickets(target.repo);
+const github = new GithubTickets(target.repo, undefined, target.intakeLint);
 const registered = registerTools(server, {
   tickets: target.daemonUrl && target.project ? new DaemonFirstTickets(github, { url: target.daemonUrl, project: target.project }) : github,
   daemon: target.daemonUrl ? { url: target.daemonUrl, project: target.project } : undefined,

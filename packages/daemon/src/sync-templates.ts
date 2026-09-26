@@ -200,7 +200,7 @@ export async function syncTemplates(projects: ProjectConfig[], opts: SyncTemplat
         repoConfig: {
           fleetDir: FLEET_DIR,
           dashboardPort: opts.port ?? 4400,
-          project: { name: project.name, githubRepo: project.githubRepo, ...(project.agents ? { agents: project.agents } : {}) },
+          project: { name: project.name, githubRepo: project.githubRepo, agents: [...agents], ...(project.intakeLint === false ? { intakeLint: false } : {}) },
         },
       });
       for (const destPath of result.written) log("sync-templates", `wrote ${destPath}`);

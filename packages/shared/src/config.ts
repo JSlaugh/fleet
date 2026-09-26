@@ -170,6 +170,8 @@ export const ProjectsOnlyConfigSchema = z.object({
         name: z.string().min(1),
         githubRepo: z.string().regex(/^[^/]+\/[^/]+$/, "expected owner/repo"),
         agents: z.array(AgentKindSchema).min(1).optional(),
+        /** Mirrors the daemon's per-project opt-out, so the MCP doesn't refuse bodies the claim path would accept. */
+        intakeLint: z.boolean().optional(),
       }),
     )
     .min(1),

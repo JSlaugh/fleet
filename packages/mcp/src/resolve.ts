@@ -11,6 +11,8 @@ export interface ResolvedTarget {
   /** The fleet project name, when known — daemon tools that take a project default to it. */
   project?: string;
   daemonUrl?: string;
+  /** False when the project opted out of the intake lint (`intakeLint: false`), so filing skips it too. */
+  intakeLint: boolean;
   /** One line for the startup log, naming where each value came from. */
   describe: string;
 }
@@ -100,5 +102,6 @@ export function resolveTarget(env: ResolveEnv, opts: ResolveOptions): ResolvedTa
     project = config()?.config.projects.find((p) => p.githubRepo === repo)?.name;
   }
 
-  return { repo, project, daemonUrl, describe: sources.join("; ") };
+  const entry = config()?.config.projects.find((p) => p.name === project || p.githubRepo === repo);
+  return { repo, project, daemonUrl, intakeLint: entry?.intakeLint !== false, describe: sources.join("; ") };
 }

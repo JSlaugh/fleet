@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
+import { LAUNCHER_BOOTSTRAP } from "@fleet/mcp/stamp";
 import { makeProject } from "./test-support.ts";
 import { issueFormFiles, syncTemplates } from "./sync-templates.ts";
 
@@ -28,7 +29,7 @@ describe("syncTemplates", () => {
     const mcp = JSON.parse(readFileSync(join(repoPath, ".mcp.json"), "utf8")) as { mcpServers: { fleet: { args: string[]; env: Record<string, string> } } };
     // Committed files name no path; this machine's paths live in the repo's gitignored config.
     expect(mcp.mcpServers.fleet.env).toEqual({ FLEET_PROJECT: "alpha" });
-    expect(mcp.mcpServers.fleet.args).toEqual(["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"]);
+    expect(mcp.mcpServers.fleet.args).toEqual(["-e", LAUNCHER_BOOTSTRAP]);
     expect(existsSync(join(repoPath, ".fleet-mcp", "launch.mjs"))).toBe(true);
     const repoConfig = JSON.parse(readFileSync(join(repoPath, "fleet.config.json"), "utf8")) as { fleetDir: string; dashboardPort: number; projects: { name: string }[] };
     expect(repoConfig.dashboardPort).toBe(4400);

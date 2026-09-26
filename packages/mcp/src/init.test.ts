@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { invocationDir, parseInitArgs, runInit } from "./init.ts";
-import { FLEET_DIR } from "./stamp/index.ts";
+import { FLEET_DIR, LAUNCHER_BOOTSTRAP } from "./stamp/index.ts";
 
 describe("parseInitArgs", () => {
   it("parses every flag and ignores a leading `init`", () => {
@@ -69,7 +69,7 @@ describe("runInit", () => {
     runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), () => {});
     expect(readJson(join(repo, ".mcp.json")).mcpServers.fleet).toEqual({
       command: "node",
-      args: ["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"],
+      args: ["-e", LAUNCHER_BOOTSTRAP],
       env: { FLEET_PROJECT: "widgets" },
     });
     expect(existsSync(join(repo, ".codex"))).toBe(false);
@@ -94,15 +94,20 @@ describe("runInit", () => {
 
     expect(existsSync(join(repo, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
     expect(existsSync(join(repo, ".agents", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
-    expect(readJson(join(repo, "fleet.config.json"))).toEqual({ fleetDir: fleetDirSlashes, dashboardPort: 4400, projects: [{ name: "a", githubRepo: "o/a" }] });
+    expect(readJson(join(repo, "fleet.config.json"))).toEqual({
+      fleetDir: fleetDirSlashes,
+      dashboardPort: 4400,
+      projects: [{ name: "a", githubRepo: "o/a", agents: ["claude", "codex"] }],
+    });
   });
 
-  it("is idempotent: a second run finds the repo's own config and changes nothing", () => {
+  it("is idempotent: a second run finds the repo's own config and changes nothing — agents included", () => {
     const repo = tempDir();
-    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), () => {});
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--agents", "claude,codex"]), () => {});
     const before = readFileSync(join(repo, "fleet.config.json"), "utf8");
     runInit(parseInitArgs(["--path", repo]), () => {});
     expect(readFileSync(join(repo, "fleet.config.json"), "utf8")).toBe(before);
+    expect(readJson(join(repo, "fleet.config.json")).projects[0].agents).toEqual(["claude", "codex"]);
     expect(readFileSync(join(repo, ".gitignore"), "utf8")).toBe("fleet.config.json\n");
   });
 

@@ -150,8 +150,8 @@ export function mergeCodexConfig(existingRaw: string | undefined, entry: McpEntr
  * Codex: `.agents/skills/<name>/SKILL.md` (same SKILL.md format as Claude),
  * `[mcp_servers.<name>]` in `.codex/config.toml`. The entry's `node` command
  * resolves as a real executable on every platform, so Codex's shell-less
- * spawn needs no Windows special case, and the relative launcher path
- * resolves against the session's working directory (the repo root).
+ * spawn needs no Windows special case, and its bootstrap finds the launcher
+ * from any subdirectory Codex is started in.
  */
 export const codexStamper: AgentStamper = {
   kind: "codex",

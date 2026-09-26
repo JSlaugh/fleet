@@ -97,6 +97,18 @@ describe("GithubTickets.fileTicket", () => {
   });
 });
 
+describe("intake lint opt-out", () => {
+  it("files a free-form ready body for a project with intakeLint: false, on both paths", async () => {
+    vi.mocked(github.createIssue).mockResolvedValue({ number: 3, url: "u3" });
+    await expect(new GithubTickets("acme/alpha", undefined, false).fileTicket({ title: "t", body: "no headings" })).resolves.toEqual({ number: 3, url: "u3" });
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ number: 4, url: "u4" }))));
+    const viaDaemon = new DaemonFirstTickets(new GithubTickets("acme/alpha", undefined, false), { url: "http://localhost:4400", project: "alpha" });
+    await expect(viaDaemon.fileTicket({ title: "t", body: "no headings" })).resolves.toEqual({ number: 4, url: "u4" });
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("DaemonFirstTickets.fileTicket", () => {
   const daemon = { url: "http://localhost:4400", project: "alpha" };
   const fetchMock = vi.fn<typeof fetch>();
