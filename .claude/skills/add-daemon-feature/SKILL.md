@@ -5,7 +5,7 @@ description: Orientation map for changing daemon behavior in packages/daemon/src
 
 # add-daemon-feature
 
-`packages/daemon/src` is grouped into subdirectories by concern: `loop/` (the poll loop and its supporting modules), `session/` (worker sessions, machine review, approvals), `github/` (GitHub/git shelling out), `server/` (the dashboard's REST/WS API), `store/` (on-disk state/history/journal), and a handful of root files (`index.ts`, `config.ts`, `log.ts`, `sync-templates.ts`, `notify.ts`, `throttle.ts`, `update.ts`, `restart-code.ts`). Tests are colocated with their subject module.
+`packages/daemon/src` is grouped into subdirectories by concern: `loop/` (the poll loop and its supporting modules), `session/` (worker sessions, machine review, approvals), `github/` (GitHub/git shelling out), `server/` (the dashboard's REST/WS API), `store/` (on-disk state/history/journal), and a handful of root files (`index.ts`, `config.ts`, `events.ts` — the typed `FleetEvents` bus every integration subscribes to, see "Integration boundary" in `CLAUDE.md`, `log.ts`, `sync-templates.ts`, `notify.ts`, `throttle.ts`, `update.ts`, `restart-code.ts`). Tests are colocated with their subject module.
 
 `loop/loop.ts` (`FleetLoop`) is only a coordinator: it owns the shared `LoopContext` (`loop/context.ts`) and hands it to plain-function modules, all also in `loop/`. Find the concern, then find its test file.
 
@@ -28,7 +28,7 @@ description: Orientation map for changing daemon behavior in packages/daemon/src
 | `loop/automerge.ts` | Auto-merging `fleet:review` PRs that are approved and green-checked, for opted-in projects |
 | `loop/epics.ts` | Closing an epic once all its filed children are closed (`epicCloseDecision`/`closeFinishedEpics`) |
 | `loop/heartbeat.ts` | Status-comment claim heartbeats + releasing stale claims from a dead daemon |
-| `loop/digest.ts` | Periodic activity digest: compute, schedule, and send via `notify.ts` |
+| `loop/digest.ts` | Periodic activity digest: compute, schedule, and emit `digest:ready` on `ctx.events` (delivered by `notify.ts`'s subscriber) |
 | `loop/postmortem.ts` | Failure post-mortem for status comments (journal tail + commit log summary) |
 | `session/review.ts` | The machine-review/plan-review reviewer session itself (prompt building, running it, verdict parsing) |
 | `loop/board.ts` | Board projection for the dashboard + finished-ticket cleanup (`cleanupFinished`) |

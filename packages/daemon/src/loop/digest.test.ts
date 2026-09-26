@@ -1,7 +1,7 @@
 import type { FleetConfig } from "@fleet/shared";
 import type { DaemonEvent } from "../store/db.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { makeCtx, makeFleetConfig, makeProject, makeRecord } from "../test-support.ts";
+import { makeCtx, makeEventsWithDiscord, makeFleetConfig, makeProject, makeRecord } from "../test-support.ts";
 import { checkDigestSchedule, computeDigest, type DigestInput, getDigest, resolveDigestTime, shouldSendDigest } from "./digest.ts";
 import type { LoopContext } from "./context.ts";
 
@@ -189,7 +189,8 @@ describe("checkDigestSchedule", () => {
   function ctxAt(localDate: Date, configPatch: Partial<FleetConfig> = {}, ctxPatch: Partial<LoopContext> = {}) {
     vi.useFakeTimers();
     vi.setSystemTime(localDate);
-    return makeCtx({ config: makeFleetConfig(configPatch), ...ctxPatch });
+    const config = makeFleetConfig(configPatch);
+    return makeCtx({ config, events: makeEventsWithDiscord(config), ...ctxPatch });
   }
 
   it("does nothing without a discordUrl configured, even with a resolvable digestTime", async () => {

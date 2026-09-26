@@ -3,9 +3,11 @@ import { fileURLToPath } from "node:url";
 import { ApprovalManager } from "./session/approvals.ts";
 import { FLEET_DIR } from "@fleet/mcp/stamp";
 import { loadConfig } from "./config.ts";
+import { FleetEvents } from "./events.ts";
 import { ensureLabels, ensureMissingLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
 import { log, logError, suppressCanUseToolShadowedWarning } from "./log.ts";
+import { subscribeDiscordWebhook } from "./notify.ts";
 import { startServer } from "./server/server.ts";
 import { StateStore } from "./store/state.ts";
 import { syncTemplates } from "./sync-templates.ts";
@@ -91,8 +93,10 @@ async function main(): Promise<void> {
   const dataDir = join(configDir, config.dataDir);
   const state = new StateStore(dataDir);
   state.clearLiveFlags();
-  const approvals = new ApprovalManager();
-  const loop = new FleetLoop(config, state, dataDir, approvals, dryRun, once);
+  const events = new FleetEvents();
+  const approvals = new ApprovalManager(events);
+  const loop = new FleetLoop(config, state, dataDir, approvals, dryRun, once, events);
+  subscribeDiscordWebhook(events, { config, dryRun, once });
   await loop.refreshBootHeartbeats();
   await loop.recoverPendingTeardowns();
 

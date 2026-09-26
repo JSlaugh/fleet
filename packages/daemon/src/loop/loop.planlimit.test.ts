@@ -1,6 +1,6 @@
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeCtx, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeCtx, makeEventsWithDiscord, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { FleetLoop } from "./loop.ts";
 import { handleAuthFailure, pauseForAuthFailure } from "./pause.ts";
 
@@ -11,6 +11,7 @@ vi.mock("../github/github.ts", () => ({
   getIssueLabels: vi.fn(async () => []),
   getPrFeedback: vi.fn(),
   getPrState: vi.fn(),
+  issueUrl: vi.fn((project: { githubRepo: string }, issueNumber: number) => `https://github.com/${project.githubRepo}/issues/${issueNumber}`),
   listFleetIssues: vi.fn(async () => []),
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   markReady: vi.fn(async () => {}),
@@ -40,7 +41,7 @@ function makeLoop(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {}) {
   const { dataDir, state } = makeTempState("fleet-planlimit-");
   if (seed) state.upsert(seed);
   const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
-  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false, false, makeEventsWithDiscord(config));
   const internals = loop as unknown as {
     handlePlanLimit: (p: ProjectConfig, issue: { number: number; title: string }, limitResetAt: string | undefined) => Promise<void>;
     isPaused: () => boolean;
@@ -54,7 +55,7 @@ function makeCtxFor(seed?: TicketRecord, configPatch: Partial<FleetConfig> = {})
   const { dataDir, state } = makeTempState("fleet-authfailure-");
   if (seed) state.upsert(seed);
   const config = makeFleetConfig({ dataDir, projects: [project], ...configPatch });
-  const ctx = makeCtx({ config, state });
+  const ctx = makeCtx({ config, state, events: makeEventsWithDiscord(config) });
   return { ctx, state };
 }
 

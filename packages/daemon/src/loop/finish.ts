@@ -17,6 +17,7 @@ import {
   findChildIssues,
   findOpenPrUrlForBranch,
   getIssue,
+  issueUrl,
   parseChildTaskList,
   swapLabel,
   updateIssueBody,
@@ -27,7 +28,6 @@ import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { hasCommits, pushBranch } from "../github/worktree.ts";
 import { gatherFailurePostMortem } from "./postmortem.ts";
-import { issueUrl, notify } from "../notify.ts";
 
 const PR_FOOTER = "🤖 Generated with [Claude Code](https://claude.com/claude-code)";
 
@@ -164,7 +164,7 @@ export async function finishCompleted(
       update: { prUrl, lastSummary: summary },
       logLine: `PR ${prUrl}`,
     });
-    await notify(ctx, "pr-opened", project, { issueNumber: issue.number, title: result.prTitle ?? issue.title, detail: summary, url: prUrl });
+    ctx.events.emit("ticket:pr-opened", { project, issueNumber: issue.number, title: result.prTitle ?? issue.title, detail: summary, url: prUrl });
   } catch (err) {
     throw new PostCompletionError(
       `the worker completed successfully (commits exist on \`${branch}\`) but the push/PR pipeline failed: ${
@@ -331,7 +331,7 @@ export async function finishBlocked(
   ctx.state.update(project.name, issue.number, { status: "needs-input", lastSummary: reason });
   ctx.emitBoard();
   log("loop", `${blockedScope}: needs input — ${reason}`);
-  await notify(ctx, "needs-input", project, { issueNumber: issue.number, title: issue.title, detail: reason, url: issueUrl(project, issue.number) });
+  ctx.events.emit("ticket:needs-input", { project, issueNumber: issue.number, title: issue.title, detail: reason, url: issueUrl(project, issue.number) });
 }
 
 /**
@@ -388,7 +388,7 @@ export async function finishFailed(
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     ctx.emitBoard();
     log("loop", `${scope}: post-completion step failed (not auto-elevating) — needs input: ${error}`);
-    await notify(ctx, "needs-input", project, { issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
+    ctx.events.emit("ticket:needs-input", { project, issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
     return;
   }
 
@@ -445,7 +445,7 @@ export async function finishFailed(
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     ctx.emitBoard();
     log("loop", `${scope}: failed with no recorded work (${turnCount} turn(s), $0.00) — not auto-elevating, needs input: ${error}`);
-    await notify(ctx, "needs-input", project, { issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
+    ctx.events.emit("ticket:needs-input", { project, issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
     return;
   }
 
@@ -462,7 +462,7 @@ export async function finishFailed(
   await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
   ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
   ctx.emitBoard();
-  await notify(ctx, "failed", project, { issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
+  ctx.events.emit("ticket:failed", { project, issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
 }
 
 /**

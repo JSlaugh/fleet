@@ -1,6 +1,6 @@
 import type { FleetConfig, ProjectConfig, WorkHoursReserveConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeApprovals, makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeCtx, makeEventsWithDiscord, makeFleetConfig, makeIssue, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import { applyContributorFloor, healStaleReadyLabels, processTicket, selectCollaboratorAuthored } from "./claim.ts";
 import { FleetLoop } from "./loop.ts";
 
@@ -76,7 +76,9 @@ function makeLiveLoop(projectOverrides: Partial<ProjectConfig> = {}, configOverr
     projects: [{ ...project, ...projectOverrides }],
     ...configOverrides,
   });
-  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false);
+  // Mirrors index.ts's production wiring: the loop only emits events now, so a
+  // Discord-notification test needs the webhook actually subscribed to see one.
+  const loop = new FleetLoop(config, state, dataDir, makeApprovals(), false, false, makeEventsWithDiscord(config));
   return { loop, state };
 }
 

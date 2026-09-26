@@ -96,15 +96,49 @@ describe("ApprovalManager", () => {
     await expect(promise).resolves.toEqual({ allowed: true, reason: "allowed" });
   });
 
-  it("emits events on request and on settle", async () => {
+  it("emits approval:requested on request and approval:settled with a reason on settle", async () => {
     const mgr = new ApprovalManager();
-    let count = 0;
-    mgr.events.on("approvals", () => count++);
+    let requested = 0;
+    let settled: string | undefined;
+    mgr.events.on("approval:requested", () => {
+      requested++;
+    });
+    mgr.events.on("approval:settled", ({ reason }) => {
+      settled = reason;
+    });
     const promise = baseReq(mgr);
-    expect(count).toBe(1); // request
+    expect(requested).toBe(1);
     const id = mgr.list()[0]!.id;
     mgr.resolve(id, { allowed: true });
-    expect(count).toBe(2); // settle
+    expect(settled).toBe("allowed");
     await promise;
+  });
+
+  it("emits approval:settled with the right reason for every way a request can settle", async () => {
+    vi.useFakeTimers();
+    const mgr = new ApprovalManager();
+    const reasons: string[] = [];
+    mgr.events.on("approval:settled", ({ approval, reason }) => {
+      reasons.push(`${approval.id}:${reason}`);
+    });
+
+    const denied = baseReq(mgr);
+    mgr.resolve(mgr.list()[0]!.id, { allowed: false });
+    await denied;
+
+    const answered = baseReq(mgr, { kind: "question" });
+    mgr.resolve(mgr.list()[0]!.id, { allowed: true, message: "yes" });
+    await answered;
+
+    const timedOut = baseReq(mgr, { timeoutMs: 1_000 });
+    vi.advanceTimersByTime(1_000);
+    await timedOut;
+
+    const abort = new AbortController();
+    const aborted = baseReq(mgr, { signal: abort.signal });
+    abort.abort();
+    await aborted;
+
+    expect(reasons).toEqual(["apr-1-7:denied", "apr-2-7:answered", "apr-3-7:timed out", "apr-4-7:session aborted"]);
   });
 });

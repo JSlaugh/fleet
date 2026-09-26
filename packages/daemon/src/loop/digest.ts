@@ -3,7 +3,6 @@ import { issueUrl } from "./board.ts";
 import type { LoopContext } from "./context.ts";
 import type { DaemonEvent } from "../store/db.ts";
 import { log } from "../log.ts";
-import { postDigest } from "../notify.ts";
 
 const GATE_EVENT_TYPES: Record<string, DigestGateType> = {
   "gate-hold-budget": "budget",
@@ -180,6 +179,6 @@ export async function checkDigestSchedule(ctx: LoopContext): Promise<void> {
   if (ctx.once) return;
 
   const digest = getDigest(ctx, DIGEST_WINDOW_HOURS);
-  await postDigest(ctx, digest);
+  ctx.events.emit("digest:ready", { digest });
   ctx.state.setLastDigestSentAt(now.toISOString());
 }

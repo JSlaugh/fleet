@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeCtx, makeFleetConfig, makeIssue, makeProject, makeRecord } from "../test-support.ts";
+import { makeCtx, makeEventsWithDiscord, makeFleetConfig, makeIssue, makeProject, makeRecord } from "../test-support.ts";
 import { readJournalTail } from "../store/journal.ts";
 import { healOrphanedClaims, heartbeatRefreshAgeMs, isClaimStale, releaseStaleClaims, refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
 import type { StatusCommentInfo } from "../github/github.ts";
+import type { FleetConfig } from "@fleet/shared";
+
+/** Wires the Discord webhook subscriber onto a fresh bus and hands back a `LoopContext` — mirrors what `index.ts` does in production, since the notifier no longer fires directly off the call sites under test. */
+function ctxWithDiscord(config: FleetConfig) {
+  return makeCtx({ config, events: makeEventsWithDiscord(config) });
+}
 
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
@@ -230,7 +236,7 @@ describe("releaseStaleClaims", () => {
     it("posts a stale-released notification once the release succeeds", async () => {
       const config = makeFleetConfig({ projects: [project], notifications: { discordUrl: "https://discord.example/webhook" } });
 
-      await releaseStaleClaims(makeCtx({ config }), project, [issue(1, ["fleet:in-progress"], { assignees: ["someone-else"] })], "daemon-a");
+      await releaseStaleClaims(ctxWithDiscord(config), project, [issue(1, ["fleet:in-progress"], { assignees: ["someone-else"] })], "daemon-a");
 
       expect(fetch).toHaveBeenCalledOnce();
       const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];

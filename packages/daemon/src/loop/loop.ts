@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import type {
   BoardTicket,
   BudgetStatus,
@@ -10,6 +9,14 @@ import type {
   ProjectConfig,
   WorkHoursReserveStatus,
 } from "@fleet/shared";
+import { FleetEvents } from "../events.ts";
+
+/**
+ * How long shutdown waits for in-flight event listeners (webhook posts) before
+ * the process exits — a little over `notify.ts`'s own 5s per-post timeout, so a
+ * post that's going to finish gets to.
+ */
+const EVENT_FLUSH_TIMEOUT_MS = 6_000;
 import type { ApprovalManager } from "../session/approvals.ts";
 import { checkAuthGate } from "./authGate.ts";
 import { cleanupFinished, dormantProjectNames, getBoard, issueUrl, pausedProjectNames } from "./board.ts";
@@ -63,10 +70,10 @@ export class FleetLoop {
   private readonly workHoursReserveNotified = new Set<string>();
   /** Whether the current auth-gate hold spell has already logged its event; see `LoopContext`. */
   private readonly authGateNotified = new Set<"held">();
-  private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board"));
+  private readonly boardThrottle = new TrailingThrottle(1000, () => this.events.emit("board:updated", {}));
   private readonly history: HistoryStore;
   private readonly ctx: LoopContext;
-  readonly events = new EventEmitter();
+  readonly events: FleetEvents;
 
   constructor(
     private readonly config: FleetConfig,
@@ -75,14 +82,17 @@ export class FleetLoop {
     approvals: ApprovalManager,
     dryRun: boolean,
     once: boolean = false,
+    events: FleetEvents = new FleetEvents(),
   ) {
     this.history = new HistoryStore(dataDirPath);
+    this.events = events;
     this.ctx = {
       config,
       state,
       history: this.history,
       dataDirPath,
       approvals,
+      events,
       dryRun,
       once,
       running: this.running,
@@ -201,15 +211,17 @@ export class FleetLoop {
     return true;
   }
 
-  /** Drain mode: stop claiming/resuming and resolve once every running ticket reaches a normal terminal state. */
+  /** Drain mode: stop claiming/resuming and resolve once every running ticket reaches a normal terminal state and its notifications are out. */
   async shutdownDrain(): Promise<void> {
     this.setPaused(true);
     await this.drain();
+    await this.events.flush(EVENT_FLUSH_TIMEOUT_MS);
   }
 
   /** Stop-now: abort every live session, leaving each interrupted ticket resumable on the next boot. */
   async shutdownNow(): Promise<void> {
     await stopLiveSessions(this.ctx);
+    await this.events.flush(EVENT_FLUSH_TIMEOUT_MS);
   }
 
   getBoard(): BoardTicket[] {

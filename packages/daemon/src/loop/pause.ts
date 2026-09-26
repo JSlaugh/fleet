@@ -1,10 +1,9 @@
 import type { ProjectConfig } from "@fleet/shared";
 import { invalidateAuthProbeCache } from "./authGate.ts";
 import { key, type LoopContext } from "./context.ts";
-import { upsertStatusComment } from "../github/github.ts";
+import { issueUrl, upsertStatusComment } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import type { ReadyIssue } from "../github/github.ts";
-import { issueUrl, notify } from "../notify.ts";
 
 /**
  * True while claims and resumes should be skipped: either an operator-initiated
@@ -77,7 +76,8 @@ export function extendPause(ctx: LoopContext, project: ProjectConfig, issue: Pic
       issueNumber: issue.number,
       data: { detail: `plan usage limit hit — daemon paused until ${pausedUntil.toISOString()}` },
     });
-    void notify(ctx, "paused", project, {
+    ctx.events.emit("daemon:paused", {
+      project,
       issueNumber: issue.number,
       title: issue.title,
       detail: `plan usage limit hit — daemon paused until ${pausedUntil.toISOString()}`,
@@ -151,7 +151,8 @@ export function pauseForAuthFailure(ctx: LoopContext, project: ProjectConfig, is
     issueNumber: issue.number,
     data: { detail: "authentication failure detected — daemon paused until an operator resumes" },
   });
-  void notify(ctx, "paused", project, {
+  ctx.events.emit("daemon:paused", {
+    project,
     issueNumber: issue.number,
     title: issue.title,
     detail: "authentication failure detected (Anthropic auth) — daemon paused until an operator resumes",

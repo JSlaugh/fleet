@@ -14,8 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
 import type { FleetConfig, ProjectConfig, TicketRecord } from "@fleet/shared";
+import { FleetEvents } from "./events.ts";
 import type { ReadyIssue } from "./github/github.ts";
 import type { LoopContext } from "./loop/context.ts";
+import { subscribeDiscordWebhook } from "./notify.ts";
 import type { ApprovalManager } from "./session/approvals.ts";
 import { HistoryStore, StateStore } from "./store/state.ts";
 
@@ -104,6 +106,17 @@ export function makeApprovals(): ApprovalManager {
   return { request: vi.fn(), list: vi.fn(() => []) } as unknown as ApprovalManager;
 }
 
+/**
+ * A fresh event bus with the Discord webhook subscriber wired on, mirroring
+ * `index.ts`'s production wiring — for tests that assert the webhook fires
+ * off a real emitted event rather than a direct `notify()` call.
+ */
+export function makeEventsWithDiscord(config: Pick<FleetConfig, "notifications">): FleetEvents {
+  const events = new FleetEvents();
+  subscribeDiscordWebhook(events, { config, dryRun: false, once: false });
+  return events;
+}
+
 /** POSTs a JSON body to a Hono test app — the fetch boilerplate every server test repeats. */
 export function postJson(
   app: { request: (path: string, init?: RequestInit) => Response | Promise<Response> },
@@ -134,6 +147,7 @@ export function makeCtx(patch: Partial<LoopContext> = {}): LoopContext {
     history: patch.history ?? new HistoryStore(dataDir),
     dataDirPath: dataDir,
     approvals: makeApprovals(),
+    events: patch.events ?? new FleetEvents(),
     dryRun: false,
     once: false,
     running: new Map(),

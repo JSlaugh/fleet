@@ -8,6 +8,7 @@ vi.mock("../github/github.ts", () => ({
 	getIssueComments: vi.fn(async () => []),
 	getIssueLabels: vi.fn(async () => []),
 	getPrState: vi.fn(),
+	issueUrl: vi.fn((project: { githubRepo: string }, issueNumber: number) => `https://github.com/${project.githubRepo}/issues/${issueNumber}`),
 	listFleetIssues: vi.fn(async () => []),
 	markReady: vi.fn(async () => {}),
 	swapLabel: vi.fn(async () => {}),
@@ -86,6 +87,22 @@ describe("shutdownDrain", () => {
 		expect(settled).toBe(false);
 
 		resolveRun?.();
+		await draining;
+		expect(settled).toBe(true);
+	});
+
+	it("waits for an in-flight notification before resolving, so the process doesn't exit mid-post", async () => {
+		const { loop } = makeLoop();
+		let finishPost!: () => void;
+		loop.events.on("ticket:pr-opened", () => new Promise<void>((resolve) => (finishPost = resolve)));
+		loop.events.emit("ticket:pr-opened", { project: makeProject(), issueNumber: 7, title: "t", detail: "d", url: "u" });
+
+		let settled = false;
+		const draining = loop.shutdownDrain().then(() => (settled = true));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(settled).toBe(false);
+
+		finishPost();
 		await draining;
 		expect(settled).toBe(true);
 	});
