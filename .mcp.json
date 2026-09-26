@@ -1,17 +1,13 @@
 {
   "mcpServers": {
     "fleet": {
-      "command": "pnpm",
+      "command": "node",
       "args": [
-        "--dir",
-        "C:/Users/j/github/fleet",
-        "--filter",
-        "@fleet/mcp",
-        "start"
+        "-e",
+        "const p=require(\"path\"),f=require(\"fs\");for(let d=process.cwd();;d=p.dirname(d)){const l=p.join(d,\".fleet-mcp\",\"launch.mjs\");if(f.existsSync(l)){import(require(\"url\").pathToFileURL(l).href);break}if(p.dirname(d)===d){console.error(\"fleet: no .fleet-mcp/launch.mjs found above \"+process.cwd());process.exit(1)}}"
       ],
       "env": {
-        "FLEET_PROJECT": "fleet",
-        "FLEET_URL": "http://localhost:4400"
+        "FLEET_PROJECT": "fleet"
       }
     }
   }

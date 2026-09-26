@@ -48,12 +48,32 @@ export function selectEffort(
   return project.effort;
 }
 
+/** The subset of `WorkerSession` `makeCanUseTool` needs — pause/resume the turn timeout around a parked approval wait. */
+export interface TurnClockHandle {
+  pauseTurnClock(): void;
+  resumeTurnClock(): void;
+}
+
 /**
  * Routes every non-allowlisted tool call (and `AskUserQuestion`) to the
  * dashboard — except in `--once` mode, where no dashboard exists to answer, so
  * requests deny immediately instead of waiting out `approvalTimeoutMinutes`.
+ *
+ * `getSession` is a getter rather than the session itself because `runSession`
+ * must build this `canUseTool` before the `WorkerSession` it will be attached
+ * to exists (the session's constructor takes `canUseTool` as an option) — by
+ * the time a real tool call reaches this function the session has always been
+ * assigned. Time spent parked here must not count against the turn's
+ * `ticketTimeoutMinutes` (fleet#225): a human answering from a phone can take
+ * hours, and that wait is not the model "working."
  */
-export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNumber: number, journal: Journal): CanUseTool {
+export function makeCanUseTool(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issueNumber: number,
+  journal: Journal,
+  getSession?: () => TurnClockHandle | undefined,
+): CanUseTool {
   return async (toolName, input, { signal }) => {
     const kind = toolName === "AskUserQuestion" ? "question" : "permission";
     if (ctx.once) {
@@ -71,37 +91,54 @@ export function makeCanUseTool(ctx: LoopContext, project: ProjectConfig, issueNu
       };
     }
     const requestedAt = Date.now();
-    const outcome = await ctx.approvals.request({
-      project: project.name,
-      issueNumber,
-      toolName,
-      kind,
-      input,
-      timeoutMs: ctx.config.approvalTimeoutMinutes * 60_000,
-      signal,
+    ctx.state.update(project.name, issueNumber, {
+      lastActivityAt: new Date().toISOString(),
+      lastActivityNote: `awaiting approval: ${toolName}`,
     });
-    journal.append({
-      type: "fleet",
-      event: "approval-decided",
-      toolName,
-      kind,
-      outcome: outcome.reason ?? (outcome.allowed ? "allowed" : "denied"),
-      waitMs: Date.now() - requestedAt,
-    });
-    if (kind === "question") {
-      if (outcome.message) {
-        return { behavior: "deny", message: `The user answered your questions:\n\n${outcome.message}\n\nIncorporate these answers and continue.` };
+    ctx.emitBoard();
+    getSession?.()?.pauseTurnClock();
+    try {
+      const outcome = await ctx.approvals.request({
+        project: project.name,
+        issueNumber,
+        toolName,
+        kind,
+        input,
+        timeoutMs: ctx.config.approvalTimeoutMinutes * 60_000,
+        signal,
+      });
+      journal.append({
+        type: "fleet",
+        event: "approval-decided",
+        toolName,
+        kind,
+        outcome: outcome.reason ?? (outcome.allowed ? "allowed" : "denied"),
+        waitMs: Date.now() - requestedAt,
+      });
+      if (kind === "question") {
+        if (outcome.message) {
+          return { behavior: "deny", message: `The user answered your questions:\n\n${outcome.message}\n\nIncorporate these answers and continue.` };
+        }
+        return {
+          behavior: "deny",
+          message: `No answer arrived within ${ctx.config.approvalTimeoutMinutes} minutes. Finish with status "blocked" and restate your questions in blockedReason.`,
+        };
       }
+      if (outcome.allowed) return { behavior: "allow", updatedInput: input };
       return {
         behavior: "deny",
-        message: `No answer arrived within ${ctx.config.approvalTimeoutMinutes} minutes. Finish with status "blocked" and restate your questions in blockedReason.`,
+        message: outcome.message ?? `Denied via fleet dashboard (or approval timed out after ${ctx.config.approvalTimeoutMinutes} minutes). Find another way, or finish with status "blocked" explaining what you need.`,
       };
+    } finally {
+      getSession?.()?.resumeTurnClock();
+      // A parallel approval for this ticket may still be parked: keep the note naming it.
+      const stillWaiting = ctx.approvals.list().find((a) => a.project === project.name && a.issueNumber === issueNumber);
+      ctx.state.update(project.name, issueNumber, {
+        lastActivityAt: new Date().toISOString(),
+        lastActivityNote: stillWaiting ? `awaiting approval: ${stillWaiting.toolName}` : undefined,
+      });
+      ctx.emitBoard();
     }
-    if (outcome.allowed) return { behavior: "allow", updatedInput: input };
-    return {
-      behavior: "deny",
-      message: outcome.message ?? `Denied via fleet dashboard (or approval timed out after ${ctx.config.approvalTimeoutMinutes} minutes). Find another way, or finish with status "blocked" explaining what you need.`,
-    };
   };
 }
 
@@ -171,7 +208,13 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   }
   const contract = resolveTypeContract(scope, worktree.path, opts.ticketType);
   const verify = resolveTypeVerify(scope, worktree.path, opts.ticketType);
-  const session = new WorkerSession({
+  // `canUseTool` needs to pause/resume the session's turn clock around an
+  // approval wait, but the session doesn't exist until after it's built —
+  // `session` is assigned right below, before any tool call can actually
+  // reach `getSession()`.
+  let session: WorkerSession;
+  const canUseTool = makeCanUseTool(ctx, project, issue.number, journal, () => session);
+  session = new WorkerSession({
     project,
     scope,
     worktreePath: worktree.path,
@@ -190,7 +233,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
       });
       ctx.emitBoard();
     },
-    canUseTool: makeCanUseTool(ctx, project, issue.number, journal),
+    canUseTool,
     claudeExecutable: ctx.config.claudeExecutable,
     resumeSessionId: opts.resumeSessionId,
   });

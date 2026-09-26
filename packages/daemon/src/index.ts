@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalManager } from "./session/approvals.ts";
+import { FLEET_DIR } from "@fleet/mcp/stamp";
 import { loadConfig } from "./config.ts";
 import { FleetEvents } from "./events.ts";
-import { ensureLabels, getAuthenticatedLogin } from "./github/github.ts";
+import { ensureLabels, ensureMissingLabels, getAuthenticatedLogin } from "./github/github.ts";
 import { FleetLoop } from "./loop/loop.ts";
 import { log, logError, suppressCanUseToolShadowedWarning } from "./log.ts";
 import { subscribeDiscordWebhook } from "./notify.ts";
@@ -15,7 +16,7 @@ import { parseUpdateArgs, performUpdate } from "./update.ts";
 const USAGE = `Usage:
   fleet-daemon [--config <path>] [--once] [--dry-run]   run the polling loop
   fleet-daemon init-labels [--config <path>]            create fleet:* labels in every configured repo
-  fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + .mcp.json into every configured repo
+  fleet-daemon sync-templates [--config <path>]         stamp the fleet skill + MCP registration (per agents) into every configured repo
   fleet-daemon update [--config <path>] [--drain]        pull latest, install, restart the running daemon
 
 Options:
@@ -38,7 +39,15 @@ async function main(): Promise<void> {
 
   const configIndex = args.indexOf("--config");
   const configPath = configIndex !== -1 ? args[configIndex + 1] : undefined;
-  const { config, configDir } = loadConfig(configPath);
+  const { config, configDir, configPath: loadedConfigPath } = loadConfig(configPath);
+  // Worker sessions run in worktrees, which don't carry a repo's gitignored
+  // fleet.config.json — so the stamped fleet MCP launcher inside them finds
+  // this daemon's config and checkout through the inherited environment
+  // instead. Assigned unconditionally: a FLEET_CONFIG left in the operator's
+  // shell may name some other repo's config, and a `--config` outside the
+  // checkout means the config's directory isn't where fleet lives.
+  process.env.FLEET_CONFIG = loadedConfigPath;
+  process.env.FLEET_DIR = FLEET_DIR;
 
   if (args[0] === "init-labels") {
     for (const project of config.projects) {
@@ -50,7 +59,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "sync-templates") {
-    await syncTemplates(config.projects, { port: config.dashboardPort });
+    await syncTemplates(config.projects, { port: config.dashboardPort, agents: config.agents });
     return;
   }
 
@@ -71,6 +80,16 @@ async function main(): Promise<void> {
 
   const once = args.includes("--once");
   const dryRun = args.includes("--dry-run");
+  if (!dryRun) {
+    for (const project of config.projects) {
+      try {
+        const created = await ensureMissingLabels(project);
+        if (created.length > 0) log("labels", `${project.githubRepo}: created missing ${created.join(", ")}`);
+      } catch (err) {
+        logError("labels", `${project.githubRepo}: could not check for missing fleet labels`, err);
+      }
+    }
+  }
   const dataDir = join(configDir, config.dataDir);
   const state = new StateStore(dataDir);
   state.clearLiveFlags();

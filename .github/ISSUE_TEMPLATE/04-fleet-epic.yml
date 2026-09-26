@@ -9,7 +9,7 @@ body:
         (linked back here via `Part-of:`), so the problem statement carries all the weight —
         acceptance criteria and verification belong on the children, not here.
 
-        Not ready to kick off decomposition yet? Remove the `fleet:ready` label after filing.
+        Not ready to kick off decomposition yet? Swap `fleet:ready` for `fleet:backlog` after filing.
   - type: textarea
     id: problem
     attributes:

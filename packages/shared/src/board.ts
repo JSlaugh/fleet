@@ -1,8 +1,9 @@
 import type { ModelTier, ModelUsageSummary, TicketRecord } from "./tickets.ts";
 
-export type BoardStatus = "ready" | "in-progress" | "needs-input" | "review" | "done";
+export type BoardStatus = "backlog" | "ready" | "in-progress" | "needs-input" | "review" | "done";
 
 export const BOARD_COLUMNS: { status: BoardStatus; title: string }[] = [
+  { status: "backlog", title: "Backlog" },
   { status: "ready", title: "Ready" },
   { status: "in-progress", title: "In progress" },
   { status: "needs-input", title: "Needs input" },

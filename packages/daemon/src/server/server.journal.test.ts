@@ -60,5 +60,6 @@ describe("readJournalTail (via GET /api/tickets/:project/:issue)", () => {
     expect(journal).toHaveLength(200);
     expect(journal[0]).toEqual({ ts: "entry-5", type: "fleet" });
     expect(journal[journal.length - 1]).toEqual({ ts: "entry-204", type: "fleet" });
-  });
+    // 205 individually committed journal writes — same slow-disk flake as HistoryStore's bulk-seed test.
+  }, 30_000);
 });

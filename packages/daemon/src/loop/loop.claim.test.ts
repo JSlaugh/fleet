@@ -10,6 +10,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   toBoardTicket: vi.fn(() => null),
   swapLabel: vi.fn(async () => {}),
+  removeLabel: vi.fn(async () => {}),
   getIssueComments: vi.fn(async () => []),
   // `makeIssue`'s default author is "collab-author" — this keeps existing
   // claim-flow tests passing the contributor floor without opting in per test.
@@ -591,6 +592,25 @@ describe("processTicket", () => {
     const record = ctx.state.get("alpha", 62);
     expect(record?.lastCommentHandledAt).toBeDefined();
     expect(record?.lastCommentHandledAt).toBe(record?.startedAt);
+  });
+
+  it("strips a stale fleet:backlog left on a ticket released by hand", async () => {
+    vi.mocked(github.removeLabel).mockClear();
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx, project, issue(62, ["fleet:ready", "fleet:backlog"]));
+
+    expect(github.removeLabel).toHaveBeenCalledWith(project, 62, "fleet:backlog");
+    expect(ctx.state.get("alpha", 62)?.status).toBe("running");
+  });
+
+  it("leaves labels alone on a ticket that was never in the backlog", async () => {
+    vi.mocked(github.removeLabel).mockClear();
+    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
+
+    await runProcessTicket(ctx);
+
+    expect(github.removeLabel).not.toHaveBeenCalled();
   });
 
   it("self-assigns before verifying the claim", async () => {

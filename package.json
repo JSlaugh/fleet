@@ -14,7 +14,8 @@
     "daemon:supervised": "node scripts/fleet-supervisor.mjs",
     "mcp": "pnpm --filter @fleet/mcp start",
     "dashboard:dev": "pnpm --filter @fleet/dashboard dev",
-    "dashboard:build": "turbo run build --filter=@fleet/dashboard"
+    "dashboard:build": "turbo run build --filter=@fleet/dashboard",
+    "fleet:init": "pnpm --filter @fleet/mcp run fleet-init --"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

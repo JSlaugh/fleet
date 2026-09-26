@@ -5,7 +5,7 @@ description: File well-formed tickets into this project's fleet backlog via the 
 
 # fleet-backlog
 
-Fleet is this repo's backlog orchestrator: tickets are GitHub issues, and a daemon picks up ready ones and runs them as autonomous worker sessions. GitHub is the single source of truth — these tools only talk to the fleet daemon, which is the only thing that touches the issue queue.
+Fleet is this repo's backlog orchestrator: tickets are GitHub issues, and a daemon picks up ready ones and runs them as autonomous worker sessions. GitHub is the single source of truth. `fleet_file_ticket` and `fleet_query_backlog` work whether or not a daemon is running — filing goes through the daemon when one is configured and straight to GitHub via `gh` otherwise; the board/history/journal tools read the daemon and are only present when one is configured.
 
 ## When to use this
 
@@ -30,7 +30,7 @@ Don't use this for the work you're currently doing — finish that yourself. Thi
 
 3. **Pick a priority.** `p1` for user-facing bugs or blockers, `p2` for the default case, `p3` for nice-to-haves and minor cleanups. Omit it if you're unsure — a human can triage.
 
-4. **File it** with `fleet_file_ticket`, passing `title`, `body`, and optionally `priority`, `ready`, and `dependsOn`. Leave `ready` at its default (true) unless the ticket needs human curation before a worker should pick it up. Use `dependsOn` (issue numbers) when this ticket shouldn't be picked up until other tickets close.
+4. **File it** with `fleet_file_ticket`, passing `title`, `body`, and optionally `priority`, `ready`, and `dependsOn`. Leave `ready` at its default (true) unless the ticket needs human curation before a worker should pick it up — `ready: false` files it as `fleet:backlog`, which shows in the dashboard's Backlog column with a **Ready** button. Use `dependsOn` (issue numbers) when this ticket shouldn't be picked up until other tickets close.
 
 5. **Tell the user** what you filed, with the issue number and URL the tool returns, and continue with your original task.
 

@@ -1,7 +1,7 @@
 {
   "pollIntervalSeconds": 60,
   "dashboardPort": 4400,
-  "worktreeRoot": "C:/Users/j/github/.fleet-worktrees",
+  "worktreeRoot": "C:/path/to/.fleet-worktrees",
   "stalledAfterMinutes": 10,
   "ticketTimeoutMinutes": 30,
   "approvalTimeoutMinutes": 10,
@@ -12,13 +12,14 @@
   "windowBudgetUsd": 8,
   "usageWindowHours": 5,
   "budgetLightThreshold": 0.85,
-  "claudeExecutable": "C:/Users/j/.local/bin/claude.exe",
+  "claudeExecutable": "C:/path/to/claude.exe",
   "dataDir": ".fleet",
   "workHoursReserve": {
     "workStart": "09:00",
     "days": ["mon", "tue", "wed", "thu", "fri"],
     "reserveHours": 2
   },
+  "agents": ["claude"],
   "notifications": {
     "discordUrl": "https://discord.com/api/webhooks/000000000000000000/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
     "events": ["needs-input", "pr-opened", "failed", "paused", "auto-merged", "stale-released"],
@@ -27,7 +28,7 @@
   "projects": [
     {
       "name": "example",
-      "repoPath": "C:/Users/j/github/example",
+      "repoPath": "C:/path/to/example",
       "githubRepo": "owner/example",
       "defaultBranch": "main",
       "maxConcurrent": 1,
@@ -46,8 +47,9 @@
       "machineReview": true,
       "intakeLint": true,
       "autoMerge": false,
-      "approvers": ["j"],
+      "approvers": ["your-github-login"],
       "mergeMethod": "squash",
+      "agents": ["claude", "codex"],
       "notifications": {
         "discordUrl": "https://discord.com/api/webhooks/111111111111111111/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
         "events": ["needs-input", "pr-opened", "failed"]

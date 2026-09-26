@@ -37,10 +37,18 @@ export function pickAutoResumable(
     .slice(0, capacity);
 }
 
-/** Marks tickets with no activity since the cutoff as stalled, so `recoverStalled` can pick them up. */
+/**
+ * Marks tickets with no activity since the cutoff as stalled, so `recoverStalled`
+ * can pick them up. Skips a ticket with a pending tool approval: a parked
+ * approval produces no SDK messages by design (fleet#225 pauses the turn clock
+ * for exactly this wait), so "no activity" there means "waiting on a human,"
+ * not "stuck."
+ */
 export function flagStalled(ctx: LoopContext): void {
   const cutoff = Date.now() - ctx.config.stalledAfterMinutes * 60_000;
+  const awaitingApproval = new Set(ctx.approvals.list().map((a) => key(a.project, a.issueNumber)));
   for (const ticket of ctx.state.all()) {
+    if (awaitingApproval.has(key(ticket.project, ticket.issueNumber))) continue;
     if (ticket.status === "running" && Date.parse(ticket.lastActivityAt) < cutoff) {
       ctx.state.update(ticket.project, ticket.issueNumber, { status: "stalled" });
       log("loop", `${key(ticket.project, ticket.issueNumber)}: STALLED (no activity since ${ticket.lastActivityAt})`);

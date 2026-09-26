@@ -482,5 +482,6 @@ describe("HistoryStore", () => {
     expect(all.map((r) => r.issueNumber)).toContain(0);
     expect(all[0]?.issueNumber).toBe(1009);
     expect(all.at(-1)?.issueNumber).toBe(0);
-  });
+    // 1010 individually committed SQLite writes: seconds on a loaded Windows box, so the 5s default flakes under turbo's parallel suites.
+  }, 30_000);
 });

@@ -1,5 +1,4 @@
 import {
-  ALL_FLEET_LABELS,
   ELEVATE_LABEL,
   FLEET_LABELS,
   PLAN_LABEL,
@@ -7,55 +6,41 @@ import {
   boardStatusFromLabels,
   priorityOf,
   profileNames,
-  typeLabel,
   typeOf,
   type BoardTicket,
   type ProjectConfig,
   type TicketDiffFile,
 } from "@fleet/shared";
+import {
+  clampBody,
+  issueNumberFromUrl,
+  ensureFleetLabels,
+  ensureTypeLabel,
+  type FleetIssue,
+  type ReadyIssue,
+} from "@fleet/github";
 import { readBuildSpec } from "./buildspec.ts";
 import { run, runJson, runJsonPaginated } from "./exec.ts";
+
+// The issue/label primitives moved to @fleet/github so the MCP server can file
+// tickets without the daemon; re-exported so daemon call sites (and the tests
+// that mock this module) keep one import path.
+export {
+  createIssue,
+  getIssue,
+  issueNumberFromUrl,
+  listFleetIssues,
+  ensureMissingLabels,
+  listIssueStates,
+  priorityRank,
+  updateIssueBody,
+  type FleetIssue,
+  type ReadyIssue,
+} from "@fleet/github";
 import { log, logError } from "../log.ts";
 
 const STATUS_MARKER = "<!-- fleet-status -->";
 const HEARTBEAT_LINE_REGEX = /^<!--\s*fleet-heartbeat:\s*(\S+)\s+owner:\s*(\S+)\s*-->$/m;
-
-/** GitHub rejects issue/comment/PR bodies over 65,536 chars with a 422 — clamp with a visible marker instead of failing the whole call. */
-const MAX_BODY_CHARS = 65_000;
-function clampBody(body: string): string {
-  if (body.length <= MAX_BODY_CHARS) return body;
-  return `${body.slice(0, MAX_BODY_CHARS)}\n\n…(truncated: body exceeded GitHub's length limit)`;
-}
-
-export interface ReadyIssue {
-  number: number;
-  title: string;
-  body: string;
-  labels: string[];
-  /** Issue-opener's login — the contributor-floor check filters claims on this. Empty for synthetic issues built for a resume, where the original author isn't tracked. */
-  author: string;
-  /**
-   * Current issue assignees, for the claim routing rule (unassigned or
-   * assigned-to-me is claimable; assigned to anyone else is not). Undefined
-   * for synthetic issues built for a resume, where callers treat it the same
-   * as empty rather than needing every call site to populate it.
-   */
-  assignees?: string[];
-}
-
-interface FleetIssue extends ReadyIssue {
-  url: string;
-}
-
-interface GhIssueJson {
-  number: number;
-  title: string;
-  body: string;
-  labels: { name: string }[];
-  url: string;
-  author: { login: string };
-  assignees: { login: string }[];
-}
 
 interface RestComment {
   id: number;
@@ -81,36 +66,6 @@ export function projectUrl(project: { githubRepo: string }): string {
   return `https://github.com/${project.githubRepo}`;
 }
 
-export function priorityRank(labels: string[]): number {
-  const index = PRIORITY_LABELS.findIndex((p) => labels.includes(p));
-  return index === -1 ? PRIORITY_LABELS.length : index;
-}
-
-export async function listFleetIssues(project: ProjectConfig): Promise<FleetIssue[]> {
-  const issues = await runJson<GhIssueJson[]>("gh", [
-    "issue", "list",
-    "--repo", project.githubRepo,
-    "--state", "open",
-    "--json", "number,title,body,labels,url,author,assignees",
-    "--limit", "1000",
-  ]);
-  if (issues.length >= 1000) {
-    log("github", `WARNING: ${project.githubRepo} returned 1000 open issues — the listing may be truncated and older fleet tickets invisible`);
-  }
-  return issues
-    .map((issue) => ({
-      number: issue.number,
-      title: issue.title,
-      body: issue.body ?? "",
-      labels: issue.labels.map((l) => l.name),
-      url: issue.url,
-      author: issue.author?.login ?? "",
-      assignees: issue.assignees.map((a) => a.login),
-    }))
-    .filter((issue) => issue.labels.some((l) => l.startsWith("fleet:")))
-    .sort((a, b) => priorityRank(a.labels) - priorityRank(b.labels) || a.number - b.number);
-}
-
 export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blockedBy: number[] = []): BoardTicket | null {
   const status = boardStatusFromLabels(issue.labels);
   if (!status) return null;
@@ -129,34 +84,6 @@ export function toBoardTicket(project: ProjectConfig, issue: FleetIssue, blocked
     ...(epicNumber !== undefined ? { epicNumber } : {}),
     ...(children.length > 0 ? { epicProgress: { closed: children.filter((c) => c.checked).length, total: children.length } } : {}),
   };
-}
-
-/**
- * Reads dependencies from two possible spots in an issue body, unioning both: a
- * `Depends-on: #12, #14` line typed anywhere (case-insensitive key, comma/space
- * separated), and the `### Depends on\n\n#12 #14` section GitHub renders for the
- * `depends-on` field of the fleet-task issue form. Entries that aren't a bare
- * `#<digits>` token are ignored rather than rejecting the whole match, so a stray
- * typo in the list doesn't drop every other dependency.
- */
-export function parseDependsOn(body: string): number[] {
-  const lineMatch = /^\s*depends-on\s*:\s*(.+)$/im.exec(body);
-  const sectionMatch = /^###\s*depends on\s*\r?\n+([^\n]*)/im.exec(body);
-  const raw = [lineMatch?.[1], sectionMatch?.[1]].filter((s): s is string => s !== undefined).join(" ");
-  const numbers = raw
-    .split(/[\s,]+/)
-    .map((token) => /^#(\d+)$/.exec(token.trim()))
-    .filter((m): m is RegExpExecArray => m !== null)
-    .map((m) => Number(m[1] ?? ""))
-    .filter((n) => !Number.isNaN(n));
-  return [...new Set(numbers)];
-}
-
-/** Appends a `Depends-on: #...` line `parseDependsOn` will parse back out. */
-export function bodyWithDependsOn(body: string, dependsOn: number[] | undefined): string {
-  if (!dependsOn || dependsOn.length === 0) return body;
-  const line = `Depends-on: ${dependsOn.map((n) => `#${n}`).join(", ")}`;
-  return body.trim().length > 0 ? `${body}\n\n${line}` : line;
 }
 
 /**
@@ -252,89 +179,6 @@ export function parseChildTaskList(body: string): { number: number; checked: boo
   return items;
 }
 
-interface GhIssueStateJson {
-  number: number;
-  state: string;
-}
-
-/**
- * Every open *and* closed issue number in the repo, unfiltered by label — a
- * dependency may reference an issue that never carried a `fleet:*` label.
- * `all` also covers closed issues so a nonexistent dep number can be told apart
- * from a legitimately closed one.
- */
-export async function listIssueStates(project: ProjectConfig): Promise<{ open: Set<number>; all: Set<number> }> {
-  const issues = await runJson<GhIssueStateJson[]>("gh", [
-    "issue", "list",
-    "--repo", project.githubRepo,
-    "--state", "all",
-    "--json", "number,state",
-    "--limit", "1000",
-  ]);
-  if (issues.length >= 1000) {
-    log("github", `WARNING: ${project.githubRepo} has 1000+ total issues — dependency/epic state checks may miss older open issues`);
-  }
-  return {
-    open: new Set(issues.filter((i) => i.state === "OPEN").map((i) => i.number)),
-    all: new Set(issues.map((i) => i.number)),
-  };
-}
-
-/**
- * `gh issue create` prints the new issue's URL on stdout (after any hint lines),
- * and the number is its last path segment.
- */
-export function issueNumberFromUrl(url: string): number {
-  const number = Number(url.trim().split("/").pop());
-  if (!Number.isInteger(number) || number <= 0) throw new Error(`could not parse an issue number from ${url.trim()}`);
-  return number;
-}
-
-export async function createIssue(
-  project: ProjectConfig,
-  opts: { title: string; body: string; labels: string[] },
-): Promise<{ number: number; url: string }> {
-  const args = [
-    "issue", "create",
-    "--repo", project.githubRepo,
-    "--title", opts.title,
-    "--body-file", "-",
-  ];
-  for (const label of opts.labels) args.push("--label", label);
-  const { stdout } = await run("gh", args, { stdin: clampBody(opts.body) });
-  const url = stdout.trim().split("\n").pop()?.trim() ?? "";
-  return { number: issueNumberFromUrl(url), url };
-}
-
-/** Overwrites an issue's body — used to stamp the `## Children` task list onto a freshly-planned epic. */
-export async function updateIssueBody(project: ProjectConfig, issueNumber: number, body: string): Promise<void> {
-  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--body-file", "-"], { stdin: clampBody(body) });
-}
-
-/**
- * A single issue's number/title/body, or `undefined` on any fetch failure
- * (deleted issue, transient `gh` error) — callers that use this for prompt
- * framing treat a miss as "skip the context" rather than failing the ticket.
- */
-export async function getIssue(project: ProjectConfig, issueNumber: number): Promise<{ number: number; title: string; body: string; labels: string[] } | undefined> {
-  try {
-    const raw = await runJson<{ number: number; title: string; body: string | null; labels: { name: string }[] }>("gh", [
-      "issue", "view", String(issueNumber),
-      "--repo", project.githubRepo,
-      "--json", "number,title,body,labels",
-    ]);
-    return { number: raw.number, title: raw.title, body: raw.body ?? "", labels: raw.labels.map((l) => l.name) };
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Issue numbers whose body carries this epic's `Part-of: #<n>` stamp — the
- * GitHub-side "were children already filed?" check `finishPlanned` gates on,
- * which survives crashes and state-record wipes where a local marker wouldn't.
- * Searches all states: a closed child still proves filing happened.
- */
 export async function findChildIssues(project: ProjectConfig, epicNumber: number): Promise<number[]> {
   const issues = await runJson<{ number: number }[]>("gh", [
     "issue", "list",
@@ -434,6 +278,11 @@ export async function swapLabel(project: ProjectConfig, issueNumber: number, fro
   ]);
 }
 
+/** Drop one label from an issue. */
+export async function removeLabel(project: ProjectConfig, issueNumber: number, label: string): Promise<void> {
+  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--remove-label", label]);
+}
+
 /**
  * Move an issue from in-progress back to ready, tagged `fleet:elevate`, so the
  * next poll cycle re-claims it on the project's elevated model. Used for the
@@ -462,7 +311,7 @@ export async function escalateToElevated(project: ProjectConfig, issueNumber: nu
  */
 export function readyLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
   const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
-  for (const label of [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
+  for (const label of [FLEET_LABELS.backlog, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
     args.push("--remove-label", label);
   }
   args.push("--add-label", FLEET_LABELS.ready);
@@ -1025,15 +874,7 @@ export async function closeIssue(project: ProjectConfig, issueNumber: number): P
 }
 
 export async function ensureLabels(project: ProjectConfig): Promise<void> {
-  for (const label of ALL_FLEET_LABELS) {
-    await run("gh", [
-      "label", "create", label.name,
-      "--repo", project.githubRepo,
-      "--color", label.color,
-      "--description", label.description,
-      "--force",
-    ]);
-  }
+  await ensureFleetLabels(project);
 
   // Type labels are per-repo (driven by that repo's own fleet.yaml), so they
   // never join ALL_FLEET_LABELS — reading the main checkout after a fetch is
@@ -1050,12 +891,6 @@ export async function ensureLabels(project: ProjectConfig): Promise<void> {
 
   for (const name of profileNames(spec)) {
     log("labels", `${project.name}: creating type label for fleet.yaml profile "${name}"`);
-    await run("gh", [
-      "label", "create", typeLabel(name),
-      "--repo", project.githubRepo,
-      "--color", "c5def5",
-      "--description", `Route this ticket to the "${name}" fleet.yaml setup profile`,
-      "--force",
-    ]);
+    await ensureTypeLabel(project, name);
   }
 }
