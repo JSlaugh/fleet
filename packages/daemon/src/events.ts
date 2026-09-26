@@ -47,10 +47,14 @@ export interface FleetEventMap {
  * listener is logged and swallowed, never propagated, so a broken integration
  * (a bad webhook, a slow WS fan-out) can never affect the ticket path that
  * emitted the event. Callers should treat `emit` as fire-and-forget — it never
- * returns a promise to await.
+ * returns a promise to await. What fire-and-forget costs is paid once, at
+ * shutdown: `flush` waits for listeners still in flight (a webhook post), so a
+ * drain or stop-now that exits right after the last ticket settles doesn't
+ * drop that ticket's notification.
  */
 export class FleetEvents {
   private readonly emitter = new EventEmitter();
+  private readonly inFlight = new Set<Promise<unknown>>();
 
   on<K extends keyof FleetEventMap>(event: K, listener: (payload: FleetEventMap[K]) => void | Promise<void>): void {
     this.emitter.on(event, listener as (...args: unknown[]) => void);
@@ -59,10 +63,29 @@ export class FleetEvents {
   emit<K extends keyof FleetEventMap>(event: K, payload: FleetEventMap[K]): void {
     for (const listener of this.emitter.listeners(event) as ((payload: FleetEventMap[K]) => void | Promise<void>)[]) {
       try {
-        void Promise.resolve(listener(payload)).catch((err) => logError("events", `subscriber for "${event}" failed`, err));
+        const settled = Promise.resolve(listener(payload)).catch((err) => logError("events", `subscriber for "${event}" failed`, err));
+        this.inFlight.add(settled);
+        void settled.finally(() => this.inFlight.delete(settled));
       } catch (err) {
         logError("events", `subscriber for "${event}" failed`, err);
       }
+    }
+  }
+
+  /**
+   * Resolves once every listener promise started so far has settled, or after
+   * `timeoutMs` — whichever comes first. Listeners started while flushing are
+   * waited for too, so an event emitted by a listener isn't cut off.
+   */
+  async flush(timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.inFlight.size > 0) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, remaining)));
+      await Promise.race([Promise.allSettled([...this.inFlight]), timeout]);
+      clearTimeout(timer);
     }
   }
 }

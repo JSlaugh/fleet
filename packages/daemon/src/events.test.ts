@@ -62,4 +62,39 @@ describe("FleetEvents", () => {
     expect(logged).toContain("async boom");
     errorSpy.mockRestore();
   });
+
+  it("flush waits for in-flight listeners (e.g. a webhook post) before resolving", async () => {
+    const events = new FleetEvents();
+    let finishPost!: () => void;
+    let posted = false;
+    events.on("ticket:pr-opened", () => new Promise<void>((resolve) => (finishPost = () => ((posted = true), resolve()))));
+    events.emit("ticket:pr-opened", { project: {} as never, issueNumber: 1, title: "t", detail: "d", url: "u" });
+
+    let flushed = false;
+    const flushing = events.flush(5_000).then(() => (flushed = true));
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    finishPost();
+    await flushing;
+    expect(posted).toBe(true);
+  });
+
+  it("flush gives up after its timeout rather than hanging shutdown on a stuck listener", async () => {
+    vi.useFakeTimers();
+    try {
+      const events = new FleetEvents();
+      events.on("board:updated", () => new Promise<void>(() => {}));
+      events.emit("board:updated", {});
+      const flushing = events.flush(1_000);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(flushing).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flush resolves immediately when nothing is in flight", async () => {
+    await expect(new FleetEvents().flush(1_000)).resolves.toBeUndefined();
+  });
 });
