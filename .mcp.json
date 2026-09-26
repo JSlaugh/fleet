@@ -1,17 +1,12 @@
 {
   "mcpServers": {
     "fleet": {
-      "command": "pnpm",
+      "command": "node",
       "args": [
-        "--dir",
-        "C:/Users/j/github/fleet",
-        "--filter",
-        "@fleet/mcp",
-        "start"
+        "${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"
       ],
       "env": {
-        "FLEET_PROJECT": "fleet",
-        "FLEET_URL": "http://localhost:4400"
+        "FLEET_PROJECT": "fleet"
       }
     }
   }

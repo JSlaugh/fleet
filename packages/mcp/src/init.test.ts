@@ -7,8 +7,8 @@ import { FLEET_DIR } from "./stamp/index.ts";
 
 describe("parseInitArgs", () => {
   it("parses every flag and ignores a leading `init`", () => {
-    const args = parseInitArgs(["init", "--path", "/r", "--repo", "o/n", "--project", "p", "--agents", "codex, claude", "--config", "/c.json"]);
-    expect(args).toMatchObject({ repo: "o/n", project: "p", agents: ["codex", "claude"], pathGiven: true, help: false });
+    const args = parseInitArgs(["init", "--path", "/r", "--repo", "o/n", "--project", "p", "--agents", "codex, claude", "--config", "/c.json", "--dashboard-port", "4410"]);
+    expect(args).toMatchObject({ repo: "o/n", project: "p", agents: ["codex", "claude"], pathGiven: true, dashboardPort: 4410, help: false });
     expect(args.config?.endsWith("c.json")).toBe(true);
     expect(args.path.endsWith("r")).toBe(true);
   });
@@ -36,59 +36,78 @@ describe("runInit", () => {
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
+  const tempDir = () => {
+    const dir = mkdtempSync(join(tmpdir(), "fleet-init-"));
+    dirs.push(dir);
+    return dir;
+  };
+  const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+  const fleetDirSlashes = FLEET_DIR.replace(/\\/g, "/");
 
-  it("with --repo and no config, writes a projects-only config then stamps the requested agent", () => {
-    const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(repo);
+  it("with --repo and no config, writes the gitignored repo config and stamps path-free committed files", () => {
+    const repo = tempDir();
     const lines: string[] = [];
     runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--agents", "codex"]), (l) => lines.push(l));
 
-    const config = JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8"));
-    expect(config).toEqual({ agents: ["codex"], projects: [{ name: "widgets", githubRepo: "acme/widgets" }] });
+    expect(readJson(join(repo, "fleet.config.json"))).toEqual({
+      fleetDir: fleetDirSlashes,
+      projects: [{ name: "widgets", githubRepo: "acme/widgets", agents: ["codex"] }],
+    });
+    expect(readFileSync(join(repo, ".gitignore"), "utf8")).toBe("fleet.config.json\n");
+    expect(existsSync(join(repo, ".fleet-mcp", "launch.mjs"))).toBe(true);
     expect(existsSync(join(repo, ".agents", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
     expect(existsSync(join(repo, ".claude"))).toBe(false);
     const toml = readFileSync(join(repo, ".codex", "config.toml"), "utf8");
-    expect(toml).toContain('FLEET_PROJECT = "widgets"');
-    expect(toml).toContain(`FLEET_CONFIG = "${join(repo, "fleet.config.json").replace(/\\/g, "/")}"`);
-    expect(toml).not.toContain("FLEET_URL");
+    expect(toml).toContain('env = { FLEET_PROJECT = "widgets" }');
+    expect(toml).not.toContain(fleetDirSlashes);
     expect(lines.join("\n")).toMatch(/done — stamped widgets/);
-    expect(lines.join("\n")).toMatch(/--daemon-url/);
+    expect(lines.join("\n")).toMatch(/--dashboard-port/);
   });
 
-  it("defaults a newly written config to claude, as the usage text says", () => {
-    const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(repo);
+  it("defaults to claude when neither --agents nor a config says otherwise", () => {
+    const repo = tempDir();
     runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), () => {});
-    expect(JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8")).agents).toEqual(["claude"]);
-    expect(existsSync(join(repo, ".mcp.json"))).toBe(true);
+    expect(readJson(join(repo, ".mcp.json")).mcpServers.fleet).toEqual({
+      command: "node",
+      args: ["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"],
+      env: { FLEET_PROJECT: "widgets" },
+    });
+    expect(existsSync(join(repo, ".codex"))).toBe(false);
   });
 
-  it("stamps an explicit --daemon-url even when the config names no dashboardPort", () => {
-    const repo = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(repo);
-    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--daemon-url", "http://localhost:4400/"]), () => {});
-    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8")).mcpServers.fleet.env.FLEET_URL).toBe("http://localhost:4400");
+  it("records an explicit --dashboard-port in the repo config", () => {
+    const repo = tempDir();
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets", "--dashboard-port", "4410"]), () => {});
+    expect(readJson(join(repo, "fleet.config.json")).dashboardPort).toBe(4410);
   });
 
-  it("uses an existing config found upward from the repo, honouring the project's own agents", () => {
-    const root = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(root);
+  it("reads the project from a config found upward, honouring its agents, and implies 4400 for a daemon config", () => {
+    const root = tempDir();
     const repo = join(root, "repo");
-    writeFileSync(join(root, "fleet.config.json"), JSON.stringify({ dashboardPort: 4400, projects: [{ name: "a", githubRepo: "o/a", agents: ["claude", "codex"] }, { name: "b", githubRepo: "o/b" }] }));
-    rmSync(repo, { force: true, recursive: true });
     mkdirSync(repo);
+    writeFileSync(
+      join(root, "fleet.config.json"),
+      JSON.stringify({ worktreeRoot: "/wt", projects: [{ name: "a", githubRepo: "o/a", agents: ["claude", "codex"] }, { name: "b", githubRepo: "o/b" }] }),
+    );
 
     runInit(parseInitArgs(["--path", repo, "--project", "a"]), () => {});
 
     expect(existsSync(join(repo, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
     expect(existsSync(join(repo, ".agents", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
-    const mcp = JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"));
-    expect(mcp.mcpServers.fleet.env).toEqual({ FLEET_PROJECT: "a", FLEET_CONFIG: join(root, "fleet.config.json").replace(/\\/g, "/"), FLEET_URL: "http://localhost:4400" });
+    expect(readJson(join(repo, "fleet.config.json"))).toEqual({ fleetDir: fleetDirSlashes, dashboardPort: 4400, projects: [{ name: "a", githubRepo: "o/a" }] });
+  });
+
+  it("is idempotent: a second run finds the repo's own config and changes nothing", () => {
+    const repo = tempDir();
+    runInit(parseInitArgs(["--path", repo, "--repo", "acme/widgets"]), () => {});
+    const before = readFileSync(join(repo, "fleet.config.json"), "utf8");
+    runInit(parseInitArgs(["--path", repo]), () => {});
+    expect(readFileSync(join(repo, "fleet.config.json"), "utf8")).toBe(before);
+    expect(readFileSync(join(repo, ".gitignore"), "utf8")).toBe("fleet.config.json\n");
   });
 
   it("demands --project when the config lists several and none matches", () => {
-    const root = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(root);
+    const root = tempDir();
     writeFileSync(join(root, "fleet.config.json"), JSON.stringify({ projects: [{ name: "a", githubRepo: "o/a" }, { name: "b", githubRepo: "o/b" }] }));
     expect(() => runInit(parseInitArgs(["--path", root]), () => {})).toThrow(/pass --project/);
   });
@@ -98,8 +117,7 @@ describe("runInit", () => {
   });
 
   it("fails clearly with no config and no --repo", () => {
-    const root = mkdtempSync(join(tmpdir(), "fleet-init-"));
-    dirs.push(root);
+    const root = tempDir();
     expect(() => runInit(parseInitArgs(["--path", root]), () => {})).toThrow(/--repo owner\/name/);
   });
 });

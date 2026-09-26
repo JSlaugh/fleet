@@ -2,7 +2,8 @@
 # for a project whose `agents` includes "codex". Only the [mcp_servers.fleet]
 # table is written; every other table in the file is preserved verbatim.
 # Codex loads a project's .codex/config.toml only from a trusted directory.
+# No paths: the launcher reads the repo's gitignored fleet.config.json.
 [mcp_servers.fleet]
-command = "pnpm"
-args = ["--dir", "{{FLEET_DIR}}", "--filter", "@fleet/mcp", "start"]
-env = { FLEET_PROJECT = "<project-name-from-fleet.config>", FLEET_CONFIG = "{{FLEET_CONFIG}}" }
+command = "node"
+args = [".fleet-mcp/launch.mjs"]
+env = { FLEET_PROJECT = "<project-name-from-fleet.config>" }

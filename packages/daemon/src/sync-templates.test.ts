@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { makeProject } from "./test-support.ts";
 import { issueFormFiles, syncTemplates } from "./sync-templates.ts";
 
-const OPTS = { configPath: "C:/Users/j/github/fleet/fleet.config.json" };
+const OPTS = { port: 4400 };
 
 describe("syncTemplates", () => {
   const repoDirs: string[] = [];
@@ -25,8 +25,16 @@ describe("syncTemplates", () => {
 
     expect(existsSync(join(repoPath, ".claude", "skills", "fleet-backlog", "SKILL.md"))).toBe(true);
     expect(existsSync(join(repoPath, ".agents"))).toBe(false);
-    const mcp = JSON.parse(readFileSync(join(repoPath, ".mcp.json"), "utf8")) as { mcpServers: { fleet: { env: Record<string, string> } } };
-    expect(mcp.mcpServers.fleet.env).toEqual({ FLEET_PROJECT: "alpha", FLEET_CONFIG: OPTS.configPath, FLEET_URL: "http://localhost:4400" });
+    const mcp = JSON.parse(readFileSync(join(repoPath, ".mcp.json"), "utf8")) as { mcpServers: { fleet: { args: string[]; env: Record<string, string> } } };
+    // Committed files name no path; this machine's paths live in the repo's gitignored config.
+    expect(mcp.mcpServers.fleet.env).toEqual({ FLEET_PROJECT: "alpha" });
+    expect(mcp.mcpServers.fleet.args).toEqual(["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"]);
+    expect(existsSync(join(repoPath, ".fleet-mcp", "launch.mjs"))).toBe(true);
+    const repoConfig = JSON.parse(readFileSync(join(repoPath, "fleet.config.json"), "utf8")) as { fleetDir: string; dashboardPort: number; projects: { name: string }[] };
+    expect(repoConfig.dashboardPort).toBe(4400);
+    expect(repoConfig.projects.map((p) => p.name)).toEqual(["alpha"]);
+    expect(existsSync(join(repoConfig.fleetDir, "packages", "mcp", "package.json"))).toBe(true);
+    expect(readFileSync(join(repoPath, ".gitignore"), "utf8")).toContain("fleet.config.json");
 
     const issueTemplateDir = join(repoPath, ".github", "ISSUE_TEMPLATE");
     expect(readdirSync(issueTemplateDir).sort()).toEqual(["01-fleet-task.yml", "02-fleet-epic.yml"]);

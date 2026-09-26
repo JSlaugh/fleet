@@ -155,6 +155,14 @@ export type FleetConfig = z.infer<typeof FleetConfigSchema>;
 export const ProjectsOnlyConfigSchema = z.object({
   /** Only when written explicitly does a config imply a local daemon — a projects-only file never does. */
   dashboardPort: z.number().int().min(1).optional(),
+  /**
+   * Where fleet is cloned on this machine. Written into a stamped repo's own
+   * gitignored config so the committed launcher never has to name a path;
+   * absent in the fleet checkout's own config, which sits next to fleet.
+   */
+  fleetDir: z.string().min(1).optional(),
+  /** Present only in a full daemon config — which means a daemon serves the dashboard even with `dashboardPort` left at its default. */
+  worktreeRoot: z.string().optional(),
   agents: z.array(AgentKindSchema).min(1).default([...DEFAULT_AGENTS]),
   projects: z
     .array(

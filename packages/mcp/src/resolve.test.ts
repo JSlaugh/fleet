@@ -69,6 +69,13 @@ describe("resolveTarget — daemon", () => {
     expect(t.daemonUrl).toBe("http://localhost:4411");
   });
 
+  it("treats a full daemon config with no dashboardPort as serving the default 4400", () => {
+    const daemonConfig: ResolveOptions = {
+      loadConfig: () => ({ path: "/w/fleet.config.json", config: { worktreeRoot: "/wt", agents: ["claude"], projects: [{ name: "alpha", githubRepo: "acme/alpha" }] } }),
+    };
+    expect(resolveTarget({ FLEET_PROJECT: "alpha" }, daemonConfig).daemonUrl).toBe("http://localhost:4400");
+  });
+
   it("implies no daemon from a projects-only config (no dashboardPort), but still infers the project name", () => {
     const minimal: ResolveOptions = { loadConfig: () => ({ path: "/w/fleet.config.json", config: { agents: ["codex"], projects: [{ name: "alpha", githubRepo: "acme/alpha" }] } }) };
     const t = resolveTarget({ FLEET_REPO: "acme/alpha" }, minimal);

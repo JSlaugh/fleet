@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "fleet": {
-      "command": "pnpm",
-      "args": ["--dir", "{{FLEET_DIR}}", "--filter", "@fleet/mcp", "start"],
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"],
       "env": {
         "FLEET_REPO": "owner/repo"
       }

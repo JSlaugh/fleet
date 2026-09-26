@@ -1,29 +1,32 @@
-import { existsSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, resolve } from "node:path";
 import { AGENT_KINDS, agentsFor, type AgentKind } from "@fleet/shared";
 import { findConfigFile, readProjectsConfig } from "./config-file.ts";
 import { FLEET_DIR, buildFleetEntry, stampProject } from "./stamp/index.ts";
 
 /**
  * `fleet init`: stamp one repo for Claude and/or Codex without a daemon.
- * Same stampers `pnpm daemon sync-templates` uses; the only difference is
- * where the project list comes from — here, a projects-only
- * `fleet.config.json` (found by the upward search from the repo, or written
- * for the user from `--repo`), never the daemon's full config.
+ * Same stampers `pnpm daemon sync-templates` uses. The project comes from
+ * `--repo`, or from a `fleet.config.json` found upward from the repo (or
+ * `--config`); either way the repo ends up with its own gitignored
+ * `fleet.config.json` naming `fleetDir` — the committed files carry no paths.
  */
 
 const USAGE = `Usage:
-  fleet init [--path <repo-dir>] [--repo owner/name] [--project <name>] [--agents claude,codex] [--config <fleet.config.json>] [--daemon-url <url>]
+  fleet init [--path <repo-dir>] [--repo owner/name] [--project <name>] [--agents claude,codex] [--config <fleet.config.json>] [--dashboard-port <n>]
 
   Relative paths resolve against the directory pnpm was run in (INIT_CWD), not packages/mcp. With
   \`pnpm --dir <fleet-checkout>\` that directory is the fleet checkout, so pass an absolute --path.
 
   --path      the repo's working tree to stamp (default: the directory you ran pnpm from)
-  --repo      owner/name; with no config found, writes a minimal fleet.config.json next to the repo listing just this project
-  --project   which project in the config to stamp for (default: the only one, or the one whose githubRepo matches --repo)
+  --repo      owner/name of the project; not needed when a config found upward already lists it
+  --project   project name (default: from the config, or the repo name)
   --agents    comma-separated (${AGENT_KINDS.join(", ")}); default: the project's agents from the config, else claude
-  --config    explicit fleet.config.json path (default: search upward from --path)
-  --daemon-url  stamp FLEET_URL so board/history tools register (default: http://localhost:<dashboardPort> when the config names one)
+  --config    a fleet.config.json to read the project from (default: search upward from --path)
+  --dashboard-port  the local daemon's port, so board/history tools register (default: the config's, if it names one)
+
+  Writes <repo>/fleet.config.json (gitignored, machine-local: fleetDir, dashboardPort, the project)
+  plus the committed .fleet-mcp/launch.mjs and each agent's skill + registration.
 `;
 
 export interface InitArgs {
@@ -32,7 +35,7 @@ export interface InitArgs {
   project?: string;
   agents?: AgentKind[];
   config?: string;
-  daemonUrl?: string;
+  dashboardPort?: number;
   /** Whether --path was given, as opposed to defaulting to the invocation directory. */
   pathGiven: boolean;
   help: boolean;
@@ -64,7 +67,11 @@ export function parseInitArgs(argv: string[], cwd: string = invocationDir()): In
     else if (arg === "--repo") args.repo = next();
     else if (arg === "--project") args.project = next();
     else if (arg === "--config") args.config = resolve(cwd, next());
-    else if (arg === "--daemon-url") args.daemonUrl = next().replace(/\/+$/, "");
+    else if (arg === "--dashboard-port") {
+      const port = Number(next());
+      if (!Number.isInteger(port) || port < 1) throw new Error("--dashboard-port must be a port number");
+      args.dashboardPort = port;
+    }
     else if (arg === "--agents") {
       args.agents = next().split(",").map((s) => s.trim()).filter(Boolean) as AgentKind[];
       for (const a of args.agents) {
@@ -85,38 +92,35 @@ export function runInit(args: InitArgs, out: (line: string) => void = (l) => con
     throw new Error("Refusing to stamp the fleet checkout itself. Pass --path <target-repo> (absolute when using pnpm --dir).");
   }
 
-  let configPath = findConfigFile(args.path, args.config);
-  if (!configPath) {
-    if (!args.repo) {
-      throw new Error("No fleet.config.json found searching upward from the repo. Pass --repo owner/name to have one written, or --config <path>.");
-    }
-    configPath = join(args.path, "fleet.config.json");
-    const projectName = args.project ?? basename(args.repo);
-    const minimal = {
-      agents: args.agents ?? ["claude"],
-      projects: [{ name: projectName, githubRepo: args.repo }],
-    };
-    writeFileSync(configPath, `${JSON.stringify(minimal, null, 2)}\n`);
-    out(`wrote ${configPath} (projects-only; the daemon would need more, the MCP does not)`);
-    out("note: fleet.config.json is machine-local — gitignore it rather than committing it");
-  }
-
-  const config = readProjectsConfig(configPath);
-  const project =
-    config.projects.find((p) => p.name === args.project) ??
-    (args.repo ? config.projects.find((p) => p.githubRepo === args.repo) : undefined) ??
-    (config.projects.length === 1 ? config.projects[0] : undefined);
+  const configPath = findConfigFile(args.path, args.config);
+  const config = configPath ? readProjectsConfig(configPath) : undefined;
+  const fromConfig =
+    config?.projects.find((p) => p.name === args.project) ??
+    (args.repo ? config?.projects.find((p) => p.githubRepo === args.repo) : undefined) ??
+    (config?.projects.length === 1 ? config.projects[0] : undefined);
+  const project = fromConfig ?? (args.repo ? { name: args.project ?? basename(args.repo), githubRepo: args.repo } : undefined);
   if (!project) {
-    throw new Error(`Which project? ${configPath} lists ${config.projects.map((p) => p.name).join(", ")} — pass --project <name>.`);
+    throw new Error(
+      config
+        ? `Which project? ${configPath} lists ${config.projects.map((p) => p.name).join(", ")} — pass --project <name> or --repo owner/name.`
+        : "No fleet.config.json found searching upward from the repo. Pass --repo owner/name, or --config <path>.",
+    );
   }
   if (args.project && project.name !== args.project) throw new Error(`no project named ${args.project} in ${configPath}`);
 
-  const agents = args.agents ?? agentsFor(project, config);
-  const daemonUrl = args.daemonUrl ?? (config.dashboardPort !== undefined ? `http://localhost:${config.dashboardPort}` : undefined);
-  if (!daemonUrl) {
-    out("note: no daemon URL stamped (the config names no dashboardPort) — board/history tools stay off; pass --daemon-url http://localhost:4400 if a daemon manages this project");
+  const agents = args.agents ?? (config && fromConfig ? agentsFor(fromConfig, config) : ["claude"]);
+  // A daemon config always serves the dashboard (on 4400 unless it says otherwise).
+  const dashboardPort = args.dashboardPort ?? config?.dashboardPort ?? (config?.worktreeRoot ? 4400 : undefined);
+  if (dashboardPort === undefined) {
+    out("note: no daemon port known — board/history tools stay off; pass --dashboard-port 4400 if a daemon manages this project");
   }
-  const result = stampProject(args.path, agents, buildFleetEntry({ project: project.name, configPath, daemonUrl }));
+  const result = stampProject(args.path, agents, buildFleetEntry({ project: project.name }), undefined, {
+    repoConfig: {
+      fleetDir: FLEET_DIR,
+      dashboardPort,
+      project: { name: project.name, githubRepo: project.githubRepo, ...(args.agents ? { agents: args.agents } : {}) },
+    },
+  });
   for (const path of result.written) out(`wrote ${path}`);
   for (const note of result.notes) out(`note: ${note}`);
   out(`done — stamped ${project.name} (${project.githubRepo}) for ${agents.join(", ")}; these are working-tree changes, review and commit them`);

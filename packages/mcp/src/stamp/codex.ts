@@ -23,17 +23,6 @@ export function renderCodexFleetTable(entry: McpEntry): string {
   ].join("\n");
 }
 
-/**
- * Codex spawns `command` directly, without a shell. On Windows `pnpm` is a
- * `.cmd` shim, which a direct spawn doesn't resolve, so a bare command name is
- * routed through `cmd /c` there. Claude Code resolves shims itself and keeps
- * the plain entry.
- */
-export function codexEntry(entry: McpEntry, platform: NodeJS.Platform = process.platform): McpEntry {
-  if (platform !== "win32" || /[\\/]|\.\w+$/.test(entry.command)) return entry;
-  return { ...entry, command: "cmd", args: ["/c", entry.command, ...entry.args] };
-}
-
 const KEY = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\.)*"|'[^']*')`;
 const DOTTED = String.raw`${KEY}(?:\s*\.\s*${KEY})*`;
 const HEADER_LINE = new RegExp(String.raw`^\s*\[\[?\s*(${DOTTED})\s*\]\]?\s*(?:#.*)?$`);
@@ -157,7 +146,13 @@ export function mergeCodexConfig(existingRaw: string | undefined, entry: McpEntr
   return `${body ? `${body}${eol}${eol}` : ""}${fleetTable}${eol}`;
 }
 
-/** Codex: `.agents/skills/<name>/SKILL.md` (same SKILL.md format as Claude), `[mcp_servers.<name>]` in `.codex/config.toml`. */
+/**
+ * Codex: `.agents/skills/<name>/SKILL.md` (same SKILL.md format as Claude),
+ * `[mcp_servers.<name>]` in `.codex/config.toml`. The entry's `node` command
+ * resolves as a real executable on every platform, so Codex's shell-less
+ * spawn needs no Windows special case, and the relative launcher path
+ * resolves against the session's working directory (the repo root).
+ */
 export const codexStamper: AgentStamper = {
   kind: "codex",
   stamp(repoPath, entry, skillMarkdown) {
@@ -168,7 +163,7 @@ export const codexStamper: AgentStamper = {
     const configPath = join(repoPath, ".codex", "config.toml");
     mkdirSync(dirname(configPath), { recursive: true });
     const existingRaw = existsSync(configPath) ? readFileSync(configPath, "utf8") : undefined;
-    writeFileSync(configPath, mergeCodexConfig(existingRaw, codexEntry(entry)));
+    writeFileSync(configPath, mergeCodexConfig(existingRaw, entry));
 
     return {
       written: [skillPath, configPath],

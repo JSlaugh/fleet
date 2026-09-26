@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_AGENTS, FLEET_LABELS, PLAN_LABEL, agentsFor, profileNames, typeLabel, type AgentKind, type BuildSpec, type ProjectConfig } from "@fleet/shared";
-import { buildFleetEntry, readSkillTemplate, stampProject } from "@fleet/mcp/stamp";
+import { FLEET_DIR, buildFleetEntry, readSkillTemplate, stampProject } from "@fleet/mcp/stamp";
 import { readBuildSpec } from "./github/buildspec.ts";
 import { log, logError } from "./log.ts";
 
@@ -179,8 +179,7 @@ function syncIssueForms(project: ProjectConfig): string[] {
 }
 
 export interface SyncTemplatesOptions {
-  /** Absolute path of the daemon's fleet.config.json — stamped as FLEET_CONFIG so FLEET_PROJECT resolves from inside the target repo. */
-  configPath: string;
+  /** The daemon's dashboard port, written into each repo's gitignored fleet.config.json so the MCP finds the daemon. */
   port?: number;
   /** Fallback for projects with no `agents` of their own. */
   agents?: readonly AgentKind[];
@@ -194,9 +193,16 @@ export async function syncTemplates(projects: ProjectConfig[], opts: SyncTemplat
       continue;
     }
     const agents = agentsFor(project, { agents: opts.agents ?? DEFAULT_AGENTS });
-    const entry = buildFleetEntry({ project: project.name, configPath: opts.configPath, daemonUrl: `http://localhost:${opts.port ?? 4400}` });
+    // The committed files are machine-neutral; this machine's paths go only into
+    // the repo's gitignored fleet.config.json (skipped for the fleet checkout itself).
     try {
-      const result = stampProject(project.repoPath, agents, entry, skillMarkdown);
+      const result = stampProject(project.repoPath, agents, buildFleetEntry({ project: project.name }), skillMarkdown, {
+        repoConfig: {
+          fleetDir: FLEET_DIR,
+          dashboardPort: opts.port ?? 4400,
+          project: { name: project.name, githubRepo: project.githubRepo, ...(project.agents ? { agents: project.agents } : {}) },
+        },
+      });
       for (const destPath of result.written) log("sync-templates", `wrote ${destPath}`);
       for (const note of result.notes) log("sync-templates", `${project.name}: ${note}`);
     } catch (err) {

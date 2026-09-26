@@ -25,6 +25,15 @@ export function mergeMcpConfig(existingRaw: string | undefined, fleetEntry: McpE
   return `${JSON.stringify(merged, null, 2)}\n`;
 }
 
+/**
+ * Claude Code expands `${VAR:-default}` in `.mcp.json`, so the launcher is
+ * addressed from the project root even when Claude starts in a subdirectory;
+ * the fallback keeps it working where that variable isn't set.
+ */
+export function claudeEntry(entry: McpEntry): McpEntry {
+  return { ...entry, args: entry.args.map((a) => (a.startsWith(".fleet-mcp/") ? `\${CLAUDE_PROJECT_DIR:-.}/${a}` : a)) };
+}
+
 /** Claude Code: `.claude/skills/<name>/SKILL.md` for skills, `.mcp.json` for project-scoped MCP servers. */
 export const claudeStamper: AgentStamper = {
   kind: "claude",
@@ -35,7 +44,7 @@ export const claudeStamper: AgentStamper = {
 
     const mcpPath = join(repoPath, ".mcp.json");
     const existingRaw = existsSync(mcpPath) ? readFileSync(mcpPath, "utf8") : undefined;
-    writeFileSync(mcpPath, mergeMcpConfig(existingRaw, entry));
+    writeFileSync(mcpPath, mergeMcpConfig(existingRaw, claudeEntry(entry)));
 
     return { written: [skillPath, mcpPath], notes: [] };
   },

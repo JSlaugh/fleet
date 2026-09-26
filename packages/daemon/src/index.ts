@@ -37,6 +37,10 @@ async function main(): Promise<void> {
   const configIndex = args.indexOf("--config");
   const configPath = configIndex !== -1 ? args[configIndex + 1] : undefined;
   const { config, configDir, configPath: loadedConfigPath } = loadConfig(configPath);
+  // Worker sessions run in worktrees, which don't carry a repo's gitignored
+  // fleet.config.json — so the stamped fleet MCP launcher inside them finds
+  // this daemon's config through the inherited environment instead.
+  process.env.FLEET_CONFIG ??= loadedConfigPath;
 
   if (args[0] === "init-labels") {
     for (const project of config.projects) {
@@ -48,7 +52,7 @@ async function main(): Promise<void> {
   }
 
   if (args[0] === "sync-templates") {
-    await syncTemplates(config.projects, { port: config.dashboardPort, configPath: loadedConfigPath, agents: config.agents });
+    await syncTemplates(config.projects, { port: config.dashboardPort, agents: config.agents });
     return;
   }
 

@@ -1,0 +1,5 @@
+{
+  "fleetDir": "C:/path/to/fleet",
+  "dashboardPort": 4400,
+  "projects": [{ "name": "example", "githubRepo": "owner/example" }]
+}

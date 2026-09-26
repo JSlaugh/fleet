@@ -155,7 +155,7 @@ only files tickets writes:
 ```json
 {
   "projects": [
-    { "name": "fleet", "githubRepo": "JSlaugh/fleet", "agents": ["codex"] }
+    { "name": "fleet", "githubRepo": "owner/fleet", "agents": ["codex"] }
   ]
 }
 ```

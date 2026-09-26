@@ -2,14 +2,21 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { codexEntry } from "./codex.ts";
-import { FLEET_DIR, buildFleetEntry, mergeCodexConfig, mergeMcpConfig, renderCodexFleetTable, stampProject, type McpEntry } from "./index.ts";
+import {
+  FLEET_DIR,
+  LAUNCHER_PATH,
+  buildFleetEntry,
+  claudeEntry,
+  ensureIgnored,
+  mergeCodexConfig,
+  mergeMcpConfig,
+  renderCodexFleetTable,
+  stampProject,
+  writeRepoConfig,
+  type McpEntry,
+} from "./index.ts";
 
-const ENTRY: McpEntry = {
-  command: "pnpm",
-  args: ["--dir", "C:/Users/j/github/fleet", "--filter", "@fleet/mcp", "start"],
-  env: { FLEET_PROJECT: "example", FLEET_CONFIG: "C:/Users/j/github/fleet/fleet.config.json", FLEET_URL: "http://localhost:4400" },
-};
+const ENTRY: McpEntry = { command: "node", args: [".fleet-mcp/launch.mjs"], env: { FLEET_PROJECT: "example" } };
 
 describe("mergeMcpConfig", () => {
   it("creates a fresh file with only the fleet entry when none exists", () => {
@@ -51,9 +58,9 @@ describe("renderCodexFleetTable", () => {
     expect(renderCodexFleetTable(ENTRY)).toBe(
       [
         "[mcp_servers.fleet]",
-        'command = "pnpm"',
-        'args = ["--dir", "C:/Users/j/github/fleet", "--filter", "@fleet/mcp", "start"]',
-        'env = { FLEET_PROJECT = "example", FLEET_CONFIG = "C:/Users/j/github/fleet/fleet.config.json", FLEET_URL = "http://localhost:4400" }',
+        'command = "node"',
+        'args = [".fleet-mcp/launch.mjs"]',
+        'env = { FLEET_PROJECT = "example" }',
       ].join("\n"),
     );
   });
@@ -161,64 +168,112 @@ describe("mergeCodexConfig", () => {
   });
 });
 
-describe("codexEntry", () => {
-  it("routes a bare command through cmd /c on Windows, where Codex's direct spawn can't resolve a .cmd shim", () => {
-    expect(codexEntry(ENTRY, "win32")).toEqual({ ...ENTRY, command: "cmd", args: ["/c", "pnpm", ...ENTRY.args] });
-  });
-
-  it("leaves the entry alone elsewhere, or when the command is already a path or has an extension", () => {
-    expect(codexEntry(ENTRY, "linux")).toBe(ENTRY);
-    expect(codexEntry({ ...ENTRY, command: "pnpm.cmd" }, "win32").command).toBe("pnpm.cmd");
-    expect(codexEntry({ ...ENTRY, command: "C:/tools/pnpm" }, "win32").command).toBe("C:/tools/pnpm");
-  });
-});
-
 describe("stampProject", () => {
   const dirs: string[] = [];
   afterEach(() => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
-
-  it("writes each agent's skill copy and registration from one skill template, stamping a repeated agent once", () => {
+  const tempRepo = () => {
     const repo = mkdtempSync(join(tmpdir(), "fleet-stamp-"));
     dirs.push(repo);
-    const result = stampProject(repo, ["codex", "claude", "codex"], ENTRY, "# skill\n");
+    return repo;
+  };
 
+  it("writes the launcher once plus each agent's skill copy and registration, stamping a repeated agent once", () => {
+    const repo = tempRepo();
+    const result = stampProject(repo, ["codex", "claude", "codex"], ENTRY, "# skill\n", { launcherSource: "// launcher\n" });
+
+    expect(readFileSync(join(repo, ".fleet-mcp", "launch.mjs"), "utf8")).toBe("// launcher\n");
     expect(readFileSync(join(repo, ".claude", "skills", "fleet-backlog", "SKILL.md"), "utf8")).toBe("# skill\n");
     expect(readFileSync(join(repo, ".agents", "skills", "fleet-backlog", "SKILL.md"), "utf8")).toBe("# skill\n");
-    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"))).toEqual({ mcpServers: { fleet: ENTRY } });
-    expect(readFileSync(join(repo, ".codex", "config.toml"), "utf8")).toContain("[mcp_servers.fleet]");
-    expect(result.written).toHaveLength(4);
+    expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8"))).toEqual({ mcpServers: { fleet: claudeEntry(ENTRY) } });
+    expect(readFileSync(join(repo, ".codex", "config.toml"), "utf8")).toContain('args = [".fleet-mcp/launch.mjs"]');
+    expect(result.written).toHaveLength(5);
     expect(result.notes.join("\n")).toMatch(/trusted directory/);
   });
 
   it("stamps only the requested agent", () => {
-    const repo = mkdtempSync(join(tmpdir(), "fleet-stamp-"));
-    dirs.push(repo);
+    const repo = tempRepo();
     stampProject(repo, ["claude"], ENTRY, "# skill\n");
     expect(existsSync(join(repo, ".agents"))).toBe(false);
     expect(existsSync(join(repo, ".codex"))).toBe(false);
   });
 
   it("merges into an existing registration rather than replacing it", () => {
-    const repo = mkdtempSync(join(tmpdir(), "fleet-stamp-"));
-    dirs.push(repo);
+    const repo = tempRepo();
     writeFileSync(join(repo, ".mcp.json"), JSON.stringify({ mcpServers: { other: { command: "node" } } }));
     stampProject(repo, ["claude"], ENTRY, "# skill\n");
     expect(JSON.parse(readFileSync(join(repo, ".mcp.json"), "utf8")).mcpServers.other).toEqual({ command: "node" });
   });
+
+  it("puts every machine path in the gitignored repo config, never in a committed file", () => {
+    const repo = tempRepo();
+    const fleetDir = join(tmpdir(), "somewhere", "fleet");
+    stampProject(repo, ["claude", "codex"], ENTRY, "# skill\n", {
+      repoConfig: { fleetDir, dashboardPort: 4400, project: { name: "example", githubRepo: "acme/example" } },
+    });
+
+    expect(JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8"))).toEqual({
+      fleetDir: fleetDir.replace(/\\/g, "/"),
+      dashboardPort: 4400,
+      projects: [{ name: "example", githubRepo: "acme/example" }],
+    });
+    expect(readFileSync(join(repo, ".gitignore"), "utf8")).toBe("fleet.config.json\n");
+    for (const committed of [".mcp.json", join(".codex", "config.toml"), join(".fleet-mcp", "launch.mjs")]) {
+      const text = readFileSync(join(repo, committed), "utf8");
+      expect(text).not.toContain(tmpdir().replace(/\\/g, "/"));
+      expect(text).not.toContain(tmpdir());
+    }
+  });
+});
+
+describe("writeRepoConfig", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("merges into an existing config: refreshes fleetDir/port, upserts the project, keeps other keys and projects", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-repocfg-"));
+    dirs.push(repo);
+    writeFileSync(join(repo, "fleet.config.json"), JSON.stringify({ fleetDir: "old", custom: true, projects: [{ name: "other", githubRepo: "o/other" }, { name: "example", githubRepo: "o/stale" }] }));
+    writeFileSync(join(repo, ".gitignore"), "node_modules/\r\n/fleet.config.json\r\n");
+
+    const written = writeRepoConfig(repo, { fleetDir: "/opt/fleet", project: { name: "example", githubRepo: "acme/example" } });
+
+    expect(JSON.parse(readFileSync(join(repo, "fleet.config.json"), "utf8"))).toEqual({
+      fleetDir: "/opt/fleet",
+      custom: true,
+      projects: [{ name: "other", githubRepo: "o/other" }, { name: "example", githubRepo: "acme/example" }],
+    });
+    expect(written).toEqual([join(repo, "fleet.config.json")]);
+  });
+
+  it("writes nothing into the fleet checkout itself, whose daemon config already sits there", () => {
+    expect(writeRepoConfig(FLEET_DIR, { fleetDir: FLEET_DIR, project: { name: "fleet", githubRepo: "acme/fleet" } })).toEqual([]);
+  });
+});
+
+describe("ensureIgnored", () => {
+  it("appends once, keeping the file's line endings and a missing trailing newline in mind", () => {
+    const repo = mkdtempSync(join(tmpdir(), "fleet-ignore-"));
+    try {
+      writeFileSync(join(repo, ".gitignore"), "dist/\r\nnode_modules/");
+      ensureIgnored(repo, "fleet.config.json");
+      expect(ensureIgnored(repo, "fleet.config.json")).toEqual([]);
+      expect(readFileSync(join(repo, ".gitignore"), "utf8")).toBe("dist/\r\nnode_modules/\r\nfleet.config.json\r\n");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("buildFleetEntry", () => {
-  it("points at this checkout with FLEET_PROJECT and FLEET_CONFIG, adding FLEET_URL only when a daemon is known", () => {
-    const withDaemon = buildFleetEntry({ project: "p", configPath: "/w/fleet.config.json", daemonUrl: "http://localhost:4400" });
-    expect(withDaemon.command).toBe("pnpm");
-    expect(withDaemon.args.slice(2)).toEqual(["--filter", "@fleet/mcp", "start"]);
-    expect(withDaemon.args[1]).toBe(FLEET_DIR.replace(/\\/g, "/"));
-    expect(withDaemon.args[1]).not.toContain("{{");
-    expect(withDaemon.env).toEqual({ FLEET_PROJECT: "p", FLEET_CONFIG: "/w/fleet.config.json", FLEET_URL: "http://localhost:4400" });
+  it("names no path: it runs the stamped launcher with just the project name", () => {
+    expect(buildFleetEntry({ project: "p" })).toEqual({ command: "node", args: [LAUNCHER_PATH], env: { FLEET_PROJECT: "p" } });
+  });
 
-    const without = buildFleetEntry({ project: "p", configPath: "C:\\w\\fleet.config.json" });
-    expect(without.env).toEqual({ FLEET_PROJECT: "p", FLEET_CONFIG: "C:/w/fleet.config.json" });
+  it("addresses the launcher from the project root for Claude, via its env-var expansion", () => {
+    expect(claudeEntry(buildFleetEntry({ project: "p" })).args).toEqual(["${CLAUDE_PROJECT_DIR:-.}/.fleet-mcp/launch.mjs"]);
   });
 });
