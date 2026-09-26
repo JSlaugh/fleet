@@ -141,6 +141,8 @@ export interface BoardTicket {
   epicProgress?: { closed: number; total: number };
   /** A `ClosedTicketRecord` when `status` is `"done"`, a live `TicketRecord` otherwise. */
   record?: TicketRecord | ClosedTicketRecord;
+  /** ISO time of the ticket's oldest still-pending approval — set only while one is parked, so the dashboard can show it's waiting on a human. */
+  awaitingApprovalSince?: string;
 }
 
 /** Per-message token usage carried on an assistant entry — undefined fields mean the SDK message didn't report that count. */

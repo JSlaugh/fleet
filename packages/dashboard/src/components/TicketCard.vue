@@ -127,7 +127,11 @@ const blurb = computed(() => {
       <Badge v-if="ticket.record?.sessionLive" variant="success">
         live
       </Badge>
-      <Badge v-if="pendingApprovals" variant="warning">
+      <Badge
+        v-if="pendingApprovals"
+        variant="warning"
+        :title="ticket.awaitingApprovalSince ? `Waiting on you since ${new Date(ticket.awaitingApprovalSince).toLocaleTimeString()}` : undefined"
+      >
         {{ pendingApprovals }} approval{{ pendingApprovals === 1 ? "" : "s" }}
       </Badge>
       <Badge v-if="ticket.record?.status === 'stalled'" variant="warning">

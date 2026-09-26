@@ -1,4 +1,4 @@
-import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type ProjectConfig } from "@fleet/shared";
+import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type PendingApproval, type ProjectConfig } from "@fleet/shared";
 import type { FleetEvents } from "../events.ts";
 import type { ApprovalManager } from "../session/approvals.ts";
 import { swapLabel } from "../github/github.ts";
@@ -79,6 +79,46 @@ export function key(projectName: string, issueNumber: number): string {
 /** How many of `runningKeys` belong to `projectName` — the count `maxConcurrent` is measured against. */
 export function countRunning(runningKeys: Iterable<string>, projectName: string): number {
   return [...runningKeys].filter((k) => k.startsWith(`${projectName}#`)).length;
+}
+
+/**
+ * `countRunning` for capacity decisions (claiming, stall auto-resume, review
+ * and comment cold-resumes): a running ticket whose oldest pending approval is
+ * older than `yieldMs` is *yielded* — it keeps its session and keeps waiting,
+ * but no longer holds one of the project's `maxConcurrent` slots, so an
+ * unanswered approval can't block the project for hours. Everything else
+ * (drain, the board's running count, the duplicate-track guard) keeps using
+ * `countRunning`. Pure, so the rule is testable without a loop.
+ */
+export function countActive(
+  runningKeys: Iterable<string>,
+  approvals: readonly Pick<PendingApproval, "project" | "issueNumber" | "createdAt">[],
+  projectName: string,
+  yieldMs: number,
+  now: number,
+): { active: number; yielded: number } {
+  const oldestPending = new Map<string, number>();
+  for (const a of approvals) {
+    if (a.project !== projectName) continue;
+    const scope = key(a.project, a.issueNumber);
+    const at = Date.parse(a.createdAt);
+    const prior = oldestPending.get(scope);
+    if (prior === undefined || at < prior) oldestPending.set(scope, at);
+  }
+  let active = 0;
+  let yielded = 0;
+  for (const scope of runningKeys) {
+    if (!scope.startsWith(`${projectName}#`)) continue;
+    const since = oldestPending.get(scope);
+    if (since !== undefined && now - since > yieldMs) yielded++;
+    else active++;
+  }
+  return { active, yielded };
+}
+
+/** `countActive` against the live context: its in-flight map, pending approvals and `approvalYieldMinutes`. */
+export function activeCount(ctx: LoopContext, projectName: string): { active: number; yielded: number } {
+  return countActive(ctx.running.keys(), ctx.approvals.list(), projectName, ctx.config.approvalYieldMinutes * 60_000, Date.now());
 }
 
 /**

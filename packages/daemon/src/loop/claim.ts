@@ -10,7 +10,7 @@ import {
 } from "@fleet/shared";
 import { cleanupFinished } from "./board.ts";
 import { computeBudgetGate } from "./budget.ts";
-import { countRunning, key, track, type LoopContext } from "./context.ts";
+import { activeCount, key, track, type LoopContext } from "./context.ts";
 import { closeFinishedEpics } from "./epics.ts";
 import { reportRunFailure } from "./finish.ts";
 import { healOrphanedClaims, releaseStaleClaims } from "./heartbeat.ts";
@@ -299,11 +299,20 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     return;
   }
 
-  const capacity = Math.min(
-    project.maxConcurrent - countRunning(ctx.running.keys(), project.name),
-    project.maxInReview - inReview,
-  );
+  const { active, yielded } = activeCount(ctx, project.name);
+  const capacity = Math.min(project.maxConcurrent - active, project.maxInReview - inReview);
+  if (active > project.maxConcurrent) {
+    // A yielded ticket's approval was answered and it's counting again: over cap
+    // until tickets finish. No claims meanwhile; say so once, not every cycle.
+    if (!overCapLogged.has(project.name)) {
+      log("loop", `${project.name}: ${active} active > maxConcurrent ${project.maxConcurrent} after a yielded approval was answered — holding claims until it drops back under`);
+      overCapLogged.add(project.name);
+    }
+  } else {
+    overCapLogged.delete(project.name);
+  }
   if (capacity <= 0) return;
+  if (yielded > 0) log("loop", `${project.name}: claiming with ${yielded} yielded ticket(s) parked on approvals`);
 
   // Computed once per cycle in `FleetLoop.cycle()` (`checkAuthGate`), not per
   // project — credentials are machine-wide, and the probe itself is a real
@@ -402,6 +411,9 @@ export function resolveClaimCollision(myLogin: string, assignees: string[]): Cla
   if (distinct.length <= 1) return "won";
   return [...distinct].sort()[0] === myLogin ? "won" : "lost";
 }
+
+/** Projects currently over `maxConcurrent` because a yielded approval came back — logged once per episode. */
+const overCapLogged = new Set<string>();
 
 /** Claims a ready issue: label swap, self-assign CAS, fresh worktree + branch, state record, then a session. */
 export async function processTicket(ctx: LoopContext, project: ProjectConfig, issue: ReadyIssue): Promise<void> {

@@ -36,6 +36,16 @@ export function loadConfig(configPath: string | undefined): LoadedConfig {
   if (!parsed.success) {
     throw new Error(`Invalid config at ${absolute}:\n${parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`).join("\n")}`);
   }
+  const { approvalYieldMinutes, approvalTimeoutMinutes } = parsed.data;
+  if ("approvalYieldMinutes" in json && approvalYieldMinutes >= approvalTimeoutMinutes) {
+    // A warning, not a load failure: the defaults (yield 30, timeout 10) sit on
+    // this side, and the combination is harmless — slots are just never yielded.
+    // Only said when the yield was set on purpose, so default configs boot quietly.
+    log(
+      "config",
+      `approvalYieldMinutes (${approvalYieldMinutes}) is not below approvalTimeoutMinutes (${approvalTimeoutMinutes}) — approvals are denied before the yield window passes, so a parked approval never frees its concurrency slot.`,
+    );
+  }
   for (const key of findUnknownConfigKeys(FleetConfigSchema, json)) {
     log("config", `Unknown key "${key}" in ${absolute} \u2014 ignored. Check for a typo against fleet.config.example.json.`);
   }

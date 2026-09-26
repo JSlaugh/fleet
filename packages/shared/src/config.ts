@@ -109,6 +109,14 @@ export const FleetConfigSchema = z.object({
    * waits always count against the turn timeout.
    */
   approvalPauseCapMinutes: z.number().int().min(0).default(120),
+  /**
+   * Once a ticket's approval has been pending this long, it stops counting
+   * against its project's `maxConcurrent` for claim/resume capacity, so an
+   * unanswered approval doesn't block the project — the parked session keeps
+   * waiting for its answer. Only meaningful below `approvalTimeoutMinutes`
+   * (at or above it the approval is denied before the window passes).
+   */
+  approvalYieldMinutes: z.number().int().min(1).default(30),
   replyWaitMinutes: z.number().int().min(1).default(60),
   /** Added to a parsed plan-limit reset time before resuming, to absorb clock skew and reset-boundary jitter. */
   limitResumeSlackMinutes: z.number().int().min(0).default(5),

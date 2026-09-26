@@ -54,6 +54,33 @@ describe("loadConfig with an explicit path", () => {
   });
 });
 
+describe("loadConfig approvalYieldMinutes sanity check", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const load = (extra: Record<string, unknown>) => {
+    const path = join(tempDir(), "fleet.config.json");
+    writeFileSync(path, JSON.stringify({ ...validConfig, ...extra }));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { config } = loadConfig(path);
+    return { config, warned: logSpy.mock.calls.some(([line]) => String(line).includes("approvalYieldMinutes")) };
+  };
+
+  it("defaults to 30 and stays quiet when it wasn't set explicitly", () => {
+    const { config, warned } = load({});
+    expect(config.approvalYieldMinutes).toBe(30);
+    expect(warned).toBe(false);
+  });
+
+  it("warns — without failing the load — when an explicit yield window isn't below approvalTimeoutMinutes", () => {
+    expect(load({ approvalYieldMinutes: 60, approvalTimeoutMinutes: 60 }).warned).toBe(true);
+  });
+
+  it("accepts a yield window below approvalTimeoutMinutes silently", () => {
+    expect(load({ approvalYieldMinutes: 30, approvalTimeoutMinutes: 480 }).warned).toBe(false);
+  });
+});
+
 describe("loadConfig warns on unknown keys", () => {
   afterEach(() => {
     vi.restoreAllMocks();

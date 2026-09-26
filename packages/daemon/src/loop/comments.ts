@@ -1,5 +1,5 @@
 import type { ProjectConfig, TicketRecord } from "@fleet/shared";
-import { countRunning, key, type LoopContext } from "./context.ts";
+import { activeCount, key, type LoopContext } from "./context.ts";
 import { getPushCollaborators, getTimestampedIssueComments, isNewerThan, type TimestampedComment } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 import { reply, ticketCapabilities } from "./operator.ts";
@@ -66,7 +66,7 @@ export async function addressComments(
     // session isn't new work, so that keeps happening while paused.
     const isColdResume = !ctx.replyWaiters.has(scope) && !ctx.live.has(scope);
     if (isColdResume && isProjectPaused(ctx, project.name)) continue;
-    if (isColdResume && countRunning(ctx.running.keys(), project.name) >= project.maxConcurrent) continue;
+    if (isColdResume && activeCount(ctx, project.name).active >= project.maxConcurrent) continue;
 
     let comments: TimestampedComment[];
     try {

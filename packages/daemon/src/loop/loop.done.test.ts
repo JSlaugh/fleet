@@ -1,7 +1,7 @@
 import type { ClosedTicketRecord } from "@fleet/shared";
-import { describe, expect, it } from "vitest";
-import { synthesizeDoneTickets } from "./board.ts";
-import { makeRecord } from "../test-support.ts";
+import { describe, expect, it, vi } from "vitest";
+import { getBoard, synthesizeDoneTickets } from "./board.ts";
+import { makeCtx, makeRecord } from "../test-support.ts";
 
 function closed(issueNumber: number, closedAt: string, patch: Partial<ClosedTicketRecord> = {}): ClosedTicketRecord {
   const record = makeRecord({
@@ -68,3 +68,22 @@ describe("synthesizeDoneTickets", () => {
     expect(tickets[0]!.type).toBeNull();
   });
 });
+
+describe("getBoard awaitingApprovalSince", () => {
+  it("marks a ticket with its oldest pending approval, and leaves others unmarked", () => {
+    const ctx = makeCtx();
+    const base = { url: "u", status: "in-progress" as const, priority: null, type: null, isPlan: false };
+    ctx.boardCache.set("alpha", [
+      { ...base, project: "alpha", issueNumber: 1, title: "parked" },
+      { ...base, project: "alpha", issueNumber: 2, title: "working" },
+    ]);
+    const approval = (createdAt: string) => ({ id: createdAt, project: "alpha", issueNumber: 1, toolName: "Bash", kind: "permission" as const, input: {}, createdAt });
+    vi.mocked(ctx.approvals.list).mockReturnValue([approval("2026-01-01T10:05:00.000Z"), approval("2026-01-01T10:00:00.000Z")]);
+
+    const board = getBoard(ctx);
+
+    expect(board.find((t) => t.issueNumber === 1)?.awaitingApprovalSince).toBe("2026-01-01T10:00:00.000Z");
+    expect(board.find((t) => t.issueNumber === 2)?.awaitingApprovalSince).toBeUndefined();
+  });
+});
+

@@ -20,6 +20,12 @@ function record(issueNumber: number, patch: Partial<TicketRecord> = {}): TicketR
 const project = { name: "alpha", maxConcurrent: 2 };
 
 describe("pickAutoResumable", () => {
+  it("frees capacity for a running ticket yielded on a long-pending approval, when the caller passes the active count", () => {
+    const busy = { name: "alpha", maxConcurrent: 1 };
+    expect(pickAutoResumable([record(1)], busy, ["alpha#9"])).toEqual([]);
+    expect(pickAutoResumable([record(1)], busy, ["alpha#9"], 0).map((r) => r.issueNumber)).toEqual([1]);
+  });
+
   it("picks stalled tickets that have a session", () => {
     const picked = pickAutoResumable([record(1)], project, []);
     expect(picked.map((r) => r.issueNumber)).toEqual([1]);
