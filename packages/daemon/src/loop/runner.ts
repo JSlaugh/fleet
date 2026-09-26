@@ -216,6 +216,7 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   const canUseTool = makeCanUseTool(ctx, project, issue.number, journal, () => session);
   session = new WorkerSession({
     project,
+    approvalPauseCapMs: ctx.config.approvalPauseCapMinutes * 60_000,
     scope,
     worktreePath: worktree.path,
     journal,

@@ -241,7 +241,8 @@ describe("checkDigestSchedule", () => {
     await checkDigestSchedule(ctx);
     vi.setSystemTime(new Date(2026, 0, 3, 9, 5, 0));
     await checkDigestSchedule(ctx);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The post is fire-and-forget on the event bus and queued behind any still-settling post to the same webhook.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
   it("does nothing under --dry-run, and does not record a send", async () => {

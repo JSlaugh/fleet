@@ -400,7 +400,8 @@ export class WorkerSession {
   /**
    * Backs the turn timeout in `nextResult` — paused for the duration of a
    * parked tool approval (see `makeCanUseTool` in loop/runner.ts) so time
-   * spent waiting on a human doesn't count against `ticketTimeoutMinutes`.
+   * spent waiting on a human doesn't count against `ticketTimeoutMinutes` —
+   * up to `approvalPauseCapMs` per turn.
    */
   private readonly turnClock = new TurnClock();
   sessionId?: string;
@@ -414,6 +415,8 @@ export class WorkerSession {
   constructor(
     private readonly opts: {
       project: ProjectConfig;
+      /** Per-turn cap on approval-wait time excluded from the turn timeout (`approvalPauseCapMinutes`); omitted = uncapped. */
+      approvalPauseCapMs?: number;
       scope: string;
       worktreePath: string;
       journal: Journal;
@@ -492,7 +495,7 @@ export class WorkerSession {
   }
 
   async nextResult(timeoutMs: number): Promise<TurnResult> {
-    this.turnClock.start(timeoutMs, () => this.abortController.abort());
+    this.turnClock.start(timeoutMs, () => this.abortController.abort(), this.opts.approvalPauseCapMs);
     try {
       for (;;) {
         const { value: message, done } = await this.iterator.next();

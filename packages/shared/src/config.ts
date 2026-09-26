@@ -102,6 +102,13 @@ export const FleetConfigSchema = z.object({
   stalledAfterMinutes: z.number().int().min(1).default(10),
   ticketTimeoutMinutes: z.number().int().min(1).default(30),
   approvalTimeoutMinutes: z.number().int().min(1).default(10),
+  /**
+   * How much approval-waiting per turn is excluded from `ticketTimeoutMinutes`.
+   * Past it the turn timeout runs again even while an approval is still parked,
+   * so a worker that keeps asking can't hold its slot indefinitely. 0 = approval
+   * waits always count against the turn timeout.
+   */
+  approvalPauseCapMinutes: z.number().int().min(0).default(120),
   replyWaitMinutes: z.number().int().min(1).default(60),
   /** Added to a parsed plan-limit reset time before resuming, to absorb clock skew and reset-boundary jitter. */
   limitResumeSlackMinutes: z.number().int().min(0).default(5),
