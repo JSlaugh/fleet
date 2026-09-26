@@ -35,6 +35,12 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.233
         version: 0.3.233(@anthropic-ai/sdk@0.117.1(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@fleet/github':
+        specifier: workspace:*
+        version: link:../github
+      '@fleet/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@fleet/shared':
         specifier: workspace:*
         version: link:../shared
@@ -113,8 +119,20 @@ importers:
         specifier: ^3.0.0
         version: 3.3.8(typescript@5.9.3)
 
+  packages/github:
+    dependencies:
+      '@fleet/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/mcp:
     dependencies:
+      '@fleet/github':
+        specifier: workspace:*
+        version: link:../github
+      '@fleet/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)

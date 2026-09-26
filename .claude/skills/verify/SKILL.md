@@ -13,7 +13,7 @@ Three checks, in order. Don't declare a change done until they've run (or you've
 pnpm typecheck
 ```
 
-Runs `tsc` for shared+daemon+mcp, then `vue-tsc` for the dashboard. Catches schema/type drift across package boundaries (e.g. `packages/shared` changes not reflected in `daemon` or `dashboard`).
+Runs `tsc` for shared+github+daemon+mcp, then `vue-tsc` for the dashboard. Catches schema/type drift across package boundaries (e.g. `packages/shared` changes not reflected in `daemon` or `dashboard`).
 
 ## 2. Unit tests
 
@@ -21,7 +21,7 @@ Runs `tsc` for shared+daemon+mcp, then `vue-tsc` for the dashboard. Catches sche
 pnpm test
 ```
 
-Vitest across shared+daemon+mcp: the `loop.*.test.ts` files (see [[add-daemon-feature]] for the map), state/journal/github/worktree logic, worker contract guards, and the mcp client.
+Vitest across shared+github+daemon+mcp: the `loop.*.test.ts` files (see [[add-daemon-feature]] for the map), state/journal/github/worktree logic, worker contract guards, and the mcp target resolution, ticket gateway, and tool registration.
 
 ## 3. Dry-run daemon cycle
 
@@ -34,3 +34,11 @@ pnpm daemon -- --dry-run --once
 It changes nothing (no claims, no worktrees, no label writes) — safe to run anytime `fleet.config.json` exists and `gh auth login` has been run. If neither is set up in the current environment, say so explicitly instead of skipping silently — a pure-dashboard or pure-schema change may not need it.
 
 If you touched `ProjectConfigSchema`/`FleetConfigSchema`, see [[config-shape-change]] first — `pnpm test` will fail on `example-config.test.ts` if `fleet.config.example.json` drifted (the README isn't test-enforced — update it by hand).
+
+## 4. MCP boot (only for `packages/mcp` or `@fleet/github` changes)
+
+```bash
+FLEET_REPO=owner/sandbox-repo pnpm mcp </dev/null
+```
+
+The stderr line must name the repo, say `no daemon`, and list exactly `fleet_file_ticket, fleet_query_backlog`. Run again with `FLEET_PROJECT=<name>` from a directory under a `fleet.config.json` and the line must name the daemon URL and all six tools. For a change to `tickets.ts`, also file one ticket into a sandbox repo from Claude Code or Codex and confirm a `--dry-run --once` daemon cycle lists it as claimable unchanged.

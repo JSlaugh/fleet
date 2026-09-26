@@ -11,8 +11,8 @@ function tempDir(prefix: string): string {
 
 describe("sanitizeCwd", () => {
   it("replaces every non-alphanumeric character with a dash, matching the CLI's own scheme", () => {
-    expect(sanitizeCwd("C:\\Users\\j\\github\\.fleet-worktrees\\fleet\\93")).toBe(
-      "C--Users-j-github--fleet-worktrees-fleet-93",
+    expect(sanitizeCwd("C:\\work\\.fleet-worktrees\\fleet\\93")).toBe(
+      "C--work--fleet-worktrees-fleet-93",
     );
   });
 });

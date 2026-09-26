@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ALL_FLEET_LABELS } from "@fleet/shared";
 import { makeProject } from "../test-support.ts";
 
 vi.mock("./exec.ts", async (importActual) => ({
@@ -12,26 +11,21 @@ vi.mock("./exec.ts", async (importActual) => ({
 const exec = await import("./exec.ts");
 const {
   bodyWithChildTaskList,
-  bodyWithDependsOn,
   bodyWithPartOf,
   buildConflictPrompt,
   buildPrFeedback,
   buildReviewFeedbackPrompt,
   dependencyStatus,
-  ensureMissingLabels,
   escalateLabelArgs,
   getPrChecks,
   getPrDiff,
   getPrOutcome,
   getStatusCommentInfo,
-  issueNumberFromUrl,
   mergePullRequest,
   parseChildTaskList,
-  parseDependsOn,
   parseHeartbeat,
   parsePartOf,
   parseTicketTimeoutMinutes,
-  priorityRank,
   readyLabelArgs,
   refreshHeartbeat,
   refreshHeartbeatIfStale,
@@ -43,22 +37,6 @@ const project = makeProject();
 
 beforeEach(() => {
   vi.clearAllMocks();
-});
-
-describe("priorityRank", () => {
-  it("ranks p1 above p2 above p3", () => {
-    expect(priorityRank(["fleet:p1"])).toBeLessThan(priorityRank(["fleet:p2"]));
-    expect(priorityRank(["fleet:p2"])).toBeLessThan(priorityRank(["fleet:p3"]));
-  });
-
-  it("returns the lowest rank (largest number) when no priority label is present", () => {
-    expect(priorityRank(["fleet:ready"])).toBe(3);
-    expect(priorityRank([])).toBe(3);
-  });
-
-  it("uses the highest priority when several are present", () => {
-    expect(priorityRank(["fleet:p3", "fleet:p1"])).toBe(0);
-  });
 });
 
 describe("readyLabelArgs", () => {
@@ -92,96 +70,6 @@ describe("escalateLabelArgs", () => {
       "--add-label", "fleet:elevate",
       "--add-label", "fleet:ready",
     ]);
-  });
-});
-
-describe("issueNumberFromUrl", () => {
-  it("takes the number from the last path segment", () => {
-    expect(issueNumberFromUrl("https://github.com/JSlaugh/fleet/issues/42")).toBe(42);
-  });
-
-  it("tolerates surrounding whitespace", () => {
-    expect(issueNumberFromUrl("  https://github.com/JSlaugh/fleet/issues/7\n")).toBe(7);
-  });
-
-  it("throws when gh printed something unexpected", () => {
-    expect(() => issueNumberFromUrl("")).toThrow();
-    expect(() => issueNumberFromUrl("Creating issue in JSlaugh/fleet")).toThrow();
-  });
-});
-
-describe("parseDependsOn", () => {
-  it("returns [] when there is no Depends-on line", () => {
-    expect(parseDependsOn("Just a plain description.")).toEqual([]);
-  });
-
-  it("parses a single dependency", () => {
-    expect(parseDependsOn("Depends-on: #12")).toEqual([12]);
-  });
-
-  it("parses multiple comma-separated dependencies", () => {
-    expect(parseDependsOn("Depends-on: #12, #14")).toEqual([12, 14]);
-  });
-
-  it("accepts mixed comma and space separators", () => {
-    expect(parseDependsOn("Depends-on: #12 #14, #16")).toEqual([12, 14, 16]);
-  });
-
-  it("ignores malformed entries but keeps the valid ones", () => {
-    expect(parseDependsOn("Depends-on: #12, banana, 14, #16")).toEqual([12, 16]);
-  });
-
-  it("is case-insensitive on the key", () => {
-    expect(parseDependsOn("depends-on: #5")).toEqual([5]);
-    expect(parseDependsOn("DEPENDS-ON: #5")).toEqual([5]);
-  });
-
-  it("finds the line anywhere in a multi-line body", () => {
-    const body = ["## Problem", "Some description.", "", "Depends-on: #3", "", "## More"].join("\n");
-    expect(parseDependsOn(body)).toEqual([3]);
-  });
-
-  it("dedupes repeated references", () => {
-    expect(parseDependsOn("Depends-on: #4, #4")).toEqual([4]);
-  });
-
-  it("parses the issue-form-rendered section", () => {
-    const body = ["### Depends on", "", "#12 #14", "", "### Priority", "", "P2 - default"].join("\n");
-    expect(parseDependsOn(body)).toEqual([12, 14]);
-  });
-
-  it("is case-insensitive on the section heading", () => {
-    const body = ["### depends on", "", "#5"].join("\n");
-    expect(parseDependsOn(body)).toEqual([5]);
-  });
-
-  it("returns [] for an unfilled optional section", () => {
-    const body = ["### Depends on", "", "_No response_", "", "### Priority", "", "P2 - default"].join("\n");
-    expect(parseDependsOn(body)).toEqual([]);
-  });
-
-  it("unions dependencies from the line and section forms when both are present", () => {
-    const body = ["Depends-on: #1", "", "### Depends on", "", "#2"].join("\n");
-    expect(parseDependsOn(body)).toEqual([1, 2]);
-  });
-});
-
-describe("bodyWithDependsOn", () => {
-  it("leaves the body untouched when there are no dependencies", () => {
-    expect(bodyWithDependsOn("details", undefined)).toBe("details");
-    expect(bodyWithDependsOn("details", [])).toBe("details");
-  });
-
-  it("appends a Depends-on line for a single dependency", () => {
-    expect(bodyWithDependsOn("details", [12])).toBe("details\n\nDepends-on: #12");
-  });
-
-  it("appends a Depends-on line listing every dependency", () => {
-    expect(bodyWithDependsOn("details", [12, 14])).toBe("details\n\nDepends-on: #12, #14");
-  });
-
-  it("doesn't leave a leading blank line when the body is empty", () => {
-    expect(bodyWithDependsOn("", [12])).toBe("Depends-on: #12");
   });
 });
 
@@ -884,24 +772,5 @@ describe("getPrOutcome", () => {
     const outcome = await getPrOutcome(project, "https://github.com/acme/alpha/pull/7");
     expect(outcome.reviewRounds).toBe(2);
     expect(outcome.reviewCommentCount).toBe(1);
-  });
-});
-
-describe("ensureMissingLabels", () => {
-  it("creates only the fleet labels the repo lacks, leaving existing ones untouched", async () => {
-    vi.mocked(exec.runJson).mockResolvedValueOnce(ALL_FLEET_LABELS.filter((l) => l.name !== "fleet:backlog").map((l) => ({ name: l.name })));
-    vi.mocked(exec.run).mockResolvedValue({ stdout: "", stderr: "" });
-
-    const created = await ensureMissingLabels(makeProject());
-
-    expect(created).toEqual(["fleet:backlog"]);
-    expect(exec.run).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(exec.run).mock.calls[0]?.[1]).toEqual(expect.arrayContaining(["label", "create", "fleet:backlog"]));
-  });
-
-  it("creates nothing when every label exists", async () => {
-    vi.mocked(exec.runJson).mockResolvedValueOnce(ALL_FLEET_LABELS.map((l) => ({ name: l.name })));
-    expect(await ensureMissingLabels(makeProject())).toEqual([]);
-    expect(exec.run).not.toHaveBeenCalled();
   });
 });

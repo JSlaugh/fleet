@@ -2,6 +2,7 @@ import {
   ELEVATE_LABEL,
   FLEET_LABELS,
   LIGHT_LABEL,
+  bodyWithDependsOn,
   type PlanResult,
   type ProjectConfig,
   type TicketRecord,
@@ -9,7 +10,6 @@ import {
 import { key, type LoopContext } from "./context.ts";
 import {
   bodyWithChildTaskList,
-  bodyWithDependsOn,
   bodyWithPartOf,
   createIssue,
   createPullRequest,
