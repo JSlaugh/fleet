@@ -315,11 +315,11 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
   if (yielded > 0) log("loop", `${project.name}: claiming with ${yielded} yielded ticket(s) parked on approvals`);
 
   // Computed once per cycle in `FleetLoop.cycle()` (`checkAuthGate`), not per
-  // project — credentials are machine-wide, and the probe itself is a real
-  // (cached) session. The hold and its dedup event are logged there; this is
-  // just the per-project claim gate reading that verdict.
+  // project — credentials and the CLI are machine-wide, and each probe is a
+  // real (cached) session. The hold, its cause and its dedup event are logged
+  // there; this is just the per-project claim gate reading that verdict.
   if (ctx.authGateHeld) {
-    log("loop", `${project.name}: auth gate held — holding claims until credentials recover`);
+    log("loop", `${project.name}: auth gate held — holding claims until every configured model probes healthy`);
     return;
   }
 
