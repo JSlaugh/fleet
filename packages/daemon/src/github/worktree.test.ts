@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProjectConfig } from "@fleet/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeProject } from "../test-support.ts";
@@ -225,6 +225,103 @@ describe("createWorktree with fleet.yaml", () => {
       const worktreeRoot = makeTempDir("fleet-wt-root-");
 
       await expect(createWorktree(project, 205, worktreeRoot)).rejects.toThrow(/fleet\.yaml is invalid/);
+    },
+    TEST_TIMEOUT,
+  );
+});
+
+describe("createWorktree with .worktreeinclude", () => {
+  function commitFiles(project: ProjectConfig, files: Record<string, string>): void {
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(project.repoPath, rel)), { recursive: true });
+      writeFileSync(join(project.repoPath, rel), content);
+      git(project.repoPath, ["add", rel]);
+    }
+    git(project.repoPath, ["commit", "-q", "-m", "add files"]);
+    git(project.repoPath, ["push", "-q", "origin", project.defaultBranch]);
+  }
+
+  /** Writes files into the main checkout only — never committed. */
+  function writeLocal(project: ProjectConfig, files: Record<string, string>): void {
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(project.repoPath, rel)), { recursive: true });
+      writeFileSync(join(project.repoPath, rel), content);
+    }
+  }
+
+  it(
+    "copies only paths that match .worktreeinclude and are gitignored",
+    async () => {
+      const project = setupProject();
+      commitFiles(project, {
+        ".gitignore": ".claude/settings.local.json\n.env\nsecrets/\nbuild/\n",
+        ".worktreeinclude": ".claude/settings.local.json\n.env\nsecrets/\nnotes.txt\n",
+      });
+      writeLocal(project, {
+        ".claude/settings.local.json": '{"permissions":{}}',
+        ".env": "TOKEN=dev",
+        "secrets/a.key": "a",
+        "secrets/nested/b.key": "b",
+        "build/out.js": "ignored but not included",
+        "notes.txt": "included but not ignored",
+      });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 301, worktreeRoot);
+
+      expect(readFileSync(join(wt.path, ".claude/settings.local.json"), "utf8")).toBe('{"permissions":{}}');
+      expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("TOKEN=dev");
+      expect(readFileSync(join(wt.path, "secrets/nested/b.key"), "utf8")).toBe("b");
+      expect(existsSync(join(wt.path, "build/out.js"))).toBe(false);
+      expect(existsSync(join(wt.path, "notes.txt"))).toBe(false);
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "falls back to the main checkout's .worktreeinclude when it isn't committed",
+    async () => {
+      const project = setupProject();
+      commitFiles(project, { ".gitignore": ".worktreeinclude\n.env\n" });
+      writeLocal(project, { ".worktreeinclude": ".env\n", ".env": "X=1" });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 302, worktreeRoot);
+
+      expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("X=1");
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "copies before fleet.yaml setup steps run, so they can use the files",
+    async () => {
+      const project = setupProject();
+      commitFiles(project, { ".gitignore": ".env\n", ".worktreeinclude": ".env\n" });
+      commitFleetYaml(project, {
+        setup: [nodeStep("read-env", "require('fs').copyFileSync('.env','seen.txt')")],
+      });
+      writeLocal(project, { ".env": "FROM_MAIN" });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 303, worktreeRoot);
+
+      expect(readFileSync(join(wt.path, "seen.txt"), "utf8")).toBe("FROM_MAIN");
+    },
+    TEST_TIMEOUT,
+  );
+
+  it(
+    "copies nothing without a .worktreeinclude",
+    async () => {
+      const project = setupProject();
+      commitFiles(project, { ".gitignore": ".env\n" });
+      writeLocal(project, { ".env": "X=1" });
+      const worktreeRoot = makeTempDir("fleet-wt-root-");
+
+      const wt = await createWorktree(project, 304, worktreeRoot);
+
+      expect(existsSync(join(wt.path, ".env"))).toBe(false);
     },
     TEST_TIMEOUT,
   );

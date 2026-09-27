@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { selectSetupProfile, teardownForType, type ProjectConfig } from "@fleet/shared";
 import { readBuildSpec } from "./buildspec.ts";
 import { run, runShell, type RunResult } from "./exec.ts";
@@ -48,6 +48,9 @@ export async function createWorktree(
     `origin/${project.defaultBranch}`,
   ]);
 
+  // Before setup, so steps like `pnpm install` already see copied files (.env, local settings).
+  await copyWorktreeIncludes(project, issueNumber, path);
+
   // A repo-declared fleet.yaml wins outright over the operator's setupCommand
   // for this claim — no silent fallback, so a malformed spec fails loudly here
   // rather than quietly running (or skipping) the old setup path.
@@ -77,6 +80,65 @@ export async function createWorktree(
     await runShell(project.setupCommand, path, stepEnv(project, issueNumber, path));
   }
   return { path, branch, type, hasTeardown };
+}
+
+export const WORKTREE_INCLUDE_FILE = ".worktreeinclude";
+
+/**
+ * Copies gitignored files a fresh worktree needs (e.g. `.claude/settings.local.json`,
+ * `.env`) from the project's main checkout, following Claude Code's `.worktreeinclude`
+ * convention: gitignore-syntax patterns, and only paths that match a pattern *and*
+ * are gitignored are copied — so a tracked file can never be clobbered. The pattern
+ * file is read from the new worktree (the committed copy), falling back to the main
+ * checkout. Wholly best-effort: a failure is logged, never thrown, since a missing
+ * convenience file must not block a claim. Returns the copied repo-relative paths.
+ */
+export async function copyWorktreeIncludes(
+  project: ProjectConfig,
+  issueNumber: number,
+  worktreePath: string,
+): Promise<string[]> {
+  const includeFile = [join(worktreePath, WORKTREE_INCLUDE_FILE), join(project.repoPath, WORKTREE_INCLUDE_FILE)]
+    .find((candidate) => existsSync(candidate));
+  if (!includeFile) return [];
+
+  try {
+    // Untracked files in the main checkout matching the include patterns. File-level on
+    // purpose: `--directory` would collapse e.g. `.claude/` into one entry, which the
+    // repo's .gitignore (naming only `.claude/settings.local.json`) doesn't ignore.
+    const { stdout: matched } = await run("git", [
+      "-C", project.repoPath,
+      "ls-files", "-z", "--others", "--ignored",
+      `--exclude-from=${includeFile}`,
+    ]);
+    // NUL-separated throughout, so unusual file names are never C-quoted by git.
+    const candidates = matched.split("\0").filter(Boolean);
+    if (candidates.length === 0) return [];
+
+    // ...narrowed to the ones the repo itself ignores. Exit 1 means "none ignored".
+    const { stdout: ignored } = await run(
+      "git",
+      ["-C", project.repoPath, "check-ignore", "-z", "--stdin"],
+      { allowFailure: true, stdin: candidates.join("\0") + "\0" },
+    );
+    const toCopy = ignored.split("\0").filter(Boolean);
+
+    const copied: string[] = [];
+    for (const rel of toCopy) {
+      const dest = join(worktreePath, rel);
+      if (existsSync(dest)) continue;
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(join(project.repoPath, rel), dest);
+      copied.push(rel);
+    }
+    if (copied.length > 0) {
+      log("worktree", `${project.name}#${issueNumber}: copied ${WORKTREE_INCLUDE_FILE} paths: ${copied.join(", ")}`);
+    }
+    return copied;
+  } catch (err) {
+    log("worktree", `${project.name}#${issueNumber}: ${WORKTREE_INCLUDE_FILE} copy failed (continuing): ${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
 }
 
 /**
