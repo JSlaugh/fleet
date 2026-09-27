@@ -190,3 +190,48 @@ export async function handleAuthFailure(ctx: LoopContext, project: ProjectConfig
     logError("loop", `${scope}: could not post the auth-failure pause status comment`, err);
   }
 }
+
+/**
+ * The API rejected the session's environment (fleet#234) — typically a model
+ * the configured CLI is too old for, or a model id that doesn't exist. Like an
+ * auth failure it isn't the ticket's fault and auto-elevation can't fix it,
+ * so the ticket gets `handleAuthFailure`'s treatment: `stalled` with its
+ * worktree and session id intact and `autoResumed` cleared. Unlike an auth
+ * failure it does NOT set the operator-only `paused` flag — it only
+ * invalidates the probe cache, so the next cycle's per-model `checkAuthGate`
+ * holds claims and stall resumes until every model probes healthy, then
+ * `recoverStalled` resumes this ticket with no operator action.
+ */
+export async function handleEnvironmentRejection(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issue: Pick<ReadyIssue, "number" | "title">,
+  errorText: string | undefined,
+): Promise<void> {
+  const scope = key(project.name, issue.number);
+  invalidateAuthProbeCache(ctx);
+  log("loop", `${scope}: API rejected the session's environment — stalled until the preflight probe passes: ${errorText ?? "(no error text)"}`);
+
+  ctx.state.update(project.name, issue.number, {
+    status: "stalled",
+    lastActivityNote: "paused: environment problem (API rejected the model/CLI)",
+    autoResumed: false,
+  });
+  ctx.emitBoard();
+
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [
+        `**Status: paused**`,
+        `The session is paused on an environment problem — the API rejected the configured model or Claude Code version. It resumes automatically once every configured model passes the daemon's preflight probe.`,
+        errorText ? `\`\`\`\n${errorText}\n\`\`\`` : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the environment-rejection status comment`, err);
+  }
+}

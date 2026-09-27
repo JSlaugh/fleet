@@ -68,9 +68,13 @@ export function flagStalled(ctx: LoopContext): void {
  * reconciliation (`clearLiveFlags` turns orphaned `running` tickets into
  * `stalled`) and mid-run stalls flagged by `flagStalled`. A project the
  * operator has paused (daemon-wide or individually) is skipped entirely —
- * its stalled tickets stay stalled until the pause lifts.
+ * its stalled tickets stay stalled until the pause lifts. Likewise while the
+ * preflight gate is held (`checkAuthGate`): a ticket stalled on an
+ * environment rejection (fleet#234) resumes only once every model probes
+ * healthy again.
  */
 export function recoverStalled(ctx: LoopContext): void {
+  if (ctx.authGateHeld) return;
   for (const project of ctx.config.projects) {
     if (isProjectPaused(ctx, project.name)) continue;
     for (const record of pickAutoResumable(ctx.state.all(), project, ctx.running.keys(), activeCount(ctx, project.name).active)) {
