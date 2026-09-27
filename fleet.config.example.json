@@ -27,6 +27,10 @@
     "events": ["needs-input", "pr-opened", "failed", "paused", "auto-merged", "stale-released"],
     "digestTime": "09:00"
   },
+  "discord": {
+    "channelId": "000000000000000000",
+    "allowedUserIds": ["000000000000000000"]
+  },
   "projects": [
     {
       "name": "example",
@@ -55,6 +59,9 @@
       "notifications": {
         "discordUrl": "https://discord.com/api/webhooks/111111111111111111/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
         "events": ["needs-input", "pr-opened", "failed"]
+      },
+      "discord": {
+        "channelId": "111111111111111111"
       }
     }
   ]

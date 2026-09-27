@@ -14,6 +14,7 @@
     "paths": {
       "@fleet/shared": ["./packages/shared/src/index.ts"],
       "@fleet/github": ["./packages/github/src/index.ts"],
+      "@fleet/discord": ["./packages/discord/src/index.ts"],
       "@fleet/mcp/stamp": ["./packages/mcp/src/stamp/index.ts"]
     }
   }

@@ -29,6 +29,22 @@ export const AgentKindSchema = z.enum(AGENT_KINDS);
 export type AgentKind = z.infer<typeof AgentKindSchema>;
 export const DEFAULT_AGENTS: readonly AgentKind[] = ["claude"];
 
+/**
+ * Discord gateway bot for answering approvals from Discord (`@fleet/discord`):
+ * each pending approval is posted with Approve/Deny buttons (or an Answer
+ * form for questions) the moment it's requested. Additive to the
+ * `notifications` webhook, which is untouched. Unset = the bot never starts
+ * and `discord.js` is never loaded.
+ */
+export const DiscordConfigSchema = z.object({
+  /** Bot token. Omit it here and set FLEET_DISCORD_BOT_TOKEN instead to keep it out of the file. */
+  botToken: z.string().min(1).optional(),
+  /** Default channel approvals are posted to. */
+  channelId: z.string().min(1),
+  /** Discord user ids allowed to approve, deny or answer — required, since anyone in the channel can see the buttons. */
+  allowedUserIds: z.array(z.string().min(1)).min(1),
+});
+
 export const ProjectConfigSchema = z.object({
   name: z.string().min(1),
   repoPath: z.string().min(1),
@@ -80,6 +96,8 @@ export const ProjectConfigSchema = z.object({
    * the global event filter. Unset entirely behaves exactly like the global config.
    */
   notifications: NotificationsConfigSchema.optional(),
+  /** Per-project channel for the Discord approvals bot; unset uses the global `discord.channelId`. */
+  discord: z.object({ channelId: z.string().min(1) }).optional(),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 
@@ -153,6 +171,8 @@ export const FleetConfigSchema = z.object({
   workHoursReserve: WorkHoursReserveSchema.optional(),
   /** Opt-in Discord webhook event pings. Unset (default) disables the feature entirely — no network calls. */
   notifications: NotificationsConfigSchema.optional(),
+  /** Opt-in Discord approvals bot — see `DiscordConfigSchema`. */
+  discord: DiscordConfigSchema.optional(),
   /** Default agents every project is stamped for (`sync-templates`); a project's own `agents` overrides it. */
   agents: z.array(AgentKindSchema).min(1).default([...DEFAULT_AGENTS]),
   projects: z.array(ProjectConfigSchema).min(1),
