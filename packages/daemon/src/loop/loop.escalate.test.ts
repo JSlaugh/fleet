@@ -6,6 +6,7 @@ import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState 
 import type { LoopContext } from "./context.ts";
 import { PostCompletionError, reportRunFailure, shouldAutoElevate } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
+import { recoverStalled } from "./recovery.ts";
 import { supervise } from "./supervise.ts";
 
 vi.mock("../github/github.ts", async (importOriginal) => ({
@@ -22,7 +23,15 @@ vi.mock("../github/github.ts", async (importOriginal) => ({
   upsertStatusComment: vi.fn(async () => {}),
 }));
 
+// Only the stall-recovery test reaches `resumeTicket`; stubbing it keeps that
+// resume from opening a real session.
+vi.mock("./runner.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./runner.ts")>()),
+  resumeTicket: vi.fn(async () => {}),
+}));
+
 const github = await import("../github/github.ts");
+const runner = await import("./runner.ts");
 
 describe("shouldAutoElevate", () => {
   it("escalates a first failure when an elevated model is configured", () => {
@@ -232,6 +241,57 @@ describe("supervise — auth_failed routing", () => {
     expect(state.getPaused()).toBe(true);
     const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
     expect(commentBody).toContain("Authentication failure");
+  });
+});
+
+describe("supervise — environment_rejected routing (fleet#234)", () => {
+  const CLI_TOO_OLD = "API Error: 400 Claude Code 2.1.278 does not support this model; version 2.1.280 or newer is required.";
+
+  async function superviseRejectedTurn() {
+    const loop = makeLoop(record({ elevated: false, autoElevated: false, autoResumed: true, status: "running" }));
+    const issue = { number: 7, title: "issue 7", body: "", labels: [], author: "collab-author" };
+    const worktree = { path: "/tmp/wt/7", branch: "fleet/7" } as Worktree;
+    const session = {
+      sessionId: "sess-7",
+      costUsd: 0,
+      model: undefined,
+      effort: undefined,
+      modelUsage: undefined,
+      nextResult: vi.fn(async () => ({ kind: "code", errorSubtype: "environment_rejected", environmentError: CLI_TOO_OLD })),
+      send: vi.fn(),
+    } as unknown as WorkerSession;
+    loop.internals.ctx.authProbeCache = { healthy: true, checkedAt: Date.now() };
+    await supervise(loop.internals.ctx, project, issue, worktree, session, { costUsd: 0 });
+    return loop;
+  }
+
+  it("stalls the ticket with its worktree and session kept, instead of failing, auto-elevating, or pausing", async () => {
+    const { state, internals } = await superviseRejectedTurn();
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).not.toHaveBeenCalled();
+    const updated = state.get("alpha", 7);
+    expect(updated).toMatchObject({ status: "stalled", sessionId: "sess-7", worktreePath: "/tmp/wt/7", autoResumed: false });
+    expect(updated?.autoElevated).toBeFalsy();
+    expect(state.getPaused()).toBe(false);
+    expect(internals.ctx.authProbeCache).toBeUndefined();
+    const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
+    expect(commentBody).toContain("environment problem");
+    expect(commentBody).toContain(CLI_TOO_OLD);
+  });
+
+  it("is resumed by recoverStalled once the preflight gate releases, not while it holds", async () => {
+    const { internals } = await superviseRejectedTurn();
+    const { ctx } = internals;
+
+    ctx.authGateHeld = true;
+    recoverStalled(ctx);
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
+
+    ctx.authGateHeld = false;
+    recoverStalled(ctx);
+    expect(runner.resumeTicket).toHaveBeenCalledWith(ctx, project, expect.objectContaining({ issueNumber: 7, sessionId: "sess-7" }), expect.any(String), "stall");
+    await ctx.running.get("alpha#7");
   });
 });
 
