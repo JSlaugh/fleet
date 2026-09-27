@@ -103,6 +103,11 @@ async function main(): Promise<void> {
   await loop.recoverPendingTeardowns();
 
   log("daemon", `fleet daemon starting — ${config.projects.length} project(s), poll every ${config.pollIntervalSeconds}s${dryRun ? " [dry-run]" : ""}${once ? " [once]" : ""}`);
+  // fleet.config.json is read once, here — echo each project's tiers so an edit made after boot is visibly not in effect.
+  for (const p of config.projects) {
+    const tier = (model?: string, effort?: string) => `${model ?? p.model ?? "CLI default"}${(effort ?? p.effort) ? `@${effort ?? p.effort}` : ""}`;
+    log("daemon", `${p.name}: models default ${tier(p.model, p.effort)}, elevated ${tier(p.elevatedModel, p.elevatedEffort)}, light ${tier(p.lightModel, p.lightEffort)}`);
+  }
 
   if (once) {
     await loop.cycle();

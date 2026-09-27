@@ -58,12 +58,11 @@ export const ProjectConfigSchema = z.object({
   lightModel: z.string().optional(),
   /**
    * Reasoning-effort tiering, orthogonal to model selection: same layered
-   * precedence as `model`/`elevatedModel`/`lightModel` (`fleet:elevate` →
-   * `elevatedEffort`, `fleet:light` → `lightEffort`, otherwise `effort`), but
-   * unset at any tier means "no override" — the SDK's own default applies
-   * rather than falling back to a sibling field. A future per-type `effort:`
-   * in `fleet.yaml` (see `tier:`, once #159 lands) would slot into this same
-   * stack ahead of the project default, same as `typeTier` does for models.
+   * precedence as `model`/`elevatedModel`/`lightModel` (`fleet:elevate` or a
+   * `fleet.yaml` type `tier: elevated` → `elevatedEffort`, `fleet:light` or
+   * `tier: light` → `lightEffort`, otherwise `effort`), but unset at any tier
+   * falls back only to `effort`, then to the SDK's own default — never to a
+   * sibling tier field.
    */
   effort: EffortSchema.optional(),
   elevatedEffort: EffortSchema.optional(),

@@ -81,6 +81,17 @@ describe("selectEffort", () => {
     expect(selectEffort({ effort: "high" }, { elevated: false, light: true })).toBe("high");
   });
 
+  it("follows the type's tier when no label is present", () => {
+    expect(selectEffort(project, { elevated: false, light: false, typeTier: "elevated" })).toBe("max");
+    expect(selectEffort(project, { elevated: false, light: false, typeTier: "light" })).toBe("low");
+    expect(selectEffort(project, { elevated: false, light: false, typeTier: "default" })).toBe("high");
+  });
+
+  it("an explicit label overrides the type's tier", () => {
+    expect(selectEffort(project, { elevated: false, light: true, typeTier: "elevated" })).toBe("low");
+    expect(selectEffort(project, { elevated: true, light: false, typeTier: "light" })).toBe("max");
+  });
+
   it("is undefined when nothing is configured — no override, SDK default applies", () => {
     expect(selectEffort({}, { elevated: false, light: false })).toBeUndefined();
     expect(selectEffort({}, { elevated: true, light: false })).toBeUndefined();
