@@ -7,27 +7,11 @@ import { getIssue, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
 import { supervise } from "./supervise.ts";
+import { selectModel } from "./model.ts";
 import { WorkerSession, type SessionKind } from "../session/worker.ts";
 import type { Worktree } from "../github/worktree.ts";
 
-/**
- * Which model a ticket's session should run on, most specific wins:
- * `fleet:elevate`/`fleet:light` labels (elevate wins when both are present —
- * elevation is an escalation signal) beat the ticket's `fleet.yaml` type's
- * declared `tier:`, which in turn beats the project default. Every tier
- * falls through to the project default when its matching tier model isn't
- * configured.
- */
-export function selectModel(
-  project: { model?: string; elevatedModel?: string; lightModel?: string },
-  opts: { elevated: boolean; light: boolean; typeTier?: Tier },
-): string | undefined {
-  if (opts.elevated) return project.elevatedModel ?? project.model;
-  if (opts.light) return project.lightModel ?? project.model;
-  if (opts.typeTier === "elevated") return project.elevatedModel ?? project.model;
-  if (opts.typeTier === "light") return project.lightModel ?? project.model;
-  return project.model;
-}
+export { selectModel };
 
 /**
  * Reasoning-effort counterpart of `selectModel`: same `fleet:elevate`/

@@ -9,7 +9,7 @@
     "test": "vitest run --root ../.. packages/daemon"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.233",
+    "@anthropic-ai/claude-agent-sdk": "0.3.283",
     "@fleet/discord": "workspace:*",
     "@fleet/github": "workspace:*",
     "@fleet/mcp": "workspace:*",
