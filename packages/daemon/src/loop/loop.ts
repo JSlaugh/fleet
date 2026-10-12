@@ -125,10 +125,13 @@ export class FleetLoop {
   async cycle(): Promise<void> {
     this.flagStalled();
     this.updatePauseState();
+    // Before `recoverStalled`: a ticket stalled on an environment rejection
+    // (fleet#234) must wait for every model to probe healthy, not resume
+    // straight back into the same 400.
+    await checkAuthGate(this.ctx);
     this.recoverStalled();
     await refreshOwnHeartbeats(this.ctx);
     await checkDigestSchedule(this.ctx);
-    await checkAuthGate(this.ctx);
     for (const project of this.config.projects) {
       try {
         await cycleProject(this.ctx, project);

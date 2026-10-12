@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeCtx, makeFleetConfig } from "../test-support.ts";
-import { AUTH_PROBE_CACHE_MS, checkAuthGate, invalidateAuthProbeCache, isProbeCacheFresh } from "./authGate.ts";
+import { makeCtx, makeFleetConfig, makeProject } from "../test-support.ts";
+import { AUTH_PROBE_CACHE_MS, checkAuthGate, invalidateAuthProbeCache, isProbeCacheFresh, modelsToProbe } from "./authGate.ts";
 import { closeAllDatabases } from "../store/db.ts";
 import { StateStore } from "../store/state.ts";
 
@@ -136,17 +136,66 @@ describe("checkAuthGate", () => {
     expect(review.runAuthProbe).toHaveBeenCalledOnce();
   });
 
-  it("passes the first project's light/model config and the daemon's claudeExecutable to the probe", async () => {
+  it("probes every distinct configured model once, passing the daemon's claudeExecutable", async () => {
     const state = new StateStore(tempDataDir());
     const config = makeFleetConfig({
       claudeExecutable: "/opt/claude",
-      projects: [{ ...makeFleetConfig().projects[0]!, name: "alpha", model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" }],
+      projects: [
+        makeProject({ name: "alpha", model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" }),
+        makeProject({ name: "beta", model: "claude-sonnet-5", elevatedModel: "claude-opus-5-5" }),
+      ],
     });
     const ctx = makeCtx({ config, state });
 
     await checkAuthGate(ctx);
 
-    expect(review.runAuthProbe).toHaveBeenCalledWith({ model: "claude-haiku-4-5", claudeExecutable: "/opt/claude" });
+    const probed = vi.mocked(review.runAuthProbe).mock.calls.map(([opts]) => opts);
+    expect(probed).toHaveLength(3);
+    expect(probed).toEqual(
+      expect.arrayContaining([
+        { model: "claude-sonnet-5", claudeExecutable: "/opt/claude" },
+        { model: "claude-haiku-4-5", claudeExecutable: "/opt/claude" },
+        { model: "claude-opus-5-5", claudeExecutable: "/opt/claude" },
+      ]),
+    );
+  });
+
+  it("holds when one of several models is unhealthy, naming it and its API error in the hold event", async () => {
+    vi.mocked(review.runAuthProbe).mockImplementation(async ({ model }) =>
+      model === "claude-opus-5-5" ? { healthy: false, error: "API Error: 400 does not support this model" } : { healthy: true },
+    );
+    const state = new StateStore(tempDataDir());
+    const config = makeFleetConfig({ projects: [makeProject({ model: "claude-sonnet-5", elevatedModel: "claude-opus-5-5" })] });
+    const ctx = makeCtx({ config, state });
+
+    expect(await checkAuthGate(ctx)).toBe(true);
+
+    const [event] = state.getEventsSince(new Date(0).toISOString());
+    expect(event).toMatchObject({
+      type: "gate-hold-auth-probe",
+      data: { failures: [{ model: "claude-opus-5-5", error: "API Error: 400 does not support this model" }] },
+    });
+    expect(event?.data?.detail).toContain("claude-opus-5-5: API Error: 400 does not support this model");
+  });
+});
+
+describe("modelsToProbe", () => {
+  it("dedups across projects and tiers, falling back like selectModel for unset tier fields", () => {
+    const models = modelsToProbe([
+      makeProject({ name: "alpha", model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" }),
+      makeProject({ name: "beta", model: "claude-sonnet-5", elevatedModel: "claude-opus-5-5" }),
+    ]);
+
+    expect(models.sort()).toEqual(["claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-5"]);
+  });
+
+  it("includes the CLI default when a project leaves model unset but sets a tier", () => {
+    expect(modelsToProbe([makeProject({ elevatedModel: "claude-opus-5-5" })])).toEqual(["claude-opus-5-5", undefined]);
+  });
+
+  it("probes once with the CLI default when no project sets any model", () => {
+    expect(modelsToProbe([makeProject(), makeProject({ name: "beta" })])).toEqual([undefined]);
+    expect(modelsToProbe([])).toEqual([undefined]);
   });
 });
 

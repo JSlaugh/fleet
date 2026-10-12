@@ -305,6 +305,7 @@ export async function resetForFreshClaim(
     sessionId: undefined,
     sessionLive: false,
     autoResumed: false,
+    environmentRejected: undefined,
     machineReviewOutcome: undefined,
     // A restarted ticket's worktree is torn down and rebuilt from scratch, so
     // any PR the previous session opened no longer reflects what's about to

@@ -1,6 +1,7 @@
 import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummary, type PendingApproval, type ProjectConfig } from "@fleet/shared";
 import type { FleetEvents } from "../events.ts";
 import type { ApprovalManager } from "../session/approvals.ts";
+import type { ProbeFailure } from "./authGate.ts";
 import { swapLabel } from "../github/github.ts";
 import { logError } from "../log.ts";
 import type { HistoryStore, StateStore } from "../store/state.ts";
@@ -62,10 +63,10 @@ export interface LoopContext {
    * staleness rather than a per-project multiset, so it's reassigned directly
    * instead of mutated through Set/Map methods.
    */
-  authProbeCache?: { healthy: boolean; checkedAt: number };
+  authProbeCache?: { healthy: boolean; checkedAt: number; failures?: ProbeFailure[] };
   /** Whether the current auth-gate hold spell has already logged its `gate-hold-auth-probe` event — single-key by convention since credentials are machine-wide, not per-project like `budgetBlockedNotified`. */
   readonly authGateNotified: Set<"held">;
-  /** This cycle's auth-gate verdict, set once by `checkAuthGate` before the per-project loop and read by `cycleProject` — computing the (async) probe once per cycle instead of once per project. */
+  /** This cycle's auth-gate verdict, set once by `checkAuthGate` before `recoverStalled` and the per-project loop, and read by both — computing the (async) probe once per cycle instead of once per project. */
   authGateHeld: boolean;
   emitBoard(): void;
   getProject(name: string): ProjectConfig | undefined;

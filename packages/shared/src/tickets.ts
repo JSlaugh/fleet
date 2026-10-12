@@ -31,6 +31,15 @@ export interface TicketRecord {
   elevated?: boolean;
   light?: boolean;
   autoResumed?: boolean;
+  /**
+   * Set when the ticket's most recent daemon-handled stall was an API
+   * environment rejection (fleet#234); cleared by the plan-limit/auth-failure
+   * stall paths. Paired with `autoResumed` it caps that stall's auto-resume to
+   * once: a session that was itself auto-resumed from an environment rejection
+   * and is rejected again stays stalled for an operator (see
+   * `handleEnvironmentRejection` in the daemon's loop/pause.ts).
+   */
+  environmentRejected?: boolean;
   isPlan?: boolean;
   /** Set once this ticket has auto-retried on the elevated model after a failure — caps escalation to once, ever. */
   autoElevated?: boolean;

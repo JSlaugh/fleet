@@ -11,7 +11,19 @@ import {
 } from "@fleet/shared";
 import type { Journal } from "../store/journal.ts";
 import { log } from "../log.ts";
-import { StderrCapture, checkAuthFailure, checkPlanLimit, sessionTitle, shouldJournal, summarize, summarizeModelUsage, type ToolTimings } from "./worker.ts";
+import {
+  StderrCapture,
+  checkAuthFailure,
+  checkPlanLimit,
+  findAuthFailureText,
+  findEnvironmentRejectionText,
+  isEnvironmentRejectionText,
+  sessionTitle,
+  shouldJournal,
+  summarize,
+  summarizeModelUsage,
+  type ToolTimings,
+} from "./worker.ts";
 
 /** Same top-level-object constraint as `WORKER_OUTPUT_SCHEMA` — see worker.ts. */
 export const MACHINE_REVIEW_OUTPUT_SCHEMA = z.toJSONSchema(MachineReviewResultSchema, {
@@ -257,16 +269,20 @@ export const AUTH_PROBE_TIMEOUT_MS = 60_000;
 
 export interface AuthProbeOutcome {
   /**
-   * False only on a confirmed `checkAuthFailure` match. Everything else —
-   * a clean success, a timeout, a thrown transport error — fails open to
-   * `true`: none of those are evidence credentials are dead, and misreading
-   * one as such would hold every project's claims (fleet#217) on what's more
-   * likely a network blip. The reactive detection in `nextResult`/
-   * `runReviewSession` remains the hard backstop for a credential that dies
-   * mid-run, which this preflight probe can't see at all.
+   * False only on a confirmed `checkAuthFailure` match or a hard environment
+   * rejection (`findEnvironmentRejectionText`/`isEnvironmentRejectionText` —
+   * the model id or CLI version refused with a 4xx, fleet#234). Everything
+   * else — a clean success, a timeout, an ambiguous thrown transport error —
+   * fails open to `true`: none of those are evidence sessions can't run, and
+   * misreading one as such would hold every project's claims (fleet#217) on
+   * what's more likely a network blip. The reactive detection in
+   * `nextResult`/`runReviewSession` remains the hard backstop for a failure
+   * that starts mid-run, which this preflight probe can't see at all.
    */
   healthy: boolean;
   errorSubtype?: string;
+  /** The API/CLI error text behind an unhealthy verdict, so the gate's hold can name the cause. */
+  error?: string;
 }
 
 /**
@@ -300,14 +316,21 @@ export async function runAuthProbe(opts: { model?: string; claudeExecutable?: st
       },
     });
     for await (const message of q) {
-      if (checkAuthFailure(message)) return { healthy: false };
+      const authText = findAuthFailureText(message);
+      if (authText) return { healthy: false, errorSubtype: "auth_failed", error: authText };
+      const rejection = findEnvironmentRejectionText(message);
+      if (rejection) return { healthy: false, errorSubtype: "environment_rejected", error: rejection };
       if (message.type === "result") {
         return { healthy: true, errorSubtype: message.subtype !== "success" ? message.subtype : undefined };
       }
     }
     return { healthy: true, errorSubtype: "stream_ended_without_result" };
   } catch (err) {
-    return { healthy: true, errorSubtype: err instanceof Error ? err.message : String(err) };
+    const text = err instanceof Error ? err.message : String(err);
+    if (!abortController.signal.aborted && isEnvironmentRejectionText(text)) {
+      return { healthy: false, errorSubtype: "environment_rejected", error: text };
+    }
+    return { healthy: true, errorSubtype: text };
   } finally {
     clearTimeout(timer);
   }
@@ -315,9 +338,11 @@ export async function runAuthProbe(opts: { model?: string; claudeExecutable?: st
 
 interface ReviewSessionOutcome<T> {
   result?: T;
-  /** "timed out" | "invalid_structured_output" | "plan_limit" | error-result subtype | thrown-error text. */
+  /** "timed out" | "invalid_structured_output" | "plan_limit" | "auth_failed" | "environment_rejected" | error-result subtype | thrown-error text. */
   errorSubtype?: string;
   limitResetAt?: string;
+  /** Set alongside `errorSubtype: "environment_rejected"` — the API error text. */
+  environmentError?: string;
   costUsd: number;
   modelUsage?: Record<string, ModelUsageSummary>;
   /** Journaled for traceability only — never written to `TicketRecord.sessionId`. */
@@ -416,6 +441,12 @@ async function runReviewSession<T>(opts: {
         outcome.errorSubtype = "auth_failed";
         return outcome;
       }
+      const rejection = findEnvironmentRejectionText(message);
+      if (rejection) {
+        outcome.errorSubtype = "environment_rejected";
+        outcome.environmentError = rejection;
+        return outcome;
+      }
       if (message.type === "result") {
         if (message.subtype !== "success") {
           journalStderrTail();
@@ -436,7 +467,13 @@ async function runReviewSession<T>(opts: {
     if (err instanceof AbortError || abortController.signal.aborted) {
       outcome.errorSubtype = `timed out after ${Math.round(timeoutMs / 60_000)} minutes`;
     } else {
-      outcome.errorSubtype = err instanceof Error ? err.message : String(err);
+      const text = err instanceof Error ? err.message : String(err);
+      if (isEnvironmentRejectionText(text)) {
+        outcome.errorSubtype = "environment_rejected";
+        outcome.environmentError = text;
+      } else {
+        outcome.errorSubtype = text;
+      }
     }
     return outcome;
   } finally {

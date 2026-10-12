@@ -4,7 +4,8 @@ import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./f
 import { MAX_TICKET_TIMEOUT_MINUTES, getIssueComments, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
-import { extendPause, handleAuthFailure, handlePlanLimit, pauseForAuthFailure } from "./pause.ts";
+import { extendPause, handleAuthFailure, handleEnvironmentRejection, handlePlanLimit, pauseForAuthFailure } from "./pause.ts";
+import { invalidateAuthProbeCache } from "./authGate.ts";
 import { recordSpend } from "./budget.ts";
 import { resolveTypeChecklist, resolveTypeContract, resolveTypeVerify } from "../github/buildspec.ts";
 import {
@@ -57,6 +58,11 @@ export async function supervise(
 
     if (turn.errorSubtype === "auth_failed") {
       await handleAuthFailure(ctx, project, issue);
+      return;
+    }
+
+    if (turn.errorSubtype === "environment_rejected") {
+      await handleEnvironmentRejection(ctx, project, issue, turn.environmentError);
       return;
     }
 
@@ -263,6 +269,7 @@ export async function machineReviewGate(
     log("loop", `${scope}: machine review failed (${outcome.errorSubtype}) — proceeding to human review`);
     if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
     if (outcome.errorSubtype === "auth_failed") pauseForAuthFailure(ctx, project, issue);
+    if (outcome.errorSubtype === "environment_rejected") invalidateAuthProbeCache(ctx);
     ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
     return { action: "proceed" };
   }
@@ -368,6 +375,7 @@ export async function planReviewGate(
     log("loop", `${scope}: plan review failed (${outcome.errorSubtype}) — proceeding to file the children`);
     if (outcome.errorSubtype === "plan_limit") extendPause(ctx, project, issue, outcome.limitResetAt);
     if (outcome.errorSubtype === "auth_failed") pauseForAuthFailure(ctx, project, issue);
+    if (outcome.errorSubtype === "environment_rejected") invalidateAuthProbeCache(ctx);
     ctx.state.update(project.name, issue.number, { machineReviewOutcome: "skipped" });
     return { action: "proceed" };
   }

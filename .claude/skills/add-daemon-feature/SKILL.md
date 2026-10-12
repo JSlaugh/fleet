@@ -16,10 +16,12 @@ description: Orientation map for changing daemon behavior in packages/daemon/src
 | `loop/context.ts` | `LoopContext` type; `key`/`countRunning`/`track`/`markWorking` helpers shared by everything else |
 | `loop/claim.ts` | Per-project poll cycle (`cycleProject`); picking which ready issues to claim, claim-collision resolution, stale-`fleet:ready` healing, contributor-floor routing |
 | `loop/intake.ts` | Issue-body intake lint on the claim path (`lintIntakeBody`/`applyIntakeLint`) — a rejected body goes straight to `fleet:needs-input`, never claimed |
-| `loop/runner.ts` | Opening/resuming a worker session, model/effort selection (`selectModel`/`selectEffort`), `fleet.yaml` type contract/tier resolution, `canUseTool` |
+| `loop/runner.ts` | Opening/resuming a worker session, effort selection (`selectEffort`; re-exports `selectModel`), `fleet.yaml` type contract/tier resolution, `canUseTool` |
+| `loop/model.ts` | `selectModel` — dependency-free label/type-tier → model resolution, shared by `runner.ts` and the preflight gate |
+| `loop/authGate.ts` | Preflight auth/model probe (`checkAuthGate`, `modelsToProbe`, probe cache): probes every configured model, holds claims and stall auto-resume while any is unhealthy |
 | `loop/supervise.ts` | **The turn state machine** — `supervise()` loops on `session.nextResult()`; `completed` → `machineReviewGate` (or `planReviewGate` for plans) → `finishCompleted`/`finishPlanned`; `blocked` → `park()` (waits `replyWaitMinutes` for a dashboard reply, resumable after); anything else → `finishFailed` |
 | `loop/finish.ts` | Terminal paths: completed (push+PR)/planned (file child issues)/blocked (status comment)/failed, plus `shouldAutoElevate` and failure routing (`reportRunFailure`) |
-| `loop/pause.ts` | Plan usage-limit pause (`handlePlanLimit`, `extendPause`) plus operator drain and per-project pause gates (`isPaused`/`isProjectPaused`) |
+| `loop/pause.ts` | Plan usage-limit pause (`handlePlanLimit`, `extendPause`), auth-failure pause (`handleAuthFailure`), environment-rejection stall (`handleEnvironmentRejection`, once-per-episode resume cap), plus operator drain and per-project pause gates (`isPaused`/`isProjectPaused`) |
 | `loop/budget.ts` | Rolling spend-window budget gate over new claims (`computeBudgetGate`, `recordSpend`) |
 | `loop/workHoursReserve.ts` | Pre-work-hours claim reserve: holds claims in the window before configured work start |
 | `loop/recovery.ts` | Stall detection (`flagStalled`) + picking tickets to auto-resume (`pickAutoResumable`) |
@@ -43,13 +45,14 @@ Each file tests exported functions imported from their real module (not `loop.ts
 - `loop.deps.test.ts` — `selectEligibleReady` + `resolveClaimCollision` (claim.ts): label/dependency/in-flight filtering, assignee routing
 - `loop.claim.test.ts` — `cycleProject` wiring (backpressure, budget/work-hours/contributor-floor gates), `healStaleReadyLabels`, `processTicket`, `selectCollaboratorAuthored` (claim.ts)
 - `loop.intake.test.ts` — `lintIntakeBody` + `applyIntakeLint` (intake.ts)
-- `loop.model.test.ts` — `selectModel` + `selectEffort` (runner.ts): label → model/effort tier resolution
+- `loop.model.test.ts` — `selectModel` (model.ts) + `selectEffort` (runner.ts): label → model/effort tier resolution
+- `loop.authgate.test.ts` — `checkAuthGate`, `modelsToProbe`, probe-cache freshness/invalidation (authGate.ts)
 - `loop.typecontract.test.ts` — `resolveTypeContract` + `resolveTypeTier` (runner.ts): `fleet.yaml` type lookups
 - `loop.canusetool.test.ts` — `makeCanUseTool` (runner.ts): approval routing, `--once` auto-deny
 - `loop.supervise.test.ts` — `resolveTimeoutMinutes` (supervise.ts)
 - `loop.machinereview.test.ts` — `machineReviewGate` + `planReviewGate` (supervise.ts): pass/findings/one-attempt cap/fail-open; plus `machineReviewLine` (finish.ts) and `resetForFreshClaim` (operator.ts)
 - `finish.test.ts` — `finishCompleted`/`finishBlocked` status-comment error policy, post-completion pipeline failures, `resolveDependsOnIndex` + `finishPlanned` dependsOn translation (finish.ts)
-- `loop.escalate.test.ts` — `shouldAutoElevate`, `finishFailed` auto-escalation, `reportRunFailure` (finish.ts)
+- `loop.escalate.test.ts` — `shouldAutoElevate`, `finishFailed` auto-escalation, `reportRunFailure` (finish.ts); `supervise`'s auth-failure and environment-rejection routing (`handleEnvironmentRejection` in pause.ts, incl. its resume cap)
 - `loop.planlimit.test.ts` — `handlePlanLimit` pause duration math + `isPaused`/`updatePauseState` (pause.ts)
 - `loop.pause.test.ts` — `FleetLoop.cycle` under operator drain mode and per-project pause (pause.ts gate, `pausedProjectNames` in board.ts)
 - `loop.budget.test.ts` — `computeBudgetGate`, `budgetStatus`, `recordSpend` (budget.ts)

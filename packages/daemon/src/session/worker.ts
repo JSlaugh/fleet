@@ -188,6 +188,8 @@ export interface CodeTurnResult {
   limitResetAt?: string;
   /** The SDK result message's `terminal_reason`, when the turn ended on a `result` message — richer than `errorSubtype` alone for diagnosing why a turn ended. */
   terminalReason?: string;
+  /** Set alongside `errorSubtype: "environment_rejected"` — the API error text, quoted in the status comment. */
+  environmentError?: string;
 }
 
 export interface PlanTurnResult {
@@ -196,6 +198,7 @@ export interface PlanTurnResult {
   errorSubtype?: string;
   limitResetAt?: string;
   terminalReason?: string;
+  environmentError?: string;
 }
 
 export type TurnResult = CodeTurnResult | PlanTurnResult;
@@ -313,6 +316,54 @@ export function findAuthFailureText(message: SDKMessage): string | undefined {
 /** The one signal `WorkerSession.nextResult`/`runReviewSession` act on for an Anthropic auth failure — see `findAuthFailureText`. */
 export function checkAuthFailure(message: SDKMessage): boolean {
   return findAuthFailureText(message) !== undefined;
+}
+
+/**
+ * The API rejecting the session's *environment* rather than its work — the
+ * configured model id, or the CLI version asking for it (fleet#234: "API
+ * Error: 400 Claude Code 2.1.278 does not support this model; version 2.1.280
+ * or newer is required."). Like an auth failure, every session on that model
+ * dies on turn 1 identically, so it's an environment problem to hold claims
+ * over, not a ticket failure. Two shapes: a 4xx `API Error:` naming a model
+ * problem, and the CLI's own rewrite of a model-not-found
+ * ("There's an issue with the selected model (…)").
+ */
+const ENVIRONMENT_REJECTION_SOURCE =
+  String.raw`(?:API Error:\s*4\d\d\b[^\n]*?(?:does not support this model|version \S+ or newer is required|(?:invalid|unknown) model|model_not_found|not_found_error[^\n]*model|model[^\n]{0,80}?(?:is not supported|not supported|not found|does not exist))|There's an issue with the selected model\b)`;
+
+/** Anchored to the start, like `AUTH_FAILURE_PATTERN`: applied to assistant text, where a worker touching model-selection code writes these words itself. */
+const ENVIRONMENT_REJECTION_ANCHORED = new RegExp(`^${ENVIRONMENT_REJECTION_SOURCE}`, "i");
+/** Unanchored: applied only to error channels (thrown errors, error-result `errors[]`), never model prose. */
+const ENVIRONMENT_REJECTION_ANYWHERE = new RegExp(ENVIRONMENT_REJECTION_SOURCE, "i");
+
+/** Whether an error-channel string (thrown error message, error-result `errors[]` entry) is a hard environment rejection — the classifier `runAuthProbe` shares with `findEnvironmentRejectionText`. */
+export function isEnvironmentRejectionText(text: string): boolean {
+  return ENVIRONMENT_REJECTION_ANYWHERE.test(text);
+}
+
+/**
+ * Finds environment-rejection text on the shapes it surfaces as: an assistant
+ * message the SDK flags `error: "model_not_found"`, an assistant text block
+ * *starting* with the rejection, or an error result's `errors[]`. Returns the
+ * API error text so the status comment and gate log can quote it.
+ */
+export function findEnvironmentRejectionText(message: SDKMessage): string | undefined {
+  if (message.type === "assistant") {
+    const content = message.message.content;
+    const texts = Array.isArray(content)
+      ? content
+          .filter((block) => typeof block === "object" && block !== null && (block as { type?: string }).type === "text")
+          .map((block) => (block as { text: string }).text.trim())
+      : [];
+    const matched = texts.find((text) => ENVIRONMENT_REJECTION_ANCHORED.test(text));
+    if (matched) return matched;
+    if (message.error === "model_not_found") return texts.find(Boolean) ?? "model_not_found";
+    return undefined;
+  }
+  if (message.type === "result" && message.subtype !== "success") {
+    return message.errors.find(isEnvironmentRejectionText);
+  }
+  return undefined;
 }
 
 /** `SDKMessage["type"]`s `summarize()` extracts real content for. */
@@ -529,6 +580,11 @@ export class WorkerSession {
           log("worker", `${this.opts.scope}: authentication failure detected in the CLI output`);
           return { kind: this.kind, errorSubtype: "auth_failed" } as TurnResult;
         }
+        const rejection = findEnvironmentRejectionText(message);
+        if (rejection) {
+          log("worker", `${this.opts.scope}: API rejected the session's environment: ${rejection}`);
+          return { kind: this.kind, errorSubtype: "environment_rejected", environmentError: rejection } as TurnResult;
+        }
         if (message.type === "result") {
           if (message.subtype === "success") {
             const structuredOutput = message.structured_output;
@@ -549,6 +605,11 @@ export class WorkerSession {
       this.journalStderrTail();
       if (err instanceof AbortError || this.abortController.signal.aborted) {
         return { kind: this.kind, errorSubtype: `timed out after ${Math.round(timeoutMs / 60_000)} minutes` } as TurnResult;
+      }
+      const text = err instanceof Error ? err.message : String(err);
+      if (isEnvironmentRejectionText(text)) {
+        log("worker", `${this.opts.scope}: API rejected the session's environment: ${text}`);
+        return { kind: this.kind, errorSubtype: "environment_rejected", environmentError: text } as TurnResult;
       }
       throw err;
     } finally {

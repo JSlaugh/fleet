@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { PlanResult, ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import type { LoopContext } from "./context.ts";
 import { machineReviewLine } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
 import type { MachineReviewOutcome, PlanReviewOutcome } from "../session/review.ts";
@@ -263,6 +264,22 @@ describe("machineReviewGate", () => {
     expect(state.getPaused()).toBe(true);
   });
 
+  it("invalidates the probe cache without pausing when the reviewer hits an environment rejection, and still proceeds", async () => {
+    vi.mocked(review.runMachineReview).mockResolvedValue(
+      reviewOutcome({ result: undefined, errorSubtype: "environment_rejected", environmentError: "API Error: 400 model rejected" }),
+    );
+    const { loop, state, internals } = makeLoop(record());
+    const { ctx } = loop as unknown as { ctx: LoopContext };
+    ctx.authProbeCache = { healthy: true, checkedAt: Date.now() };
+
+    const gate = await internals.machineReviewGate(project, issue, worktree, { costUsd: 0 }, workerReport);
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
+    expect(ctx.authProbeCache).toBeUndefined();
+    expect(state.getPaused()).toBe(false);
+  });
+
   it("never runs when the project opts out", async () => {
     const optedOut = makeProject({ model: "claude-sonnet-5", lightModel: "claude-haiku-4-5" });
     const { state, internals } = makeLoop(record());
@@ -376,6 +393,19 @@ describe("planReviewGate", () => {
     expect(gate).toEqual({ action: "proceed" });
     expect(state.get("alpha", 7)?.machineReviewOutcome).toBe("skipped");
     expect(state.getPaused()).toBe(true);
+  });
+
+  it("invalidates the probe cache without pausing when the reviewer hits an environment rejection, and still proceeds to file the children", async () => {
+    vi.mocked(review.runPlanReview).mockResolvedValue(planReviewOutcome({ result: undefined, errorSubtype: "environment_rejected" }));
+    const { loop, state, internals } = makeLoop(record());
+    const { ctx } = loop as unknown as { ctx: LoopContext };
+    ctx.authProbeCache = { healthy: true, checkedAt: Date.now() };
+
+    const gate = await internals.planReviewGate(project, issue, worktree, { costUsd: 0 }, planResult());
+
+    expect(gate).toEqual({ action: "proceed" });
+    expect(ctx.authProbeCache).toBeUndefined();
+    expect(state.getPaused()).toBe(false);
   });
 
   it("never runs when the project opts out — shares the machineReview switch with the code-review gate", async () => {
