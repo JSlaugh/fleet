@@ -247,8 +247,8 @@ describe("supervise — auth_failed routing", () => {
 describe("supervise — environment_rejected routing (fleet#234)", () => {
   const CLI_TOO_OLD = "API Error: 400 Claude Code 2.1.278 does not support this model; version 2.1.280 or newer is required.";
 
-  async function superviseRejectedTurn() {
-    const loop = makeLoop(record({ elevated: false, autoElevated: false, autoResumed: true, status: "running" }));
+  async function superviseRejectedTurn(patch: Partial<TicketRecord> = {}) {
+    const loop = makeLoop(record({ elevated: false, autoElevated: false, autoResumed: true, status: "running", ...patch }));
     const issue = { number: 7, title: "issue 7", body: "", labels: [], author: "collab-author" };
     const worktree = { path: "/tmp/wt/7", branch: "fleet/7" } as Worktree;
     const session = {
@@ -271,7 +271,7 @@ describe("supervise — environment_rejected routing (fleet#234)", () => {
     expect(github.escalateToElevated).not.toHaveBeenCalled();
     expect(github.swapLabel).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
-    expect(updated).toMatchObject({ status: "stalled", sessionId: "sess-7", worktreePath: "/tmp/wt/7", autoResumed: false });
+    expect(updated).toMatchObject({ status: "stalled", sessionId: "sess-7", worktreePath: "/tmp/wt/7", autoResumed: false, environmentRejected: true });
     expect(updated?.autoElevated).toBeFalsy();
     expect(state.getPaused()).toBe(false);
     expect(internals.ctx.authProbeCache).toBeUndefined();
@@ -292,6 +292,15 @@ describe("supervise — environment_rejected routing (fleet#234)", () => {
     recoverStalled(ctx);
     expect(runner.resumeTicket).toHaveBeenCalledWith(ctx, project, expect.objectContaining({ issueNumber: 7, sessionId: "sess-7" }), expect.any(String), "stall");
     await ctx.running.get("alpha#7");
+  });
+
+  it("leaves a ticket rejected again on its environment-rejection auto-resume stalled for an operator", async () => {
+    const { state, internals } = await superviseRejectedTurn({ environmentRejected: true });
+
+    expect(state.get("alpha", 7)).toMatchObject({ status: "stalled", sessionId: "sess-7", autoResumed: true, environmentRejected: true });
+    expect(vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2]).toContain("rejected again after resuming");
+    recoverStalled(internals.ctx);
+    expect(runner.resumeTicket).not.toHaveBeenCalled();
   });
 });
 

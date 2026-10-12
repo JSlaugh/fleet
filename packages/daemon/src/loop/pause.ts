@@ -109,6 +109,7 @@ export async function handlePlanLimit(
     status: "stalled",
     lastActivityNote: `paused: plan limit until ${pausedUntil.toLocaleString()}`,
     autoResumed: false,
+    environmentRejected: false,
   });
   ctx.emitBoard();
 
@@ -177,6 +178,7 @@ export async function handleAuthFailure(ctx: LoopContext, project: ProjectConfig
     status: "stalled",
     lastActivityNote: "paused: authentication failure",
     autoResumed: false,
+    environmentRejected: false,
   });
   ctx.emitBoard();
 
@@ -201,6 +203,14 @@ export async function handleAuthFailure(ctx: LoopContext, project: ProjectConfig
  * invalidates the probe cache, so the next cycle's per-model `checkAuthGate`
  * holds claims and stall resumes until every model probes healthy, then
  * `recoverStalled` resumes this ticket with no operator action.
+ *
+ * That resume is capped at once per rejection episode: if the rejected
+ * session was itself `recoverStalled`'s auto-resume of an earlier rejection
+ * (`autoResumed` and `environmentRejected` both already set), the probe can't
+ * see whatever model is being rejected — typically one picked by target-repo
+ * skill/agent `model:` frontmatter, which `modelsToProbe` never enumerates —
+ * so resuming again would just loop every cycle. `autoResumed` is left set and
+ * the ticket stays stalled for an operator.
  */
 export async function handleEnvironmentRejection(
   ctx: LoopContext,
@@ -210,24 +220,33 @@ export async function handleEnvironmentRejection(
 ): Promise<void> {
   const scope = key(project.name, issue.number);
   invalidateAuthProbeCache(ctx);
-  log("loop", `${scope}: API rejected the session's environment — stalled until the preflight probe passes: ${errorText ?? "(no error text)"}`);
+  const prior = ctx.state.get(project.name, issue.number);
+  const rejectedAgain = !!prior?.autoResumed && !!prior.environmentRejected;
+  log(
+    "loop",
+    rejectedAgain
+      ? `${scope}: API rejected the session's environment again after auto-resuming — stalled for an operator: ${errorText ?? "(no error text)"}`
+      : `${scope}: API rejected the session's environment — stalled until the preflight probe passes: ${errorText ?? "(no error text)"}`,
+  );
 
   ctx.state.update(project.name, issue.number, {
     status: "stalled",
-    lastActivityNote: "paused: environment problem (API rejected the model/CLI)",
-    autoResumed: false,
+    lastActivityNote: rejectedAgain
+      ? "stalled: environment rejected again after resume — needs an operator"
+      : "paused: environment problem (API rejected the model/CLI)",
+    environmentRejected: true,
+    ...(rejectedAgain ? {} : { autoResumed: false }),
   });
   ctx.emitBoard();
 
+  const explanation = rejectedAgain
+    ? `The session was rejected again after resuming automatically from an earlier environment problem — the API rejected the model or Claude Code version even though every configured model passed the daemon's preflight probe. The model may come from a skill/agent \`model:\` frontmatter in this repo, which the probe can't see. This ticket stays stalled until an operator fixes the environment and replies or restarts it.`
+    : `The session is paused on an environment problem — the API rejected the configured model or Claude Code version. It resumes automatically once every configured model passes the daemon's preflight probe.`;
   try {
     await upsertStatusComment(
       project,
       issue.number,
-      [
-        `**Status: paused**`,
-        `The session is paused on an environment problem — the API rejected the configured model or Claude Code version. It resumes automatically once every configured model passes the daemon's preflight probe.`,
-        errorText ? `\`\`\`\n${errorText}\n\`\`\`` : "",
-      ]
+      [rejectedAgain ? `**Status: stalled — needs an operator**` : `**Status: paused**`, explanation, errorText ? `\`\`\`\n${errorText}\n\`\`\`` : ""]
         .filter(Boolean)
         .join("\n\n"),
     );
