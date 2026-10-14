@@ -1,7 +1,7 @@
 import type { DigestResponse, NotificationsConfig } from "@fleet/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeProject } from "./test-support.ts";
-import { buildDigestMessage, buildNotificationMessage, issueUrl, notify, postDigest, postSerially, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
+import { DISCORD_CONTENT_LIMIT, buildDigestMessage, buildNotificationMessage, issueUrl, notify, postDigest, postSerially, projectUrl, shouldNotify, type NotifyDetail } from "./notify.ts";
 
 const project = makeProject();
 
@@ -61,6 +61,31 @@ describe("buildNotificationMessage", () => {
 
     expect(message).toContain("alpha Budget gate");
     expect(message).not.toContain("alpha#");
+  });
+
+  it("clips a detail that would push the message past Discord's content limit, keeping the header and link", () => {
+    const message = buildNotificationMessage("needs-input", project, { ...detail, detail: "x".repeat(2500) });
+
+    expect(message.length).toBeLessThanOrEqual(DISCORD_CONTENT_LIMIT);
+    expect(message.split("\n")[0]).toContain("alpha#7 Fix the thing");
+    expect(message.endsWith(detail.url)).toBe(true);
+    expect(message).toContain("full text on the issue");
+  });
+
+  it("leaves a message that exactly fits the limit untouched", () => {
+    const frame = buildNotificationMessage("needs-input", project, { ...detail, detail: "" }).length;
+    const fitting = "y".repeat(DISCORD_CONTENT_LIMIT - frame - 1);
+
+    const message = buildNotificationMessage("needs-input", project, { ...detail, detail: fitting });
+
+    expect(message.length).toBe(DISCORD_CONTENT_LIMIT);
+    expect(message).not.toContain("full text on the issue");
+  });
+
+  it("still fits when the title alone overflows the limit", () => {
+    const message = buildNotificationMessage("needs-input", project, { ...detail, title: "t".repeat(2500) });
+
+    expect(message.length).toBe(DISCORD_CONTENT_LIMIT);
   });
 });
 

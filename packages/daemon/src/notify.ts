@@ -86,11 +86,31 @@ function scopeLabel(project: { name: string }, detail: NotifyDetail): string {
   return detail.issueNumber === undefined ? project.name : `${project.name}#${detail.issueNumber}`;
 }
 
-/** The compact Discord message body for one event — pure so it's cheaply testable without a network mock. */
+/** Discord rejects a webhook `content` longer than this with a 400 (dropping the whole post), so every message built here is clipped to fit. */
+export const DISCORD_CONTENT_LIMIT = 2000;
+
+/** Appended to a clipped detail line so the reader knows the issue (linked on the next line) carries the rest. */
+const TRUNCATION_HINT = "… (full text on the issue)";
+
+/**
+ * The compact Discord message body for one event — pure so it's cheaply testable
+ * without a network mock. Never longer than `DISCORD_CONTENT_LIMIT`: a blocked
+ * question or error long enough to push past it is clipped with
+ * `TRUNCATION_HINT`, keeping the header and link lines intact so the
+ * notification still says what happened and where to read the rest.
+ */
 export function buildNotificationMessage(event: NotificationEvent, project: { name: string }, detail: NotifyDetail): string {
-  return [`**${EVENT_TITLES[event]}** — ${scopeLabel(project, detail)} ${detail.title}`, detail.detail, detail.url]
-    .filter((line) => line.trim().length > 0)
-    .join("\n");
+  const header = `**${EVENT_TITLES[event]}** — ${scopeLabel(project, detail)} ${detail.title}`;
+  const nonBlank = (line: string) => line.trim().length > 0;
+  const message = [header, detail.detail, detail.url].filter(nonBlank).join("\n");
+  if (message.length <= DISCORD_CONTENT_LIMIT) return message;
+  // Budget for the detail line: the limit less the header/link frame, the newline joining the detail to it, and the hint.
+  const frame = [header, detail.url].filter(nonBlank).join("\n").length;
+  const budget = DISCORD_CONTENT_LIMIT - frame - 1 - TRUNCATION_HINT.length;
+  // A title so long the frame alone overflows: nothing sensible to preserve, so just cut the whole thing to fit.
+  if (budget <= 0) return message.slice(0, DISCORD_CONTENT_LIMIT);
+  const clipped = detail.detail.slice(0, budget).trimEnd() + TRUNCATION_HINT;
+  return [header, clipped, detail.url].filter(nonBlank).join("\n");
 }
 
 /**
