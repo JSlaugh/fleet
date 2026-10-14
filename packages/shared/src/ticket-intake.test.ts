@@ -83,6 +83,16 @@ describe("parseDependsOn", () => {
     expect(parseDependsOn("Depends-on: #4, #4")).toEqual([4]);
   });
 
+  it("unions several Depends-on lines", () => {
+    const body = ["## Problem", "", "Depends-on: #125", "", "Depends-on: #176", ""].join("\n");
+    expect(parseDependsOn(body)).toEqual([125, 176]);
+  });
+
+  it("unions a Depends-on line with the issue-form section", () => {
+    const body = ["### Depends on", "", "#12", "", "Depends-on: #14, #12"].join("\n");
+    expect(parseDependsOn(body)).toEqual([14, 12]);
+  });
+
   it("parses the issue-form-rendered section", () => {
     const body = ["### Depends on", "", "#12 #14", "", "### Priority", "", "P2 - default"].join("\n");
     expect(parseDependsOn(body)).toEqual([12, 14]);

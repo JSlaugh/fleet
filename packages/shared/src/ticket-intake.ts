@@ -28,17 +28,18 @@ export function labelsForNewTicket(input: CreateTicketInput): string[] {
 }
 
 /**
- * Reads dependencies from two possible spots in an issue body, unioning both: a
+ * Reads dependencies from two possible spots in an issue body, unioning both: every
  * `Depends-on: #12, #14` line typed anywhere (case-insensitive key, comma/space
- * separated), and the `### Depends on\n\n#12 #14` section GitHub renders for the
+ * separated; several lines are unioned, since hand-edited bodies often add one
+ * line per dependency), and the `### Depends on\n\n#12 #14` section GitHub renders for the
  * `depends-on` field of the fleet-task issue form. Entries that aren't a bare
  * `#<digits>` token are ignored rather than rejecting the whole match, so a stray
  * typo in the list doesn't drop every other dependency.
  */
 export function parseDependsOn(body: string): number[] {
-  const lineMatch = /^\s*depends-on\s*:\s*(.+)$/im.exec(body);
+  const lineMatches = [...body.matchAll(/^\s*depends-on\s*:\s*(.+)$/gim)].map((m) => m[1]);
   const sectionMatch = /^###\s*depends on\s*\r?\n+([^\n]*)/im.exec(body);
-  const raw = [lineMatch?.[1], sectionMatch?.[1]].filter((s): s is string => s !== undefined).join(" ");
+  const raw = [...lineMatches, sectionMatch?.[1]].filter((s): s is string => s !== undefined).join(" ");
   const numbers = raw
     .split(/[\s,]+/)
     .map((token) => /^#(\d+)$/.exec(token.trim()))
