@@ -137,6 +137,16 @@ const blurb = computed(() => {
       <Badge v-if="ticket.record?.status === 'stalled'" variant="warning">
         stalled
       </Badge>
+      <Badge
+        v-if="ticket.record?.status === 'waiting'"
+        variant="info"
+        :title="[
+          ticket.record.waitReason ? `Waiting on: ${ticket.record.waitReason}` : undefined,
+          ticket.record.resumeAt ? `Resumes at ${new Date(ticket.record.resumeAt).toLocaleString()}` : undefined,
+        ].filter(Boolean).join('\n')"
+      >
+        waiting{{ ticket.record.resumeAt ? ` · ${new Date(ticket.record.resumeAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : "" }}
+      </Badge>
       <Badge v-if="ticket.record?.status === 'restarting'" variant="info">
         restarting
       </Badge>

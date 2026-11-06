@@ -127,15 +127,28 @@ async function restartNow() {
   }
 }
 
-async function submitReply() {
-  const message = reply.value.trim();
+/** Sent by "Resume now" on a waiting ticket — an ordinary reply, so it also resets the daemon's consecutive-wait streak. */
+const RESUME_NOW_MESSAGE =
+  "Resumed early from the fleet dashboard. Check whether what you were waiting on is done and continue; if it still isn't, finish as \"waiting\" again.";
+
+const isWaiting = computed(() => detail.value?.record?.status === "waiting");
+
+function submitReply() {
+  return sendMessage(reply.value.trim(), true);
+}
+
+function resumeNow() {
+  return sendMessage(RESUME_NOW_MESSAGE, false);
+}
+
+async function sendMessage(message: string, clearDraft: boolean) {
   if (!message || sending.value) return;
   sending.value = true;
   replyStatus.value = undefined;
   try {
     const { mode } = await sendReply(props.ticket.project, props.ticket.issueNumber, message);
     replyStatus.value = mode === "steered" ? "Sent into the live session." : "Session resumed with your reply.";
-    reply.value = "";
+    if (clearDraft) reply.value = "";
     void refresh();
   } catch (err) {
     replyStatus.value = err instanceof Error ? err.message : String(err);
@@ -356,6 +369,12 @@ watch(
           <dd>{{ closedRecord.humanPushedAfterOpen ? "yes" : "no" }}</dd>
         </div>
       </dl>
+      <p v-if="isWaiting" class="mt-3 text-xs text-foreground">
+        <span class="font-medium">Waiting on:</span> {{ detail?.record?.waitReason ?? "unspecified" }}
+        <template v-if="detail?.record?.resumeAt">
+          — resuming automatically at {{ new Date(detail.record.resumeAt).toLocaleString() }}
+        </template>
+      </p>
       <p v-if="detail?.record?.lastSummary" class="mt-3 max-h-48 overflow-y-auto whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
         {{ detail.record.lastSummary }}
       </p>
@@ -388,6 +407,16 @@ watch(
           :disabled="sending || reply.trim().length === 0"
         >
           {{ sending ? "Sending…" : "Send" }}
+        </button>
+        <button
+          v-if="isWaiting"
+          type="button"
+          class="rounded border px-3 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+          title="Resume this waiting session now instead of at its scheduled time"
+          :disabled="sending"
+          @click="resumeNow"
+        >
+          Resume now
         </button>
         <span v-if="replyStatus" class="text-xs text-muted-foreground">{{ replyStatus }}</span>
       </div>

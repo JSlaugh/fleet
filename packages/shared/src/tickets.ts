@@ -6,6 +6,8 @@ export type TicketStatus =
   | "needs-input"
   | "review"
   | "failed"
+  /** Worker finished a turn as `waiting`: no human decision needed, the daemon resumes it at `resumeAt` (fleet#236). Label stays `fleet:in-progress`. */
+  | "waiting"
   /** Operator hit Restart: the old session is gone and the issue is back in `fleet:ready`, awaiting a fresh claim. */
   | "restarting";
 
@@ -40,6 +42,18 @@ export interface TicketRecord {
    * `handleEnvironmentRejection` in the daemon's loop/pause.ts).
    */
   environmentRejected?: boolean;
+  /** While `status` is `waiting`: what the worker said it is waiting on (fleet#236). Cleared when the wait resumes. */
+  waitReason?: string;
+  /** While `status` is `waiting`: ISO timestamp after which `resumeWaiting` (daemon loop/waiting.ts) resumes the session. */
+  resumeAt?: string;
+  /**
+   * Consecutive automatic resumes out of `waiting` since the last human reply
+   * or restart — the cap `maxWaitResumes` is measured against. Reset by any
+   * operator/comment reply (`reply()` in the daemon's loop/operator.ts).
+   */
+  waitResumes?: number;
+  /** Every wait reason reported over the current `waitResumes` streak, oldest first — listed in the blocked fallback once the cap is hit. */
+  waitReasons?: string[];
   isPlan?: boolean;
   /** Set once this ticket has auto-retried on the elevated model after a failure — caps escalation to once, ever. */
   autoElevated?: boolean;

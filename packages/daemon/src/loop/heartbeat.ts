@@ -15,7 +15,7 @@ import { log, logError } from "../log.ts";
 import { Journal } from "../store/journal.ts";
 
 /** `TicketRecord` statuses this daemon should keep a fresh heartbeat on, once per cycle, while it's the one actually working the ticket. */
-const IN_FLIGHT_STATUSES = new Set(["running", "needs-input"]);
+const IN_FLIGHT_STATUSES = new Set(["running", "needs-input", "waiting"]);
 
 /** Only refresh once the last heartbeat is older than half the staleness threshold — avoids a `gh` PATCH every cycle for every in-flight ticket. */
 export function heartbeatRefreshAgeMs(staleClaimMinutes: number): number {
@@ -36,7 +36,7 @@ export function isClaimStale(comment: StatusCommentInfo | undefined, now: number
   return now - Date.parse(referenceTs) >= staleClaimMinutes * 60_000;
 }
 
-/** Refreshes the heartbeat on every ticket this daemon currently owns and is actively working — running or needs-input — gated by age. */
+/** Refreshes the heartbeat on every ticket this daemon currently owns and is actively working — running, needs-input, or waiting on a scheduled resume — gated by age. */
 export async function refreshOwnHeartbeats(ctx: LoopContext): Promise<void> {
   for (const record of ctx.state.all()) {
     if (!IN_FLIGHT_STATUSES.has(record.status)) continue;
@@ -64,7 +64,7 @@ export async function refreshOwnHeartbeats(ctx: LoopContext): Promise<void> {
  */
 export async function refreshStalledHeartbeatsOnBoot(ctx: LoopContext): Promise<void> {
   for (const record of ctx.state.all()) {
-    if (record.status !== "stalled") continue;
+    if (record.status !== "stalled" && record.status !== "waiting") continue;
     const project = ctx.getProject(record.project);
     if (!project) continue;
     const scope = key(record.project, record.issueNumber);

@@ -334,6 +334,82 @@ export async function finishBlocked(
   ctx.events.emit("ticket:needs-input", { project, issueNumber: issue.number, title: issue.title, detail: reason, url: issueUrl(project, issue.number) });
 }
 
+/** How long to wait before resuming: the worker's own suggestion, else the configured default, clamped to `[1, waitResumeMaxMinutes]`. */
+export function resolveWaitMinutes(
+  config: { waitResumeDefaultMinutes: number; waitResumeMaxMinutes: number },
+  requested: number | undefined,
+): number {
+  const minutes = requested ?? config.waitResumeDefaultMinutes;
+  return Math.max(1, Math.min(minutes, config.waitResumeMaxMinutes));
+}
+
+/** The blocked-fallback reason once `maxWaitResumes` is exhausted: every wait in the streak, oldest first. */
+export function waitCapReason(reasons: string[], maxWaitResumes: number): string {
+  return [
+    `The worker reported waiting ${reasons.length} time(s) in a row and was already resumed automatically ${maxWaitResumes} time(s) — check whether these are still in progress, then reply to continue:`,
+    reasons.map((r) => `- ${r}`).join("\n"),
+  ].join("\n");
+}
+
+/**
+ * A `waiting` worker turn (fleet#236): nothing for a human to decide, but
+ * something outside the session must finish first. Records `resumeAt` and
+ * leaves the label `fleet:in-progress` — never `fleet:needs-input` — so
+ * `resumeWaiting` (`waiting.ts`) picks it back up once that passes.
+ *
+ * Bounded by `maxWaitResumes`: once that many consecutive automatic resumes
+ * have already happened, this returns `exhausted` with a reason listing every
+ * wait instead, and the caller parks the session as `blocked` with it. The
+ * streak is cleared at that point so a human reply starts a fresh one.
+ */
+export async function finishWaiting(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issue: ReadyIssue,
+  result: { waitReason?: string; resumeAfterMinutes?: number; summary: string },
+): Promise<{ action: "scheduled"; resumeAt: string } | { action: "exhausted"; reason: string }> {
+  const scope = key(project.name, issue.number);
+  const reason = result.waitReason?.trim() || "Worker reported waiting without a reason.";
+  const record = ctx.state.get(project.name, issue.number);
+  const reasons = [...(record?.waitReasons ?? []), reason];
+  const journal = new Journal(ctx.dataDirPath, project.name, issue.number);
+
+  if ((record?.waitResumes ?? 0) >= ctx.config.maxWaitResumes) {
+    ctx.state.update(project.name, issue.number, { waitResumes: 0, waitReasons: undefined, waitReason: undefined, resumeAt: undefined });
+    journal.append({ type: "fleet", event: "wait-cap-reached", waitResumes: record?.waitResumes ?? 0, reasons });
+    log("loop", `${scope}: waiting again after ${record?.waitResumes ?? 0} automatic resume(s) — falling back to needs-input`);
+    return { action: "exhausted", reason: waitCapReason(reasons, ctx.config.maxWaitResumes) };
+  }
+
+  const minutes = resolveWaitMinutes(ctx.config, result.resumeAfterMinutes);
+  const resumeAt = new Date(Date.now() + minutes * 60_000).toISOString();
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [
+        `**Status: waiting** — ${reason}`,
+        result.summary,
+        `Resuming automatically at ${resumeAt} (in ${minutes}m). Reply from the fleet dashboard to resume sooner.`,
+      ].filter(Boolean).join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the waiting status comment`, err);
+  }
+  ctx.state.update(project.name, issue.number, {
+    status: "waiting",
+    waitReason: reason,
+    waitReasons: reasons,
+    resumeAt,
+    lastSummary: result.summary,
+    lastActivityNote: `waiting: ${reason}`,
+  });
+  ctx.emitBoard();
+  journal.append({ type: "fleet", event: "waiting", reason, resumeAt, minutes });
+  log("loop", `${scope}: waiting — ${reason}; auto-resuming at ${resumeAt}`);
+  return { action: "scheduled", resumeAt };
+}
+
 /**
  * An operator restart aborts the session, which reaches `supervise` (or the
  * claim/resume failure paths) as an ordinary errored turn. Reporting that would

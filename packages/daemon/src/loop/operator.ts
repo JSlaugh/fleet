@@ -65,6 +65,9 @@ export function ticketCapabilities(
   };
 }
 
+/** What any human reply clears on the ticket record: the wait streak `maxWaitResumes` counts, and a pending scheduled wait resume. */
+const HUMAN_REPLY_WAIT_RESET = { waitResumes: 0, waitReasons: undefined, waitReason: undefined, resumeAt: undefined } as const;
+
 /**
  * Routes a dashboard reply to its ticket: a session parked awaiting input, a
  * session already running, or a cold ticket that needs resuming from its
@@ -81,11 +84,13 @@ export async function reply(
   // A human-driven session earns a fresh auto-recovery if it stalls — but only
   // once the reply actually lands, so each success path below clears the flag
   // itself. Clearing up front would let a *rejected* reply (409 on
-  // mid-transition, say) refund the once-only auto-resume budget.
+  // mid-transition, say) refund the once-only auto-resume budget. The same
+  // goes for the consecutive-wait streak (fleet#236): a human reply resets it
+  // and cancels any scheduled wait resume, since this resume supersedes it.
 
   const waiter = ctx.replyWaiters.get(scope);
   if (waiter) {
-    ctx.state.update(projectName, issueNumber, { autoResumed: false });
+    ctx.state.update(projectName, issueNumber, { autoResumed: false, ...HUMAN_REPLY_WAIT_RESET });
     waiter(message);
     new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "parked", reason });
     return "steered";
@@ -93,7 +98,7 @@ export async function reply(
 
   const liveSession = ctx.live.get(scope);
   if (liveSession) {
-    ctx.state.update(projectName, issueNumber, { autoResumed: false });
+    ctx.state.update(projectName, issueNumber, { autoResumed: false, ...HUMAN_REPLY_WAIT_RESET });
     liveSession.send(message);
     log("loop", `${scope}: reply queued into running session`);
     new Journal(ctx.dataDirPath, projectName, issueNumber).append({ type: "fleet", event: "operator-message-injected", mode: "live", reason });
@@ -107,7 +112,7 @@ export async function reply(
   if (ctx.running.has(scope)) throw new Error(`${scope} is mid-transition; try again shortly`);
   if (ctx.isShuttingDown()) throw new Error(`daemon is shutting down; reply again once it's back up`);
 
-  ctx.state.update(projectName, issueNumber, { autoResumed: false });
+  ctx.state.update(projectName, issueNumber, { autoResumed: false, ...HUMAN_REPLY_WAIT_RESET });
   track(ctx, projectName, issueNumber, resumeTicket(ctx, project, record, message, reason));
   return "resumed";
 }
@@ -306,6 +311,7 @@ export async function resetForFreshClaim(
     sessionLive: false,
     autoResumed: false,
     environmentRejected: undefined,
+    ...HUMAN_REPLY_WAIT_RESET,
     machineReviewOutcome: undefined,
     // A restarted ticket's worktree is torn down and rebuilt from scratch, so
     // any PR the previous session opened no longer reflects what's about to

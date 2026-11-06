@@ -135,6 +135,16 @@ export const FleetConfigSchema = z.object({
    */
   approvalYieldMinutes: z.number().int().min(1).default(30),
   replyWaitMinutes: z.number().int().min(1).default(60),
+  /** How long a ticket whose worker finished `waiting` sits before it is auto-resumed, when the worker didn't suggest a `resumeAfterMinutes` itself (fleet#236). */
+  waitResumeDefaultMinutes: z.number().int().min(1).default(10),
+  /** Upper clamp on a worker-suggested `resumeAfterMinutes`, so one result can't park a ticket indefinitely. */
+  waitResumeMaxMinutes: z.number().int().min(1).default(120),
+  /**
+   * Consecutive automatic resumes out of `waiting` (reset by a human reply)
+   * before the next `waiting` result falls back to `fleet:needs-input` with
+   * every wait reason listed — so a ticket can't wait-and-resume forever.
+   */
+  maxWaitResumes: z.number().int().min(0).default(3),
   /** Added to a parsed plan-limit reset time before resuming, to absorb clock skew and reset-boundary jitter. */
   limitResumeSlackMinutes: z.number().int().min(0).default(5),
   /** Pause length used when a plan-limit hit is detected but no reset time could be parsed out of it. */
