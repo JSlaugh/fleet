@@ -159,6 +159,7 @@ export function makeCtx(patch: Partial<LoopContext> = {}): LoopContext {
     replyWaiters: new Map(),
     boardCache: new Map(),
     contributorFloorSkipsLogged: new Set(),
+    claimConflictsLogged: new Set(),
     budgetBlockedNotified: new Set(),
     workHoursReserveNotified: new Set(),
     authGateNotified: new Set(),

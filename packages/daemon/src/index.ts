@@ -99,6 +99,7 @@ async function main(): Promise<void> {
   const approvals = new ApprovalManager(events);
   const loop = new FleetLoop(config, state, dataDir, approvals, dryRun, once, events);
   subscribeDiscordWebhook(events, { config, dryRun, once });
+  await loop.repairStatusLabels();
   await loop.refreshBootHeartbeats();
   await loop.recoverPendingTeardowns();
 

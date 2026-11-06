@@ -5,7 +5,7 @@ import { applyIntakeLint, lintIntakeBody } from "./intake.ts";
 vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
   upsertStatusComment: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
 }));
 
 const github = await import("../github/github.ts");
@@ -119,7 +119,7 @@ describe("applyIntakeLint", () => {
 
     expect(picked).toEqual([noSections]);
     expect(github.upsertStatusComment).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("keeps a well-sectioned issue in the passing list without touching github", async () => {
@@ -130,7 +130,7 @@ describe("applyIntakeLint", () => {
 
     expect(picked).toEqual([sectioned]);
     expect(github.upsertStatusComment).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("drops a failing issue, posts what's missing, and swaps fleet:ready straight to fleet:needs-input", async () => {
@@ -141,7 +141,7 @@ describe("applyIntakeLint", () => {
 
     expect(picked).toEqual([]);
     expect(github.upsertStatusComment).toHaveBeenCalledWith(project, 1, expect.stringContaining("Verification"));
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 1, "fleet:ready", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 1, "fleet:needs-input");
   });
 
   it("only requires a problem section for a fleet:plan issue", async () => {
@@ -151,7 +151,7 @@ describe("applyIntakeLint", () => {
     const picked = await applyIntakeLint(ctx, project, [planIssue]);
 
     expect(picked).toEqual([planIssue]);
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("under --dry-run, logs the would-be flag instead of mutating github", async () => {
@@ -163,7 +163,7 @@ describe("applyIntakeLint", () => {
 
     expect(picked).toEqual([]);
     expect(github.upsertStatusComment).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.some((call) => String(call[0]).includes("[dry-run] would flag alpha#1"))).toBe(true);
     logSpy.mockRestore();
   });
@@ -177,7 +177,7 @@ describe("applyIntakeLint", () => {
     const picked = await applyIntakeLint(ctx, project, [bare]);
 
     expect(picked).toEqual([]);
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 1, "fleet:ready", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 1, "fleet:needs-input");
     errorSpy.mockRestore();
   });
 

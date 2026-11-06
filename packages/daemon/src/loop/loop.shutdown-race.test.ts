@@ -36,7 +36,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
 		all: new Set([7]),
 	})),
 	markReady: vi.fn(async () => {}),
-	swapLabel: vi.fn(async () => {}),
+	setStatusLabel: vi.fn(async () => {}),
 	toBoardTicket: vi.fn(() => null),
 	upsertStatusComment: vi.fn(async () => {}),
 	getAuthenticatedLogin: vi.fn(async () => "daemon-user"),
@@ -112,7 +112,7 @@ describe("cycleProject claiming vs. a live shutdown", () => {
 		const { ctx } = makeCtx(true);
 		await cycleProject(ctx, project);
 		expect(ctx.running.size).toBe(0);
-		expect(github.swapLabel).not.toHaveBeenCalled();
+		expect(github.setStatusLabel).not.toHaveBeenCalled();
 	});
 });
 
@@ -143,6 +143,6 @@ describe("addressReviews vs. a live shutdown", () => {
 		const { ctx } = makeCtx(true, record({ status: "review" }));
 		await addressReviews(ctx, project, new Set([7]));
 		expect(ctx.running.size).toBe(0);
-		expect(github.swapLabel).not.toHaveBeenCalled();
+		expect(github.setStatusLabel).not.toHaveBeenCalled();
 	});
 });

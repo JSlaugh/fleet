@@ -18,7 +18,7 @@ vi.mock("../github/github.ts", () => ({
   issueUrl: vi.fn((project: { githubRepo: string }, issueNumber: number) => `https://github.com/${project.githubRepo}/issues/${issueNumber}`),
   listFleetIssues: vi.fn(async () => []),
   markReady: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
   clearAssignees: vi.fn(async () => {}),

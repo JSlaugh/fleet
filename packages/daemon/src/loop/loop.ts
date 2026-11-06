@@ -26,6 +26,7 @@ import type { LoopContext, SessionBase } from "./context.ts";
 import { checkDigestSchedule, getDigest } from "./digest.ts";
 import { finishBlocked, finishCompleted, finishFailed } from "./finish.ts";
 import { refreshOwnHeartbeats, refreshStalledHeartbeatsOnBoot } from "./heartbeat.ts";
+import { repairStatusLabels } from "./labelRepair.ts";
 import type { ReadyIssue } from "../github/github.ts";
 import { type HistoryQuery, queryHistory } from "../store/history.ts";
 import { logError } from "../log.ts";
@@ -102,6 +103,7 @@ export class FleetLoop {
       replyWaiters: this.replyWaiters,
       boardCache: this.boardCache,
       contributorFloorSkipsLogged: this.contributorFloorSkipsLogged,
+      claimConflictsLogged: new Set(),
       budgetBlockedNotified: this.budgetBlockedNotified,
       workHoursReserveNotified: this.workHoursReserveNotified,
       authGateNotified: this.authGateNotified,
@@ -115,6 +117,11 @@ export class FleetLoop {
   /** Boot-only: force-refresh the heartbeat on this daemon's own stalled tickets before the first cycle, so a quick restart's recovery window never looks stale to a peer. */
   async refreshBootHeartbeats(): Promise<void> {
     await refreshStalledHeartbeatsOnBoot(this.ctx);
+  }
+
+  /** Boot-only: normalize any issue left carrying more than one fleet status label (fleet#239) from its state record. */
+  async repairStatusLabels(): Promise<void> {
+    await repairStatusLabels(this.ctx);
   }
 
   /** Boot-only: run the pending teardown of any ticket whose worktree is already gone — the daemon died (or the directory was removed by hand) between worktree removal and teardown. */

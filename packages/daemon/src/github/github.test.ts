@@ -16,19 +16,20 @@ const {
   buildPrFeedback,
   buildReviewFeedbackPrompt,
   dependencyStatus,
-  escalateLabelArgs,
+  escalateToElevated,
   getPrChecks,
   getPrDiff,
   getPrOutcome,
   getStatusCommentInfo,
+  markReady,
   mergePullRequest,
   parseChildTaskList,
   parseHeartbeat,
   parsePartOf,
   parseTicketTimeoutMinutes,
-  readyLabelArgs,
   refreshHeartbeat,
   refreshHeartbeatIfStale,
+  statusLabelArgs,
   toBoardTicket,
   upsertStatusComment,
 } = await import("./github.ts");
@@ -39,36 +40,42 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("readyLabelArgs", () => {
+describe("statusLabelArgs", () => {
   const project = makeProject();
 
-  it("removes every other fleet state label and adds fleet:ready", () => {
-    expect(readyLabelArgs(project, 7)).toEqual([
+  it("removes every other status label and adds the target, in one edit", () => {
+    expect(statusLabelArgs(project, 7, "fleet:in-progress")).toEqual([
       "issue", "edit", "7",
       "--repo", "acme/alpha",
-      "--remove-label", "fleet:backlog",
-      "--remove-label", "fleet:in-progress",
       "--remove-label", "fleet:needs-input",
       "--remove-label", "fleet:review",
-      "--add-label", "fleet:ready",
+      "--remove-label", "fleet:ready",
+      "--remove-label", "fleet:backlog",
+      "--add-label", "fleet:in-progress",
     ]);
   });
 
-  it("never removes fleet:ready itself", () => {
-    expect(readyLabelArgs(project, 7).filter((a) => a === "fleet:ready")).toEqual(["fleet:ready"]);
+  it("never removes the target or touches tier/priority labels", () => {
+    const args = statusLabelArgs(project, 7, "fleet:ready");
+    expect(args.filter((a) => a === "fleet:ready")).toEqual(["fleet:ready"]);
+    expect(args.some((a) => /fleet:(elevate|light|plan|p\d)/.test(a))).toBe(false);
+  });
+
+  it("adds extra labels in the same edit (auto-escalation's fleet:elevate)", () => {
+    expect(statusLabelArgs(project, 7, "fleet:ready", ["fleet:elevate"]).slice(-4)).toEqual([
+      "--add-label", "fleet:ready",
+      "--add-label", "fleet:elevate",
+    ]);
   });
 });
 
-describe("escalateLabelArgs", () => {
-  const project = makeProject();
-
-  it("swaps in-progress for elevate + ready", () => {
-    expect(escalateLabelArgs(project, 7)).toEqual([
-      "issue", "edit", "7",
-      "--repo", "acme/alpha",
-      "--remove-label", "fleet:in-progress",
-      "--add-label", "fleet:elevate",
-      "--add-label", "fleet:ready",
+describe("escalateToElevated / markReady", () => {
+  it("each issue a single gh edit through statusLabelArgs", async () => {
+    await escalateToElevated(project, 7);
+    await markReady(project, 8);
+    expect(vi.mocked(exec.run).mock.calls).toEqual([
+      ["gh", statusLabelArgs(project, 7, "fleet:ready", ["fleet:elevate"])],
+      ["gh", statusLabelArgs(project, 8, "fleet:ready")],
     ]);
   });
 });

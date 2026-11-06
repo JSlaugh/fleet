@@ -11,7 +11,7 @@ vi.mock("../github/github.ts", () => ({
 	issueUrl: vi.fn((project: { githubRepo: string }, issueNumber: number) => `https://github.com/${project.githubRepo}/issues/${issueNumber}`),
 	listFleetIssues: vi.fn(async () => []),
 	markReady: vi.fn(async () => {}),
-	swapLabel: vi.fn(async () => {}),
+	setStatusLabel: vi.fn(async () => {}),
 	toBoardTicket: vi.fn(),
 	upsertStatusComment: vi.fn(async () => {}),
 }));
@@ -184,7 +184,7 @@ describe("shutdownNow", () => {
 
 		await loop.shutdownNow();
 
-		expect(github.swapLabel).not.toHaveBeenCalled();
+		expect(github.setStatusLabel).not.toHaveBeenCalled();
 		expect(github.upsertStatusComment).not.toHaveBeenCalled();
 		expect(state.get("alpha", 7)?.status).toBe("stalled");
 		expect(state.get("alpha", 7)?.autoResumed).toBe(false);
@@ -219,7 +219,7 @@ describe("shutdownNow", () => {
 				{ number: 7, title: "issue 7" },
 				"wedged",
 			);
-			expect(github.swapLabel).not.toHaveBeenCalled();
+			expect(github.setStatusLabel).not.toHaveBeenCalled();
 			expect(state.get("alpha", 7)?.status).toBe("stalled");
 			expect(state.get("alpha", 7)?.autoResumed).toBe(false);
 
@@ -232,10 +232,9 @@ describe("shutdownNow", () => {
 				{ number: 7, title: "issue 7" },
 				"later failure",
 			);
-			expect(github.swapLabel).toHaveBeenCalledWith(
+			expect(github.setStatusLabel).toHaveBeenCalledWith(
 				project,
 				7,
-				"fleet:in-progress",
 				"fleet:needs-input",
 			);
 		} finally {

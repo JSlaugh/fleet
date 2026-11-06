@@ -2,7 +2,7 @@ import { FLEET_LABELS, type BoardTicket, type FleetConfig, type ModelUsageSummar
 import type { FleetEvents } from "../events.ts";
 import type { ApprovalManager } from "../session/approvals.ts";
 import type { ProbeFailure } from "./authGate.ts";
-import { swapLabel } from "../github/github.ts";
+import { setStatusLabel } from "../github/github.ts";
 import { logError } from "../log.ts";
 import type { HistoryStore, StateStore } from "../store/state.ts";
 import type { WorkerSession } from "../session/worker.ts";
@@ -52,6 +52,8 @@ export interface LoopContext {
   readonly boardCache: Map<string, BoardTicket[]>;
   /** `project#issue` keys already logged as skipped for a non-collaborator author — logged once per issue, not once per cycle. */
   readonly contributorFloorSkipsLogged: Set<string>;
+  /** `project#issue` keys whose claim-blocking label/record conflict (`selectEligibleReady`) is already logged — once per conflict, not once per cycle. */
+  readonly claimConflictsLogged: Set<string>;
   /** Project names currently notified about a budget-gate `blocked` hold — cleared once the gate lifts, so only the first hold of a spell notifies, not every poll while it persists. */
   readonly budgetBlockedNotified: Set<string>;
   /** Project names for which the current work-hours reserve spell has already logged a digest event — cleared once the gate lifts, same dedup shape as `budgetBlockedNotified`. */
@@ -143,13 +145,15 @@ export function track(ctx: LoopContext, projectName: string, issueNumber: number
 
 /**
  * Puts a ticket back into `fleet:in-progress` and marks it running — the entry
- * point of every resume. The label swap is left to throw (see the error policy
- * on `swapLabel`); callers already run inside a try/catch that reports the
+ * point of every resume. Whatever status label the issue had (needs-input,
+ * review, or a `fleet:ready` left by auto-escalation — fleet#239) is replaced,
+ * not added to. The label edit is left to throw (see the error policy on
+ * `setStatusLabel`); callers already run inside a try/catch that reports the
  * failure and leaves the ticket in its prior state rather than marking it
  * running under a label that never actually changed.
  */
 export async function markWorking(ctx: LoopContext, project: ProjectConfig, issueNumber: number): Promise<void> {
-  await swapLabel(project, issueNumber, FLEET_LABELS.needsInput, FLEET_LABELS.inProgress);
+  await setStatusLabel(project, issueNumber, FLEET_LABELS.inProgress);
   // Stamp activity too: a resumed ticket whose last activity is already past the
   // stall cutoff would otherwise be re-flagged as stalled before its first message.
   ctx.state.update(project.name, issueNumber, { status: "running", lastActivityAt: new Date().toISOString() });

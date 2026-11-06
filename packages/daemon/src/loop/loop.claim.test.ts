@@ -9,8 +9,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   listFleetIssues: vi.fn(async () => []),
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   toBoardTicket: vi.fn(() => null),
-  swapLabel: vi.fn(async () => {}),
-  removeLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   getIssueComments: vi.fn(async () => []),
   // `makeIssue`'s default author is "collab-author" — this keeps existing
   // claim-flow tests passing the contributor floor without opting in per test.
@@ -418,7 +417,7 @@ describe("cycleProject auth gate (fleet#217)", () => {
     expect(loggedLines().some((l) => l.includes("would claim") || l.includes("claiming alpha#1"))).toBe(false);
     expect(loggedLines().some((l) => l.includes("auth gate held — holding claims"))).toBe(true);
     expect(worktree.createWorktree).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   // Automatic recovery once a later probe comes back healthy — with no
@@ -580,7 +579,7 @@ const reviewRecord = () => makeRecord({ status: "review", prUrl: "https://github
 
 describe("healStaleReadyLabels", () => {
   beforeEach(() => {
-    vi.mocked(github.swapLabel).mockClear();
+    vi.mocked(github.setStatusLabel).mockClear();
   });
 
   it("removes a stale fleet:ready label when the record already shows review with a PR", async () => {
@@ -589,7 +588,7 @@ describe("healStaleReadyLabels", () => {
 
     await healStaleReadyLabels(ctx, project, [issue(62, ["fleet:ready"])]);
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 62, "fleet:ready", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 62, "fleet:review");
   });
 
   it.each([
@@ -607,13 +606,13 @@ describe("healStaleReadyLabels", () => {
 
     await healStaleReadyLabels(ctx, project, [issue(62, labels)]);
 
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 });
 
 describe("processTicket", () => {
   beforeEach(() => {
-    vi.mocked(github.swapLabel).mockClear();
+    vi.mocked(github.setStatusLabel).mockClear();
     vi.mocked(github.addAssignee).mockClear();
     vi.mocked(github.removeAssignee).mockClear();
     vi.mocked(github.getIssueAssignees).mockReset().mockResolvedValue(["daemon-user"]);
@@ -642,23 +641,15 @@ describe("processTicket", () => {
     expect(record?.lastCommentHandledAt).toBe(record?.startedAt);
   });
 
-  it("strips a stale fleet:backlog left on a ticket released by hand", async () => {
-    vi.mocked(github.removeLabel).mockClear();
+  it("moves the claimed issue to fleet:in-progress in a single status-label edit", async () => {
     const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
 
     await runProcessTicket(ctx, project, issue(62, ["fleet:ready", "fleet:backlog"]));
 
-    expect(github.removeLabel).toHaveBeenCalledWith(project, 62, "fleet:backlog");
+    // `setStatusLabel` strips every other status label, a stale backlog included.
+    expect(github.setStatusLabel).toHaveBeenCalledTimes(1);
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 62, "fleet:in-progress");
     expect(ctx.state.get("alpha", 62)?.status).toBe("running");
-  });
-
-  it("leaves labels alone on a ticket that was never in the backlog", async () => {
-    vi.mocked(github.removeLabel).mockClear();
-    const ctx = makeCtx({ config: makeFleetConfig({ projects: [project] }) });
-
-    await runProcessTicket(ctx);
-
-    expect(github.removeLabel).not.toHaveBeenCalled();
   });
 
   it("self-assigns before verifying the claim", async () => {
@@ -690,7 +681,7 @@ describe("processTicket", () => {
     expect(ctx.state.get("alpha", 62)).toBeUndefined();
     // The loser must not touch the label — the winner (running the same
     // check) owns fleet:in-progress from here.
-    expect(github.swapLabel).toHaveBeenCalledTimes(1);
+    expect(github.setStatusLabel).toHaveBeenCalledTimes(1);
   });
 
   it("wins the collision tiebreak and proceeds when its login sorts lowest", async () => {

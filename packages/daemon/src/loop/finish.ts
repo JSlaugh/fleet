@@ -19,7 +19,7 @@ import {
   getIssue,
   issueUrl,
   parseChildTaskList,
-  swapLabel,
+  setStatusLabel,
   updateIssueBody,
   upsertStatusComment,
   type ReadyIssue,
@@ -108,7 +108,7 @@ async function moveToReview(
   } catch (err) {
     logError("loop", `${scope}: could not post the review status comment`, err);
   }
-  await swapLabel(project, issueNumber, FLEET_LABELS.inProgress, FLEET_LABELS.review);
+  await setStatusLabel(project, issueNumber, FLEET_LABELS.review);
   ctx.state.update(project.name, issueNumber, { status: "review", ...opts.update });
   ctx.emitBoard();
   log("loop", `${scope}: ${opts.logLine}`);
@@ -327,7 +327,7 @@ export async function finishBlocked(
   } catch (err) {
     logError("loop", `${blockedScope}: could not post the needs-input status comment`, err);
   }
-  await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+  await setStatusLabel(project, issue.number, FLEET_LABELS.needsInput);
   ctx.state.update(project.name, issue.number, { status: "needs-input", lastSummary: reason });
   ctx.emitBoard();
   log("loop", `${blockedScope}: needs input — ${reason}`);
@@ -384,7 +384,7 @@ export async function finishFailed(
     } catch (err) {
       logError("loop", `${scope}: could not post the needs-input status comment`, err);
     }
-    await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+    await setStatusLabel(project, issue.number, FLEET_LABELS.needsInput);
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     ctx.emitBoard();
     log("loop", `${scope}: post-completion step failed (not auto-elevating) — needs input: ${error}`);
@@ -441,7 +441,7 @@ export async function finishFailed(
     } catch (err) {
       logError("loop", `${scope}: could not post the needs-input status comment`, err);
     }
-    await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+    await setStatusLabel(project, issue.number, FLEET_LABELS.needsInput);
     ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
     ctx.emitBoard();
     log("loop", `${scope}: failed with no recorded work (${turnCount} turn(s), $0.00) — not auto-elevating, needs input: ${error}`);
@@ -459,7 +459,7 @@ export async function finishFailed(
   } catch (err) {
     logError("loop", `${scope}: could not post the failed status comment`, err);
   }
-  await swapLabel(project, issue.number, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput);
+  await setStatusLabel(project, issue.number, FLEET_LABELS.needsInput);
   ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
   ctx.emitBoard();
   ctx.events.emit("ticket:failed", { project, issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });

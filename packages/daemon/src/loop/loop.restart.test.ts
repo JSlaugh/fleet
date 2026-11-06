@@ -12,7 +12,7 @@ vi.mock("../github/github.ts", () => ({
   issueUrl: vi.fn((project: { githubRepo: string }, issueNumber: number) => `https://github.com/${project.githubRepo}/issues/${issueNumber}`),
   listFleetIssues: vi.fn(async () => []),
   markReady: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
   clearAssignees: vi.fn(async () => {}),
@@ -217,7 +217,7 @@ describe("restartTicket with a live session", () => {
 
     await loop.restartTicket("alpha", 7);
 
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     expect(state.get("alpha", 7)?.status).toBe("restarting");
     for (const call of vi.mocked(github.upsertStatusComment).mock.calls) {
       expect(call[2]).not.toContain("Status: failed");
@@ -230,7 +230,7 @@ describe("restartTicket with a live session", () => {
     await loop.restartTicket("alpha", 7);
     await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom");
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
   });
 
   it("resets anyway when a wedged session ignores the abort, and keeps suppressing its failure", async () => {
@@ -249,12 +249,12 @@ describe("restartTicket with a live session", () => {
       expect(github.markReady).toHaveBeenCalledWith(project, 7);
       // The run is still out there: its eventual failure must not undo the reset.
       await internals.finishFailed(project, { number: 7, title: "issue 7" }, "wedged");
-      expect(github.swapLabel).not.toHaveBeenCalled();
+      expect(github.setStatusLabel).not.toHaveBeenCalled();
 
       settle?.();
       await vi.advanceTimersByTimeAsync(0);
       await internals.finishFailed(project, { number: 7, title: "issue 7" }, "later failure");
-      expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+      expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     } finally {
       vi.useRealTimers();
     }
