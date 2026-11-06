@@ -110,6 +110,18 @@ describe("selectEligibleReady", () => {
       },
     );
 
+    it("skips an issue carrying both ready and in-progress, logging the conflict once across cycles", () => {
+      const conflictsLogged = new Set<string>();
+      const conflicted = [issue(62, { labels: ["fleet:ready", "fleet:in-progress", "fleet:elevate"] })];
+
+      const first = selectEligibleReady(conflicted, opts({ conflictsLogged }));
+      const second = selectEligibleReady(conflicted, opts({ conflictsLogged }));
+
+      expect([...first, ...second]).toEqual([]);
+      const lines = logSpy.mock.calls.map((call) => String(call[0]));
+      expect(lines.filter((l) => l.includes("alpha#62") && l.includes("fleet:in-progress"))).toHaveLength(1);
+    });
+
     it("does not treat tier/priority labels as a conflict", () => {
       const picked = selectEligibleReady(
         [issue(1, { labels: ["fleet:ready", "fleet:elevate", "fleet:p1"] })],
@@ -140,6 +152,14 @@ describe("selectEligibleReady", () => {
       const picked = selectEligibleReady(
         [issue(62)],
         opts({ getRecord: () => makeRecord({ status: "running", prUrl: "https://github.com/acme/alpha/pull/72" }) }),
+      );
+      expect(picked).toEqual([]);
+    });
+
+    it("excludes a cleanly-labeled ready issue whose record is running (no second run on a stale fleet:ready)", () => {
+      const picked = selectEligibleReady(
+        [issue(62, { labels: ["fleet:ready", "fleet:elevate"] })],
+        opts({ getRecord: () => makeRecord({ status: "running" }) }),
       );
       expect(picked).toEqual([]);
     });
