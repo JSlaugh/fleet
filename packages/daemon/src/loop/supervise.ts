@@ -1,6 +1,6 @@
 import { mergeModelUsage, type PlanResult, type ProjectConfig } from "@fleet/shared";
 import { key, markWorking, type LoopContext, type SessionBase } from "./context.ts";
-import { finishBlocked, finishCompleted, finishFailed, finishPlanned } from "./finish.ts";
+import { finishBlocked, finishCompleted, finishFailed, finishPlanned, finishWaiting } from "./finish.ts";
 import { MAX_TICKET_TIMEOUT_MINUTES, getIssueComments, parseTicketTimeoutMinutes, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { Journal } from "../store/journal.ts";
 import { log, logError } from "../log.ts";
@@ -28,7 +28,9 @@ import { collectBranchDiff, hasCommits, type Worktree } from "../github/worktree
 /**
  * Drives one live session to a terminal state, one turn at a time: plan limits
  * pause the daemon, `completed` goes through the machine-review gate, `blocked`
- * parks for an operator reply, and anything else fails the ticket.
+ * parks for an operator reply, `waiting` schedules an automatic resume (or,
+ * past `maxWaitResumes`, parks like `blocked`), and anything else fails the
+ * ticket.
  */
 export async function supervise(
   ctx: LoopContext,
@@ -96,6 +98,16 @@ export async function supervise(
     }
     if (turn.result?.status === "blocked") {
       const parked = await park(ctx, project, issue, session, turn.result, "Worker reported blocked without a reason.");
+      if (parked === "closed") return;
+      continue;
+    }
+    if (turn.result?.status === "waiting") {
+      // Scheduled: the session closes here and stays resumable from its id;
+      // `resumeWaiting` reopens it once `resumeAt` passes. Exhausted: the wait
+      // cap is hit, so it parks for a human exactly like a `blocked` turn.
+      const waited = await finishWaiting(ctx, project, issue, turn.result);
+      if (waited.action === "scheduled") return;
+      const parked = await park(ctx, project, issue, session, { blockedReason: waited.reason, summary: turn.result.summary }, waited.reason);
       if (parked === "closed") return;
       continue;
     }

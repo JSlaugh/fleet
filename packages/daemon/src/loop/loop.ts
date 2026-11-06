@@ -34,6 +34,7 @@ import { handlePlanLimit, isPaused, setPaused, setProjectPaused, updatePauseStat
 import { setProjectDormant } from "./pin.ts";
 import { flagStalled, recoverStalled } from "./recovery.ts";
 import { stopLiveSessions } from "./shutdown.ts";
+import { resumeWaiting } from "./waiting.ts";
 import { recoverPendingTeardowns } from "./teardown.ts";
 import { workHoursReserveStatus } from "./workHoursReserve.ts";
 import { HistoryStore, StateStore } from "../store/state.ts";
@@ -130,6 +131,9 @@ export class FleetLoop {
     // straight back into the same 400.
     await checkAuthGate(this.ctx);
     this.recoverStalled();
+    // After `recoverStalled`, so both share this cycle's capacity: anything it
+    // just tracked already counts against `maxConcurrent` here.
+    this.resumeWaiting();
     await refreshOwnHeartbeats(this.ctx);
     await checkDigestSchedule(this.ctx);
     for (const project of this.config.projects) {
@@ -262,6 +266,10 @@ export class FleetLoop {
 
   private recoverStalled(): void {
     recoverStalled(this.ctx);
+  }
+
+  private resumeWaiting(): void {
+    resumeWaiting(this.ctx);
   }
 
   private isPaused(): boolean {

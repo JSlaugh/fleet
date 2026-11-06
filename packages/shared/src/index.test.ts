@@ -333,6 +333,23 @@ describe("WorkerResultSchema", () => {
     expect(WorkerResultSchema.safeParse({ ...base, status: "blocked" }).success).toBe(true);
   });
 
+  it("parses a waiting result with waitReason and an optional resumeAfterMinutes", () => {
+    expect(WorkerResultSchema.safeParse({ ...base, status: "waiting", waitReason: "CI on PR #12" }).success).toBe(true);
+    expect(
+      WorkerResultSchema.safeParse({ ...base, status: "waiting", waitReason: "CI on PR #12", resumeAfterMinutes: 15 }).success,
+    ).toBe(true);
+  });
+
+  it("requires a non-blank waitReason when waiting, unlike blockedReason", () => {
+    expect(WorkerResultSchema.safeParse({ ...base, status: "waiting" }).success).toBe(false);
+    expect(WorkerResultSchema.safeParse({ ...base, status: "waiting", waitReason: "  " }).success).toBe(false);
+  });
+
+  it("rejects a non-positive or fractional resumeAfterMinutes", () => {
+    expect(WorkerResultSchema.safeParse({ ...base, status: "waiting", waitReason: "x", resumeAfterMinutes: 0 }).success).toBe(false);
+    expect(WorkerResultSchema.safeParse({ ...base, status: "waiting", waitReason: "x", resumeAfterMinutes: 1.5 }).success).toBe(false);
+  });
+
   it("rejects an unknown status or confidence", () => {
     expect(WorkerResultSchema.safeParse({ ...base, status: "done" }).success).toBe(false);
     expect(WorkerResultSchema.safeParse({ ...base, status: "completed", confidence: "certain" }).success).toBe(false);

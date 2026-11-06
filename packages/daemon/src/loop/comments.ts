@@ -6,10 +6,10 @@ import { reply, ticketCapabilities } from "./operator.ts";
 import { isProjectPaused } from "./pause.ts";
 
 /** Ticket statuses steerable by an issue comment. `review` has its own feedback channel (`addressReviews`). */
-const COMMENTABLE_STATUSES = new Set<TicketRecord["status"]>(["running", "needs-input"]);
+const COMMENTABLE_STATUSES = new Set<TicketRecord["status"]>(["running", "needs-input", "waiting"]);
 
 /**
- * Ticket records eligible for issue-comment ingestion this cycle: `running` or
+ * Ticket records eligible for issue-comment ingestion this cycle: `running`, `waiting` or
  * `needs-input`, with the issue still open. Unlike PR-review candidates, being
  * already in flight does not disqualify a record here — a `running` ticket
  * with a live session is exactly the common case this exists to steer.

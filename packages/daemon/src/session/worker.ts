@@ -45,8 +45,10 @@ Contract:
 - Work only within this worktree. The branch already exists and is checked out; never switch branches, never push, and never open PRs — the orchestrator handles those.
 - Commit incrementally with clear conventional-commit messages as you complete coherent steps.
 - Run the project's own checks (tests, typecheck, lint) before declaring completion when they exist.
-- If you hit a decision the issue does not answer, do NOT guess: finish with status "blocked" and put the specific question in blockedReason. A human may answer in a follow-up message — then continue the work.
-- Your final structured output: status "completed" requires prTitle and prBody; status "blocked" requires blockedReason.
+- Never finish while your own background work is still running: if you launched background tasks, subagents, or long builds/tests, wait for them to complete inside this session, then finish.
+- Use status "blocked" only when a human must make a decision: if you hit a decision the issue does not answer, do NOT guess — finish with status "blocked" and put the specific question in blockedReason. A human may answer in a follow-up message — then continue the work.
+- Use status "waiting" only when something outside this session must finish first and there is nothing for a human to decide (e.g. an external process, CI on another repo, a dependency PR landing). Put what you are waiting on in waitReason and, optionally, a rough resumeAfterMinutes. The orchestrator resumes this session automatically later; check then whether it has finished and continue.
+- Your final structured output: status "completed" requires prTitle and prBody; status "blocked" requires blockedReason; status "waiting" requires waitReason.
 `.trim();
 
 const PLANNER_CONTRACT = `
@@ -765,6 +767,7 @@ function normalizeResult(result: WorkerResult): WorkerResult {
     ...result,
     summary: unescapeNewlines(result.summary),
     blockedReason: result.blockedReason ? unescapeNewlines(result.blockedReason) : result.blockedReason,
+    waitReason: result.waitReason ? unescapeNewlines(result.waitReason) : result.waitReason,
     prBody: result.prBody ? unescapeNewlines(result.prBody) : result.prBody,
   };
 }

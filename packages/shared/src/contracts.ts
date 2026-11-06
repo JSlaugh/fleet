@@ -1,13 +1,34 @@
 import { z } from "zod";
 
+/**
+ * A worker turn's final structured output. `waitReason` is required when
+ * `status` is `waiting`, enforced by the refinement below rather than in the
+ * JSON schema: the API rejects top-level conditionals in a tool schema (see
+ * `WORKER_OUTPUT_SCHEMA` in the daemon), and `z.toJSONSchema` drops
+ * refinements, so the schema handed to the model stays flat.
+ */
 export const WorkerResultSchema = z.object({
-  status: z.enum(["completed", "blocked"]).describe("completed = work is committed and ready for a PR; blocked = a human decision is needed before work can continue"),
+  status: z
+    .enum(["completed", "blocked", "waiting"])
+    .describe(
+      "completed = work is committed and ready for a PR; blocked = a human decision is needed before work can continue; waiting = nothing to decide, but something outside this session (an external process, CI, a dependency PR) must finish first — the orchestrator resumes you automatically later",
+    ),
   summary: z.string().describe("2-5 sentence plain-language summary of what was done (or attempted), written for the ticket's status comment"),
   filesChanged: z.array(z.string()).describe("Repo-relative paths of files created or modified"),
   prTitle: z.string().optional().describe("Conventional-commit style title for the PR (required when status is completed)"),
   prBody: z.string().optional().describe("PR description in markdown: what changed, why, and how it was verified (required when status is completed)"),
   blockedReason: z.string().optional().describe("The specific question or decision a human must answer (required when status is blocked)"),
+  waitReason: z.string().optional().describe("What you are waiting on, specific enough to check later whether it has finished (required when status is waiting)"),
+  resumeAfterMinutes: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("When status is waiting: roughly how many minutes until it is worth checking again (the orchestrator clamps this to its configured maximum)"),
   confidence: z.enum(["low", "medium", "high"]).describe("How confident you are that the change is correct and complete"),
+}).refine((result) => result.status !== "waiting" || (result.waitReason?.trim() ?? "") !== "", {
+  message: "waitReason is required when status is waiting",
+  path: ["waitReason"],
 });
 export type WorkerResult = z.infer<typeof WorkerResultSchema>;
 
