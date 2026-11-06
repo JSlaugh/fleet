@@ -109,7 +109,8 @@ async function moveToReview(
     logError("loop", `${scope}: could not post the review status comment`, err);
   }
   await swapLabel(project, issueNumber, FLEET_LABELS.inProgress, FLEET_LABELS.review);
-  ctx.state.update(project.name, issueNumber, { status: "review", ...opts.update });
+  // Back in review ends any failure episode, so a later one gets its own retry.
+  ctx.state.update(project.name, issueNumber, { status: "review", failureRetry: undefined, ...opts.update });
   ctx.emitBoard();
   log("loop", `${scope}: ${opts.logLine}`);
 }
@@ -354,7 +355,7 @@ export async function finishFailed(
   project: ProjectConfig,
   issue: ReadyIssue,
   error: string,
-  opts: { postCompletion?: boolean; turnCount?: number } = {},
+  opts: { postCompletion?: boolean; turnCount?: number; runModel?: string } = {},
 ): Promise<void> {
   const scope = key(project.name, issue.number);
   if (ctx.restarting.has(scope)) {
@@ -393,7 +394,29 @@ export async function finishFailed(
   }
 
   const record = ctx.state.get(project.name, issue.number);
-  if (shouldAutoElevate(project, record)) {
+
+  // A ticket with a PR can never be re-claimed (`selectEligibleReady` skips any
+  // record with a `prUrl`), so the fresh-claim retry auto-elevation relies on
+  // would never run (fleet#238). Resume the session instead — once, through
+  // `recoverStalled` and its capacity/gate checks — and send a second failure
+  // to a human.
+  if (record?.prUrl && record.sessionId && record.failureRetry !== "used") {
+    await scheduleFailureRetry(ctx, project, issue, record, error);
+    return;
+  }
+
+  // Escalating onto the very model that just failed changes nothing — and its
+  // retry would burn the once-only budget for no gain.
+  const noOpElevation = !!project.elevatedModel && [opts.runModel, record?.model].includes(project.elevatedModel);
+  const elevationNote =
+    shouldAutoElevate(project, record) && noOpElevation
+      ? `Auto-elevation skipped: the elevated model (\`${project.elevatedModel}\`) is the model this run already failed on.`
+      : undefined;
+  if (elevationNote) {
+    log("loop", `${scope}: not auto-elevating — elevatedModel ${project.elevatedModel} is the model that just failed`);
+  }
+
+  if (shouldAutoElevate(project, record) && !noOpElevation && !record?.prUrl) {
     try {
       await upsertStatusComment(
         project,
@@ -454,8 +477,16 @@ export async function finishFailed(
     error,
     retryHint: "Re-label with `fleet:ready` to retry, or reply from the dashboard to resume.",
   });
+  const retriedNote =
+    record?.prUrl && record.failureRetry === "used"
+      ? "This ticket has an open PR and already had its one automatic resume after a failure; it failed again, so it needs a human."
+      : undefined;
   try {
-    await upsertStatusComment(project, issue.number, [`**Status: failed**`, postMortem].join("\n\n"));
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [`**Status: failed**`, retriedNote, elevationNote, postMortem].filter(Boolean).join("\n\n"),
+    );
   } catch (err) {
     logError("loop", `${scope}: could not post the failed status comment`, err);
   }
@@ -463,6 +494,46 @@ export async function finishFailed(
   ctx.state.update(project.name, issue.number, { status: "failed", lastSummary: error });
   ctx.emitBoard();
   ctx.events.emit("ticket:failed", { project, issueNumber: issue.number, title: issue.title, detail: error, url: issueUrl(project, issue.number) });
+}
+
+/**
+ * `finishFailed`'s route for a ticket that failed while it already had a PR:
+ * leave it `stalled` with its session, flagged `failureRetry: "pending"` and
+ * `autoResumed` cleared, so `recoverStalled` resumes it once with the failed
+ * run's own instructions. The issue keeps its in-progress label, like any
+ * other stall.
+ */
+async function scheduleFailureRetry(
+  ctx: LoopContext,
+  project: ProjectConfig,
+  issue: ReadyIssue,
+  record: TicketRecord,
+  error: string,
+): Promise<void> {
+  const scope = key(project.name, issue.number);
+  ctx.state.update(project.name, issue.number, {
+    status: "stalled",
+    lastSummary: error,
+    lastActivityNote: "failed — resuming once with the same instructions",
+    autoResumed: false,
+    failureRetry: "pending",
+  });
+  ctx.emitBoard();
+  log("loop", `${scope}: failed with an open PR (${record.prUrl}) — will auto-resume once with its last instructions: ${error}`);
+  new Journal(ctx.dataDirPath, project.name, issue.number).append({ type: "fleet", event: "failure-retry-scheduled", error });
+  try {
+    await upsertStatusComment(
+      project,
+      issue.number,
+      [
+        `**Status: failed — retrying**`,
+        `The worker run failed: ${error}`,
+        `This ticket already has a PR (${record.prUrl}), so instead of a fresh claim its session will be resumed once automatically with the same instructions. A second failure will need a human.`,
+      ].join("\n\n"),
+    );
+  } catch (err) {
+    logError("loop", `${scope}: could not post the failure-retry status comment`, err);
+  }
 }
 
 /**

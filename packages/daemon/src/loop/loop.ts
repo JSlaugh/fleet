@@ -315,7 +315,7 @@ export class FleetLoop {
     project: ProjectConfig,
     issue: ReadyIssue,
     error: string,
-    opts?: { postCompletion?: boolean },
+    opts?: Parameters<typeof finishFailed>[4],
   ): Promise<void> {
     return finishFailed(this.ctx, project, issue, error, opts);
   }

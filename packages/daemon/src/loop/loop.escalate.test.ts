@@ -2,7 +2,7 @@ import type { ProjectConfig, TicketRecord } from "@fleet/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Worktree } from "../github/worktree.ts";
 import type { WorkerSession } from "../session/worker.ts";
-import { makeApprovals, makeFleetConfig, makeProject, makeRecord, makeTempState } from "../test-support.ts";
+import { makeApprovals, makeFleetConfig, makeIssue, makeProject, makeRecord, makeTempState } from "../test-support.ts";
 import type { LoopContext } from "./context.ts";
 import { PostCompletionError, reportRunFailure, shouldAutoElevate } from "./finish.ts";
 import { FleetLoop } from "./loop.ts";
@@ -95,7 +95,7 @@ function makeLoop(seed?: TicketRecord) {
       p: ProjectConfig,
       issue: { number: number; title: string },
       error: string,
-      opts?: { postCompletion?: boolean; turnCount?: number },
+      opts?: { postCompletion?: boolean; turnCount?: number; runModel?: string },
     ) => Promise<void>;
     ctx: LoopContext;
   };
@@ -216,6 +216,79 @@ describe("finishFailed auto-escalation", () => {
   });
 });
 
+describe("finishFailed — same-model elevation (fleet#238)", () => {
+  it("skips escalating onto the model that just failed, and says so", async () => {
+    const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false }));
+
+    await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom", { runModel: "claude-opus-5" });
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(state.get("alpha", 7)?.autoElevated).toBeFalsy();
+    expect(vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2]).toContain("Auto-elevation skipped");
+  });
+
+  it("also recognizes the failed model from the record when the caller can't name it", async () => {
+    const { internals } = makeLoop(record({ elevated: false, autoElevated: false, model: "claude-opus-5" }));
+
+    await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom");
+
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+  });
+});
+
+describe("finishFailed — failure with an open PR (fleet#238)", () => {
+  const prUrl = "https://github.com/acme/alpha/pull/70";
+  const reviewPrompt = "Address the review feedback on your PR.";
+
+  it("gets exactly one auto-resume with its last instructions, then goes to needs-input", async () => {
+    const { state, internals } = makeLoop(record({ prUrl, resumePrompt: reviewPrompt, elevated: false, autoElevated: false }));
+    const { ctx } = internals;
+
+    await internals.finishFailed(project, { number: 7, title: "issue 7" }, "invalid_structured_output");
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(state.get("alpha", 7)).toMatchObject({ status: "stalled", failureRetry: "pending", autoResumed: false, sessionId: "sess-7" });
+
+    recoverStalled(ctx);
+    await ctx.running.get("alpha#7");
+    expect(runner.resumeTicket).toHaveBeenCalledTimes(1);
+    expect(runner.resumeTicket).toHaveBeenCalledWith(ctx, project, expect.objectContaining({ issueNumber: 7 }), expect.stringContaining(reviewPrompt), "failure-retry");
+    expect(state.get("alpha", 7)?.failureRetry).toBe("used");
+
+    state.update("alpha", 7, { status: "running" });
+    await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom again");
+    recoverStalled(ctx);
+
+    expect(runner.resumeTicket).toHaveBeenCalledTimes(1);
+    expect(github.escalateToElevated).not.toHaveBeenCalled();
+    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(state.get("alpha", 7)).toMatchObject({ status: "failed", lastSummary: "boom again" });
+  });
+});
+
+describe("supervise — failed turn stops the CLI first (fleet#238)", () => {
+  it("aborts the session before reporting the failure", async () => {
+    const { internals } = makeLoop(record({ elevated: false, autoElevated: false, status: "running" }));
+    const order: string[] = [];
+    const session = {
+      sessionId: "sess-7",
+      costUsd: 0,
+      requestedModel: "claude-sonnet-5",
+      nextResult: vi.fn(async () => ({ kind: "code", errorSubtype: "invalid_structured_output" })),
+      send: vi.fn(),
+      abort: vi.fn(() => order.push("abort")),
+    } as unknown as WorkerSession;
+    vi.mocked(github.upsertStatusComment).mockImplementationOnce(async () => {
+      order.push("report");
+    });
+
+    await supervise(internals.ctx, project, makeIssue(7), { path: "/tmp/wt/7", branch: "fleet/7" } as Worktree, session, { costUsd: 0 });
+
+    expect(order).toEqual(["abort", "report"]);
+  });
+});
+
 describe("supervise — auth_failed routing", () => {
   it("pauses the daemon instead of failing or auto-elevating, and leaves the ticket claimable", async () => {
     const { state, internals } = makeLoop(record({ elevated: false, autoElevated: false, status: "running" }));
@@ -229,6 +302,7 @@ describe("supervise — auth_failed routing", () => {
       modelUsage: undefined,
       nextResult: vi.fn(async () => ({ kind: "code", errorSubtype: "auth_failed" })),
       send: vi.fn(),
+      abort: vi.fn(),
     } as unknown as WorkerSession;
 
     await supervise(internals.ctx, project, issue, worktree, session, { costUsd: 0 });
@@ -259,6 +333,7 @@ describe("supervise — environment_rejected routing (fleet#234)", () => {
       modelUsage: undefined,
       nextResult: vi.fn(async () => ({ kind: "code", errorSubtype: "environment_rejected", environmentError: CLI_TOO_OLD })),
       send: vi.fn(),
+      abort: vi.fn(),
     } as unknown as WorkerSession;
     loop.internals.ctx.authProbeCache = { healthy: true, checkedAt: Date.now() };
     await supervise(loop.internals.ctx, project, issue, worktree, session, { costUsd: 0 });
