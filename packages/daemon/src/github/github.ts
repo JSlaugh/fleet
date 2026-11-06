@@ -417,7 +417,7 @@ async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Pr
 
 /**
  * Error policy: the status comment only mirrors ticket state for humans on
- * GitHub — labels (via `swapLabel`) remain the source of truth the daemon
+ * GitHub — labels (via `setStatusLabel`) remain the source of truth the daemon
  * itself acts on. Callers treat a failure here as best-effort: log it and
  * continue, rather than letting a transient `gh` failure while posting a
  * comment escalate into a ticket reported as failed even though the actual

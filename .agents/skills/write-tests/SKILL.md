@@ -37,16 +37,16 @@ The codebase deliberately extracts decision logic into pure functions (`shouldAu
   vi.mock("../github/github.ts", async (importActual) => ({
     ...(await importActual<typeof import("../github/github.ts")>()),
     listFleetIssues: vi.fn(async () => []),
-    swapLabel: vi.fn(async () => {}),
+    setStatusLabel: vi.fn(async () => {}),
   }));
   const github = await import("../github/github.ts");   // typed access to the mocks
   ```
-- `vi.mocked(github.swapLabel).mockClear()` in `beforeEach` (or `vi.clearAllMocks()` when the file stubs many).
+- `vi.mocked(github.setStatusLabel).mockClear()` in `beforeEach` (or `vi.clearAllMocks()` when the file stubs many).
 - Cycle-level claim tests run the loop with `dryRun: true` so nothing real executes and no worktree/session mocks are needed — see `loop.claim.test.ts`'s `makeLoop`.
 
 ## What to assert on
 
-- **State and mock calls first**: `state.get(...)`, `expect(github.swapLabel).toHaveBeenCalledWith(...)`. These survive log rewording.
+- **State and mock calls first**: `state.get(...)`, `expect(github.setStatusLabel).toHaveBeenCalledWith(...)`. These survive log rewording.
 - **Log-text assertions only at the dry-run seam** (cycle-level tests where the log *is* the observable output). Keep the matched substring short and load-bearing (`"would claim alpha#3"`), never a full sentence.
 - Repetitive same-shape cases become one `it.each` table with `$name` in the title — see the `healStaleReadyLabels` negatives in `loop.claim.test.ts`. Don't force it when setups genuinely differ.
 
