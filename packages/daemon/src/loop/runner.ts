@@ -240,6 +240,11 @@ export async function runSession(ctx: LoopContext, opts: RunSessionOptions): Pro
   }
 }
 
+/** `resumeTicket` reason for `recoverStalled`'s plain stall nudge. */
+export const STALL_RESUME_REASON = "stall";
+/** `resumeTicket` reason for `recoverStalled`'s once-only replay after a failure with an open PR (fleet#238). */
+export const FAILURE_RETRY_REASON = "failure-retry";
+
 /**
  * Resumes a recorded session in its existing worktree/branch — the shared path
  * behind stall recovery, PR-review feedback, and dashboard replies to a cold
@@ -275,7 +280,15 @@ export async function resumeTicket(
     } catch {
       // best-effort; fall back to the recorded flags and an empty body
     }
-    ctx.state.update(project.name, record.issueNumber, { elevated, light, isPlan });
+    ctx.state.update(project.name, record.issueNumber, {
+      elevated,
+      light,
+      isPlan,
+      // Remember what this resume asked for, so a failure-retry (fleet#238) can
+      // ask again. Recovery resumes don't overwrite it: a stall nudge or the
+      // retry itself isn't the instruction worth replaying.
+      ...(reason !== STALL_RESUME_REASON && reason !== FAILURE_RETRY_REASON ? { resumePrompt: message } : {}),
+    });
     await markWorking(ctx, project, record.issueNumber);
     const journal = new Journal(ctx.dataDirPath, project.name, record.issueNumber);
     journal.append({ type: "fleet", event: "resumed", sessionId: record.sessionId, elevated, light, isPlan, reason });

@@ -3,13 +3,27 @@ import { activeCount, countRunning, key, track, type LoopContext } from "./conte
 import { log } from "../log.ts";
 import { isProjectPaused } from "./pause.ts";
 import { Journal } from "../store/journal.ts";
-import { resumeTicket } from "./runner.ts";
+import { FAILURE_RETRY_REASON, STALL_RESUME_REASON, resumeTicket } from "./runner.ts";
 
 const STALL_NUDGE = [
   "Your session was interrupted.",
   "Inspect the current state of the worktree (git status, git log) to see what has already been done, then continue the ticket.",
   "If you had already finished, produce your final structured result again.",
 ].join(" ");
+
+/**
+ * The opening message of a failure-retry resume (fleet#238): the failed run's
+ * own instructions again, so the review feedback or conflict it was resumed
+ * for still gets addressed. Falls back to the stall nudge when nothing was
+ * recorded (the failed run wasn't a resume).
+ */
+export function buildFailureRetryPrompt(resumePrompt: string | undefined): string {
+  if (!resumePrompt) return STALL_NUDGE;
+  return [
+    "Your previous attempt at the request below ended before it finished. Inspect the worktree (git status, git log) to see what has already been done, then carry it out and produce your final structured result.",
+    resumePrompt,
+  ].join("\n\n");
+}
 
 /**
  * Stalled tickets that should be auto-resumed for `project`: they have a session
@@ -87,9 +101,17 @@ export function recoverStalled(ctx: LoopContext): void {
       // unlike `cycle()`'s `paused` snapshot) so a shutdown requested
       // mid-cycle can't have this slip past `stopLiveSessions`'s sweep.
       if (ctx.isShuttingDown()) return;
-      log("loop", `${scope}: stalled — auto-resuming session ${record.sessionId} (once)`);
-      const updated = ctx.state.update(record.project, record.issueNumber, { autoResumed: true }) ?? record;
-      track(ctx, record.project, record.issueNumber, resumeTicket(ctx, project, updated, STALL_NUDGE, "stall"));
+      const retry = record.failureRetry === "pending";
+      log(
+        "loop",
+        retry
+          ? `${scope}: failed with an open PR — auto-resuming session ${record.sessionId} with its last instructions (once)`
+          : `${scope}: stalled — auto-resuming session ${record.sessionId} (once)`,
+      );
+      const updated =
+        ctx.state.update(record.project, record.issueNumber, { autoResumed: true, ...(retry ? { failureRetry: "used" as const } : {}) }) ?? record;
+      const message = retry ? buildFailureRetryPrompt(record.resumePrompt) : STALL_NUDGE;
+      track(ctx, record.project, record.issueNumber, resumeTicket(ctx, project, updated, message, retry ? FAILURE_RETRY_REASON : STALL_RESUME_REASON));
     }
   }
 }

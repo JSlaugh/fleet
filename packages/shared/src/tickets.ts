@@ -43,6 +43,22 @@ export interface TicketRecord {
   isPlan?: boolean;
   /** Set once this ticket has auto-retried on the elevated model after a failure — caps escalation to once, ever. */
   autoElevated?: boolean;
+  /**
+   * The opening message of the most recent purposeful resume (review
+   * feedback, conflict, operator reply) — not a stall nudge. Replayed by the
+   * failure-retry resume below so the retry redoes what the failed run was
+   * asked to do.
+   */
+  resumePrompt?: string;
+  /**
+   * Failure-retry state for a ticket that failed while it already had a PR
+   * (fleet#238): such a ticket can never be re-claimed, so instead of
+   * auto-elevation it is left `stalled` with `"pending"` and `recoverStalled`
+   * resumes it once with `resumePrompt`, flipping this to `"used"`. A failure
+   * while `"used"` goes to needs-input. Cleared when the ticket next reaches
+   * review, so each failure episode gets one retry.
+   */
+  failureRetry?: "pending" | "used";
   /** The epic issue number this ticket was filed under, parsed from its `Part-of: #<epic>` body line at claim time. */
   epicNumber?: number;
   /**

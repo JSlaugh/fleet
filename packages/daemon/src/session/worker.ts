@@ -455,6 +455,10 @@ export class WorkerSession {
    * up to `approvalPauseCapMs` per turn.
    */
   private readonly turnClock = new TurnClock();
+  /** True from `nextResult` starting until it returns a valid structured result — i.e. while the CLI may still be mid-turn. See `close()`. */
+  private turnOpen = false;
+  /** The model this session asked the SDK for (`opts.model ?? project.model`) — what a failed run "ran on" for the auto-elevation no-op check. */
+  readonly requestedModel?: string;
   sessionId?: string;
   costUsd = 0;
   /** `message.num_turns` off the most recent `result` message — 0 until the session ever produces one (e.g. a crash before the first turn completes). */
@@ -487,11 +491,12 @@ export class WorkerSession {
   ) {
     this.kind = opts.kind ?? "code";
     this.effort = opts.effort;
+    this.requestedModel = opts.model ?? opts.project.model;
     const q = query({
       prompt: this.input,
       options: {
         cwd: opts.worktreePath,
-        model: opts.model ?? opts.project.model,
+        model: this.requestedModel,
         effort: opts.effort,
         abortController: this.abortController,
         stderr: this.stderrCapture.append,
@@ -546,6 +551,7 @@ export class WorkerSession {
   }
 
   async nextResult(timeoutMs: number): Promise<TurnResult> {
+    this.turnOpen = true;
     this.turnClock.start(timeoutMs, () => this.abortController.abort(), this.opts.approvalPauseCapMs);
     try {
       for (;;) {
@@ -586,15 +592,31 @@ export class WorkerSession {
           return { kind: this.kind, errorSubtype: "environment_rejected", environmentError: rejection } as TurnResult;
         }
         if (message.type === "result") {
+          if (isStaleResult(message)) {
+            // A resumed CLI replays leftovers from the previous session (e.g.
+            // "Background … didn't finish" task notifications) and closes that
+            // replay with a 0-turn result before it ever reads our prompt
+            // (fleet#238). Taking it as the turn's answer would end the turn
+            // while the CLI goes on to do the real work unsupervised.
+            log("worker", `${this.opts.scope}: ignoring a 0-turn result with no structured output — waiting for the real one`);
+            this.opts.journal.append({ type: "fleet", event: "stale-result-ignored", durationMs: message.duration_ms });
+            continue;
+          }
           if (message.subtype === "success") {
             const structuredOutput = message.structured_output;
             if (this.kind === "plan") {
               const parsed = PlanResultSchema.safeParse(structuredOutput);
-              if (parsed.success) return { kind: "plan", result: normalizePlanResult(parsed.data) };
+              if (parsed.success) {
+                this.turnOpen = false;
+                return { kind: "plan", result: normalizePlanResult(parsed.data) };
+              }
               return { kind: "plan", errorSubtype: "invalid_structured_output", terminalReason: message.terminal_reason };
             }
             const parsed = WorkerResultSchema.safeParse(structuredOutput);
-            if (parsed.success) return { kind: "code", result: normalizeResult(parsed.data) };
+            if (parsed.success) {
+              this.turnOpen = false;
+              return { kind: "code", result: normalizeResult(parsed.data) };
+            }
             return { kind: "code", errorSubtype: "invalid_structured_output", terminalReason: message.terminal_reason };
           }
           this.journalStderrTail();
@@ -631,11 +653,41 @@ export class WorkerSession {
     this.opts.journal.append({ type: "fleet", event: "stderr-tail", text });
   }
 
+  /**
+   * Stops the CLI subprocess now. The supervisor calls this the moment it
+   * decides a turn failed: the CLI may still be mid-turn (fleet#238), and once
+   * fleet stops consuming the session nothing answers its tool calls the way a
+   * live worker expects — so it must not be left running.
+   */
+  abort(): void {
+    if (!this.abortController.signal.aborted) this.abortController.abort();
+  }
+
+  /**
+   * Ends the session. After a turn that ended on a valid structured result the
+   * CLI is idle, so closing its input lets it exit on its own (with a
+   * backstop). If the last turn ended any other way — an error, a timeout, a
+   * plan limit — the CLI may still be working, so it is aborted *before* the
+   * input closes: closing the input first is what turns every later tool call
+   * into a blanket denial.
+   */
   close(): void {
+    if (this.turnOpen) this.abort();
     this.input.close();
     const backstop = setTimeout(() => this.abortController.abort(), 10_000);
     backstop.unref?.();
   }
+}
+
+/**
+ * A `result` that can't be the answer to a prompt fleet sent: zero model turns
+ * and no structured output. The CLI emits one when a resumed session first
+ * replays leftovers from the previous run (fleet#238). Error-subtype results
+ * are never stale — those are real failures, whatever their turn count.
+ */
+export function isStaleResult(message: Extract<SDKMessage, { type: "result" }>): boolean {
+  if (message.subtype !== "success") return false;
+  return message.num_turns === 0 && (message.structured_output === undefined || message.structured_output === null);
 }
 
 /** Chars of an epic body quoted into a child's framing block — enough for context, capped so a huge epic body can't dominate the prompt. */

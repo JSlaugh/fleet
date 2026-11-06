@@ -51,6 +51,12 @@ export async function supervise(
       modelUsage: mergeModelUsage(base.modelUsage, session.modelUsage),
     });
 
+    // Every error turn ends fleet's supervision of this session, but the
+    // CLI may still be mid-turn (fleet#238). Stop it now — before any slow
+    // GitHub reporting — so nothing keeps running against a session whose
+    // results nobody reads and whose input is about to close.
+    if (turn.errorSubtype) session.abort();
+
     if (turn.errorSubtype === "plan_limit") {
       await handlePlanLimit(ctx, project, issue, turn.limitResetAt);
       return;
@@ -81,7 +87,7 @@ export async function supervise(
         if (parked === "closed") return;
         continue;
       }
-      await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns });
+      await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns, runModel: session.requestedModel });
       return;
     }
 
@@ -99,7 +105,7 @@ export async function supervise(
       if (parked === "closed") return;
       continue;
     }
-    await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns });
+    await finishFailed(ctx, project, issue, formatTurnError(turn), { turnCount: session.numTurns, runModel: session.requestedModel });
     return;
   }
 }
