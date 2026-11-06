@@ -18,7 +18,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   getPrState: vi.fn(),
   listFleetIssues: vi.fn(async () => []),
   markReady: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   updateIssueBody: vi.fn(async () => {}),
   upsertStatusComment: vi.fn(async () => {}),
@@ -80,7 +80,7 @@ beforeEach(() => {
   vi.mocked(worktreeMod.hasCommits).mockResolvedValue(true);
   vi.mocked(worktreeMod.pushBranch).mockResolvedValue(undefined);
   vi.mocked(github.createPullRequest).mockResolvedValue("https://github.com/acme/alpha/pull/7");
-  vi.mocked(github.swapLabel).mockResolvedValue(undefined);
+  vi.mocked(github.setStatusLabel).mockResolvedValue(undefined);
   vi.mocked(github.upsertStatusComment).mockResolvedValue(undefined);
   vi.mocked(github.getIssue).mockResolvedValue({ number: 7, title: "issue 7", body: "body", labels: [] });
   vi.mocked(github.findChildIssues).mockResolvedValue([]);
@@ -94,7 +94,7 @@ describe("finishCompleted — status comment error policy", () => {
 
     await internals.finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult);
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
     const updated = state.get("alpha", 7);
     expect(updated?.status).toBe("review");
     expect(updated?.prUrl).toBe("https://github.com/acme/alpha/pull/7");
@@ -106,7 +106,7 @@ describe("finishCompleted — status comment error policy", () => {
     await internals.finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult);
 
     expect(github.upsertStatusComment).toHaveBeenCalledOnce();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
     expect(state.get("alpha", 7)?.status).toBe("review");
   });
 });
@@ -126,7 +126,7 @@ describe("finishCompleted — post-completion pipeline failures", () => {
     expect((failure as Error).message).toContain("commits exist on `fleet/7`");
     expect((failure as Error).message).toContain("non-fast-forward");
     expect(github.createPullRequest).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("wraps a gh pr create failure in a PostCompletionError", async () => {
@@ -141,7 +141,7 @@ describe("finishCompleted — post-completion pipeline failures", () => {
 
     expect(failure).toBeInstanceOf(PostCompletionError);
     expect((failure as Error).message).toContain("something went wrong");
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("adopts the existing open PR when gh pr create reports one already exists for the branch", async () => {
@@ -154,11 +154,11 @@ describe("finishCompleted — post-completion pipeline failures", () => {
     await internals.finishCompleted(project, issue, "/tmp/wt/7", "fleet/7", "did the thing", completedResult);
 
     expect(state.get("alpha", 7)?.prUrl).toBe("https://github.com/acme/alpha/pull/9");
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
   });
 
   it("persists prUrl before the label swap, so a swap failure can't orphan the created PR", async () => {
-    vi.mocked(github.swapLabel).mockRejectedValue(new Error("gh: rate limited"));
+    vi.mocked(github.setStatusLabel).mockRejectedValue(new Error("gh: rate limited"));
     const { state, internals } = makeLoop(record());
 
     await internals
@@ -176,7 +176,7 @@ describe("finishBlocked — status comment error policy", () => {
 
     await internals.finishBlocked(project, issue, "need the API key", "summary");
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("needs-input");
   });
 });
@@ -386,7 +386,7 @@ describe("finishPlanned — epic linkage", () => {
 
     expect(github.createIssue).not.toHaveBeenCalled();
     expect(github.updateIssueBody).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
   });
 
   it("skips filing when Part-of children exist even though the Children stamp never landed", async () => {
@@ -410,7 +410,7 @@ describe("finishPlanned — epic linkage", () => {
 
     expect(github.createIssue).toHaveBeenCalledOnce();
     expect(github.updateIssueBody).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
   });
 
   it("stamps a Children task list onto the epic body once children are filed", async () => {
@@ -458,7 +458,7 @@ describe("finishPlanned — epic linkage", () => {
 
     await finishPlanned(ctx, project, planIssue, result);
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:review");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:review");
   });
 });
 
@@ -539,7 +539,7 @@ describe("Discord notifications", () => {
 
     await internals.finishBlocked(project, issue, "need the API key", "summary");
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("needs-input");
     // The webhook subscriber is fire-and-forget (`FleetEvents.emit` never awaits a
     // listener), so its rejection is caught on a later microtask than `finishBlocked`

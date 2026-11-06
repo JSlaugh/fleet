@@ -5,7 +5,7 @@ import {
   buildReviewFeedbackPrompt,
   getPrFeedback,
   getPrMergeable,
-  swapLabel,
+  setStatusLabel,
   type PrFeedback,
   type PrMergeable,
 } from "../github/github.ts";
@@ -115,7 +115,7 @@ export async function addressReviews(
     // synchronous code separates the check from `track()`.
     if (ctx.running.has(scope)) continue;
 
-    await swapLabel(project, record.issueNumber, FLEET_LABELS.review, FLEET_LABELS.inProgress);
+    await setStatusLabel(project, record.issueNumber, FLEET_LABELS.inProgress);
     if (ctx.running.has(scope)) continue;
 
     // Watermarks set only after the swap succeeds: a failed swap must retry

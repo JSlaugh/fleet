@@ -28,6 +28,7 @@ description: Orientation map for changing daemon behavior in packages/daemon/src
 | `loop/automerge.ts` | Auto-merging `fleet:review` PRs that are approved and green-checked, for opted-in projects |
 | `loop/epics.ts` | Closing an epic once all its filed children are closed (`epicCloseDecision`/`closeFinishedEpics`) |
 | `loop/heartbeat.ts` | Status-comment claim heartbeats + releasing stale claims from a dead daemon |
+| `loop/labelRepair.ts` | Boot-time normalization of issues carrying more than one fleet status label (`repairStatusLabels`, `resolveStatusLabelConflict`) |
 | `loop/digest.ts` | Periodic activity digest: compute, schedule, and emit `digest:ready` on `ctx.events` (delivered by `notify.ts`'s subscriber) |
 | `loop/postmortem.ts` | Failure post-mortem for status comments (journal tail + commit log summary) |
 | `session/review.ts` | The machine-review/plan-review reviewer session itself (prompt building, running it, verdict parsing) |
@@ -61,6 +62,7 @@ Each file tests exported functions imported from their real module (not `loop.ts
 - `loop.automerge.test.ts` — `pickAutoMergeCandidates`, `latestReviewByAuthor`, `isApprovedForMerge`, `checksAreGreen`, `isMergeReady`, `autoMergeReady` (automerge.ts)
 - `epics.test.ts` — `epicCloseDecision` + `closeFinishedEpics` (epics.ts)
 - `loop.heartbeat.test.ts` — `isClaimStale`, `heartbeatRefreshAgeMs`, `releaseStaleClaims`, `refreshOwnHeartbeats`, `refreshStalledHeartbeatsOnBoot` (heartbeat.ts)
+- `loop.statuslabels.test.ts` — the single-status-label invariant: `markWorking` (context.ts), `getBoard`'s running override (board.ts), `resolveStatusLabelConflict` + `repairStatusLabels` (labelRepair.ts)
 - `digest.test.ts` — `computeDigest`, `resolveDigestTime`, `shouldSendDigest`, `getDigest`, `checkDigestSchedule` (digest.ts)
 - `loop.postmortem.test.ts` — `buildFailurePostMortem` + `gatherFailurePostMortem` (postmortem.ts)
 - `loop.cleanup.test.ts` — `cleanupFinished` (board.ts): worktree/branch/state cleanup after merge+close

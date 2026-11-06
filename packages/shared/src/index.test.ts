@@ -21,14 +21,20 @@ describe("boardStatusFromLabels", () => {
     expect(boardStatusFromLabels(["fleet:in-progress"])).toBe("in-progress");
     expect(boardStatusFromLabels(["fleet:needs-input"])).toBe("needs-input");
     expect(boardStatusFromLabels(["fleet:review"])).toBe("review");
+    expect(boardStatusFromLabels(["fleet:backlog"])).toBe("backlog");
   });
 
   it("returns null when no board label is present", () => {
     expect(boardStatusFromLabels(["fleet:p1", "bug"])).toBeNull();
   });
 
-  it("prefers ready when multiple board labels are present", () => {
-    expect(boardStatusFromLabels(["fleet:review", "fleet:ready"])).toBe("ready");
+  it.each([
+    [["fleet:ready", "fleet:in-progress", "fleet:elevate"], "in-progress"],
+    [["fleet:needs-input", "fleet:review"], "needs-input"],
+    [["fleet:review", "fleet:ready"], "review"],
+    [["fleet:backlog", "fleet:ready"], "ready"],
+  ])("resolves conflicting status labels %j to the most advanced: %s", (labels, expected) => {
+    expect(boardStatusFromLabels(labels)).toBe(expected);
   });
 });
 

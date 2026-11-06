@@ -8,7 +8,7 @@ vi.mock("../github/github.ts", () => ({
   getPrOutcome: vi.fn(async () => undefined),
   getPrState: vi.fn(),
   listFleetIssues: vi.fn(async () => []),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
 }));

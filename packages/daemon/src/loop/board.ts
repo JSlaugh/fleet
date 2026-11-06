@@ -45,7 +45,14 @@ export function synthesizeDoneTickets(
     }));
 }
 
-/** The dashboard board: this cycle's polled tickets joined to their live records, plus the Done column. */
+/**
+ * The dashboard board: this cycle's polled tickets joined to their live records, plus the Done column.
+ *
+ * A ticket this daemon is actually running — in flight, holding a live
+ * session, or recorded `running` — shows In progress whatever its labels say:
+ * labels are polled once per cycle and can be stale or conflicting (fleet#239),
+ * and a running ticket must never look claimable on the board.
+ */
 export function getBoard(ctx: LoopContext): BoardTicket[] {
   const awaiting = new Map<string, string>();
   for (const a of ctx.approvals.list()) {
@@ -54,8 +61,16 @@ export function getBoard(ctx: LoopContext): BoardTicket[] {
     if (prior === undefined || a.createdAt < prior) awaiting.set(scope, a.createdAt);
   }
   const active = [...ctx.boardCache.values()].flat().map((t) => {
-    const since = awaiting.get(`${t.project}#${t.issueNumber}`);
-    return { ...t, record: ctx.state.get(t.project, t.issueNumber), ...(since ? { awaitingApprovalSince: since } : {}) };
+    const scope = key(t.project, t.issueNumber);
+    const since = awaiting.get(scope);
+    const record = ctx.state.get(t.project, t.issueNumber);
+    const running = ctx.running.has(scope) || ctx.live.has(scope) || record?.status === "running";
+    return {
+      ...t,
+      ...(running ? { status: "in-progress" as const } : {}),
+      record,
+      ...(since ? { awaitingApprovalSince: since } : {}),
+    };
   });
   return [...active, ...synthesizeDoneTickets(ctx.history.all(), ctx.config.projects)];
 }

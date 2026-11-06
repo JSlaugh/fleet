@@ -1,6 +1,7 @@
 import {
   ELEVATE_LABEL,
   FLEET_LABELS,
+  FLEET_STATUS_LABELS,
   PLAN_LABEL,
   PRIORITY_LABELS,
   boardStatusFromLabels,
@@ -8,6 +9,7 @@ import {
   profileNames,
   typeOf,
   type BoardTicket,
+  type FleetStatusLabel,
   type ProjectConfig,
   type TicketDiffFile,
 } from "@fleet/shared";
@@ -256,70 +258,57 @@ export function getPushCollaborators(project: ProjectConfig): Promise<Set<string
 }
 
 /**
- * Error policy: a label swap gates the state machine — the next poll cycle
- * decides what to do with a ticket by reading its label — so a failed swap
+ * The one way the daemon changes a ticket's fleet status label: a single
+ * `gh issue edit` that adds `status` and removes every *other* status label
+ * (`FLEET_STATUS_LABELS`), so an issue can never be left carrying two — the
+ * fleet#239 bug, where a resume added `fleet:in-progress` beside a
+ * `fleet:ready` it never knew was there. Removing a label the issue does not
+ * have is a no-op for `gh` (the labels exist in the repo — `init-labels`
+ * creates them), so callers never need to know the current label. Tier and
+ * priority labels are never touched; `extraAdd` adds more non-status labels
+ * in the same edit (auto-escalation's `fleet:elevate`).
+ *
+ * Error policy: the status label gates the state machine — the next poll
+ * cycle decides what to do with a ticket by reading it — so a failed edit
  * genuinely changes what should happen next. Callers let it throw rather than
  * swallow it into a ticket whose label and recorded status disagree.
- *
- * Add before remove, as two separate calls: a crash between them leaves the
- * issue with *both* fleet labels (visible on the board, fixable by a human)
- * instead of neither (invisible to every recovery path).
  */
-export async function swapLabel(project: ProjectConfig, issueNumber: number, from: string, to: string): Promise<void> {
-  await run("gh", [
-    "issue", "edit", String(issueNumber),
-    "--repo", project.githubRepo,
-    "--add-label", to,
-  ]);
-  await run("gh", [
-    "issue", "edit", String(issueNumber),
-    "--repo", project.githubRepo,
-    "--remove-label", from,
-  ]);
-}
-
-/** Drop one label from an issue. */
-export async function removeLabel(project: ProjectConfig, issueNumber: number, label: string): Promise<void> {
-  await run("gh", ["issue", "edit", String(issueNumber), "--repo", project.githubRepo, "--remove-label", label]);
-}
-
-/**
- * Move an issue from in-progress back to ready, tagged `fleet:elevate`, so the
- * next poll cycle re-claims it on the project's elevated model. Used for the
- * once-only auto-escalation retry after a non-elevated run fails.
- */
-export function escalateLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
-  return [
-    "issue", "edit", String(issueNumber),
-    "--repo", project.githubRepo,
-    "--remove-label", FLEET_LABELS.inProgress,
-    "--add-label", ELEVATE_LABEL,
-    "--add-label", FLEET_LABELS.ready,
-  ];
-}
-
-export async function escalateToElevated(project: ProjectConfig, issueNumber: number): Promise<void> {
-  await run("gh", escalateLabelArgs(project, issueNumber));
-}
-
-/**
- * Whatever fleet state label the issue currently carries, drop it and add
- * `fleet:ready`. Removing a label the issue does not have is a no-op for `gh`
- * (the labels themselves exist in the repo — `init-labels` creates them), which
- * is what lets an operator restart work from any state without reading the
- * issue's labels first.
- */
-export function readyLabelArgs(project: ProjectConfig, issueNumber: number): string[] {
+export function statusLabelArgs(
+  project: ProjectConfig,
+  issueNumber: number,
+  status: FleetStatusLabel,
+  extraAdd: readonly string[] = [],
+): string[] {
   const args = ["issue", "edit", String(issueNumber), "--repo", project.githubRepo];
-  for (const label of [FLEET_LABELS.backlog, FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review]) {
-    args.push("--remove-label", label);
+  for (const label of FLEET_STATUS_LABELS) {
+    if (label !== status) args.push("--remove-label", label);
   }
-  args.push("--add-label", FLEET_LABELS.ready);
+  args.push("--add-label", status);
+  for (const label of extraAdd) args.push("--add-label", label);
   return args;
 }
 
+export async function setStatusLabel(
+  project: ProjectConfig,
+  issueNumber: number,
+  status: FleetStatusLabel,
+  extraAdd: readonly string[] = [],
+): Promise<void> {
+  await run("gh", statusLabelArgs(project, issueNumber, status, extraAdd));
+}
+
+/**
+ * Move an issue back to ready, tagged `fleet:elevate`, so the next poll cycle
+ * re-claims it on the project's elevated model. Used for the once-only
+ * auto-escalation retry after a non-elevated run fails.
+ */
+export async function escalateToElevated(project: ProjectConfig, issueNumber: number): Promise<void> {
+  await setStatusLabel(project, issueNumber, FLEET_LABELS.ready, [ELEVATE_LABEL]);
+}
+
+/** Whatever fleet status label the issue currently carries, replace it with `fleet:ready`. */
 export async function markReady(project: ProjectConfig, issueNumber: number): Promise<void> {
-  await run("gh", readyLabelArgs(project, issueNumber));
+  await setStatusLabel(project, issueNumber, FLEET_LABELS.ready);
 }
 
 /**
@@ -428,7 +417,7 @@ async function patchHeartbeat(project: ProjectConfig, existing: RestComment): Pr
 
 /**
  * Error policy: the status comment only mirrors ticket state for humans on
- * GitHub — labels (via `swapLabel`) remain the source of truth the daemon
+ * GitHub — labels (via `setStatusLabel`) remain the source of truth the daemon
  * itself acts on. Callers treat a failure here as best-effort: log it and
  * continue, rather than letting a transient `gh` failure while posting a
  * comment escalate into a ticket reported as failed even though the actual

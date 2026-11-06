@@ -18,7 +18,7 @@ vi.mock("../github/github.ts", async (importOriginal) => ({
   getPrState: vi.fn(),
   listFleetIssues: vi.fn(async () => []),
   markReady: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
 }));
@@ -113,7 +113,7 @@ describe("finishFailed auto-escalation", () => {
     await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom");
 
     expect(github.escalateToElevated).toHaveBeenCalledWith(project, 7);
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
     expect(updated?.autoElevated).toBe(true);
     const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
@@ -126,7 +126,7 @@ describe("finishFailed auto-escalation", () => {
     await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom again");
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     expect(state.get("alpha", 7)?.status).toBe("failed");
   });
 
@@ -136,7 +136,7 @@ describe("finishFailed auto-escalation", () => {
     await internals.finishFailed(project, { number: 7, title: "issue 7" }, "boom");
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
   });
 
   it("behaves exactly as today when the project opts out of auto-escalation", async () => {
@@ -146,7 +146,7 @@ describe("finishFailed auto-escalation", () => {
     await internals.finishFailed(optedOut, { number: 7, title: "issue 7" }, "boom");
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(optedOut, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(optedOut, 7, "fleet:needs-input");
   });
 
   it("never auto-elevates a post-completion failure, even when the ticket is otherwise eligible", async () => {
@@ -160,7 +160,7 @@ describe("finishFailed auto-escalation", () => {
     );
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     const updated = state.get("alpha", 7);
     expect(updated?.autoElevated).toBeFalsy();
     const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
@@ -183,7 +183,7 @@ describe("finishFailed auto-escalation", () => {
     await internals.finishFailed(project, { number: 7, title: "issue 7" }, "expired credentials", { turnCount: 1 });
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     const updated = state.get("alpha", 7);
     expect(updated?.autoElevated).toBeFalsy();
     const commentBody = vi.mocked(github.upsertStatusComment).mock.calls[0]?.[2] ?? "";
@@ -234,7 +234,7 @@ describe("supervise — auth_failed routing", () => {
     await supervise(internals.ctx, project, issue, worktree, session, { costUsd: 0 });
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
     expect(updated?.status).toBe("stalled");
     expect(updated?.autoElevated).toBeFalsy();
@@ -269,7 +269,7 @@ describe("supervise — environment_rejected routing (fleet#234)", () => {
     const { state, internals } = await superviseRejectedTurn();
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
     expect(updated).toMatchObject({ status: "stalled", sessionId: "sess-7", worktreePath: "/tmp/wt/7", autoResumed: false, environmentRejected: true });
     expect(updated?.autoElevated).toBeFalsy();
@@ -317,7 +317,7 @@ describe("reportRunFailure — routing a PostCompletionError", () => {
     );
 
     expect(github.escalateToElevated).not.toHaveBeenCalled();
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress", "fleet:needs-input");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:needs-input");
     expect(state.get("alpha", 7)?.autoElevated).toBeFalsy();
   });
 

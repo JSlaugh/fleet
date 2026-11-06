@@ -9,7 +9,38 @@ export const FLEET_LABELS = {
   backlog: "fleet:backlog",
 } as const;
 
-export const PRIORITY_LABELS = ["fleet:p1", "fleet:p2", "fleet:p3"] as const;
+/** A fleet status label — exactly one of these should be on a fleet issue at a time. */
+export type FleetStatusLabel = (typeof FLEET_LABELS)[keyof typeof FLEET_LABELS];
+
+/**
+ * Every status label, most-advanced first: when an issue carries more than one
+ * (a crash mid-edit, or a human), the first one present here is the status
+ * that wins (`boardStatusFromLabels`). Order is in-progress > needs-input >
+ * review > ready > backlog — a conflicting `fleet:ready` must never hide a
+ * ticket that is actually running.
+ */
+export const FLEET_STATUS_LABELS: readonly FleetStatusLabel[] = [
+  FLEET_LABELS.inProgress,
+  FLEET_LABELS.needsInput,
+  FLEET_LABELS.review,
+  FLEET_LABELS.ready,
+  FLEET_LABELS.backlog,
+];
+
+/** The status labels `labels` carries, most-advanced first. */
+export function statusLabelsOf(labels: string[]): FleetStatusLabel[] {
+  return FLEET_STATUS_LABELS.filter((l) => labels.includes(l));
+}
+
+const BOARD_STATUS_BY_LABEL: Record<FleetStatusLabel, BoardStatus> = {
+  [FLEET_LABELS.inProgress]: "in-progress",
+  [FLEET_LABELS.needsInput]: "needs-input",
+  [FLEET_LABELS.review]: "review",
+  [FLEET_LABELS.ready]: "ready",
+  [FLEET_LABELS.backlog]: "backlog",
+};
+
+export const PRIORITY_LABELS =["fleet:p1", "fleet:p2", "fleet:p3"] as const;
 
 export const ELEVATE_LABEL = "fleet:elevate";
 
@@ -44,13 +75,10 @@ export const ALL_FLEET_LABELS: { name: string; color: string; description: strin
   { name: "fleet:p3", color: "fef2c0", description: "Low priority" },
 ];
 
+/** The board column for an issue's labels; conflicting status labels resolve to the most advanced (see `FLEET_STATUS_LABELS`). */
 export function boardStatusFromLabels(labels: string[]): BoardStatus | null {
-  if (labels.includes(FLEET_LABELS.ready)) return "ready";
-  if (labels.includes(FLEET_LABELS.inProgress)) return "in-progress";
-  if (labels.includes(FLEET_LABELS.needsInput)) return "needs-input";
-  if (labels.includes(FLEET_LABELS.review)) return "review";
-  if (labels.includes(FLEET_LABELS.backlog)) return "backlog";
-  return null;
+  const [winner] = statusLabelsOf(labels);
+  return winner ? BOARD_STATUS_BY_LABEL[winner] : null;
 }
 
 export function priorityOf(labels: string[]): string | null {

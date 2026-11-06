@@ -15,7 +15,7 @@ vi.mock("../github/github.ts", () => ({
   listFleetIssues: vi.fn(async () => []),
   listIssueStates: vi.fn(async () => ({ open: new Set(), all: new Set() })),
   markReady: vi.fn(async () => {}),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
   toBoardTicket: vi.fn(),
   upsertStatusComment: vi.fn(async () => {}),
 }));
@@ -89,7 +89,7 @@ describe("handlePlanLimit", () => {
 
     await internals.handlePlanLimit(project, { number: 7, title: "issue 7" }, "2026-01-01T00:00:00.000Z");
 
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
     expect(updated?.status).toBe("stalled");
     expect(updated?.sessionId).toBe("sess-7");
@@ -180,7 +180,7 @@ describe("handleAuthFailure", () => {
 
     await handleAuthFailure(ctx, project, { number: 7, title: "issue 7" });
 
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
     expect(github.escalateToElevated).not.toHaveBeenCalled();
     const updated = state.get("alpha", 7);
     expect(updated?.status).toBe("stalled");

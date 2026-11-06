@@ -9,7 +9,7 @@ vi.mock("../github/github.ts", async (importActual) => ({
   ...(await importActual<typeof import("../github/github.ts")>()),
   getPrFeedback: vi.fn(),
   getPrMergeable: vi.fn(),
-  swapLabel: vi.fn(async () => {}),
+  setStatusLabel: vi.fn(async () => {}),
 }));
 
 vi.mock("./runner.ts", () => ({
@@ -57,7 +57,7 @@ const openIssues = new Set([7]);
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(github.getPrFeedback).mockResolvedValue(noFeedback);
-  vi.mocked(github.swapLabel).mockResolvedValue(undefined);
+  vi.mocked(github.setStatusLabel).mockResolvedValue(undefined);
 });
 
 describe("addressReviews — conflict detection", () => {
@@ -67,7 +67,7 @@ describe("addressReviews — conflict detection", () => {
 
     await addressReviews(ctx, project, openIssues);
 
-    expect(github.swapLabel).toHaveBeenCalledWith(project, 7, "fleet:review", "fleet:in-progress");
+    expect(github.setStatusLabel).toHaveBeenCalledWith(project, 7, "fleet:in-progress");
     expect(runner.resumeTicket).toHaveBeenCalledOnce();
     const call = vi.mocked(runner.resumeTicket).mock.calls[0];
     expect(call?.[3] as string).toContain("Merge conflict");
@@ -108,7 +108,7 @@ describe("addressReviews — conflict detection", () => {
   it("does not advance the feedback/conflict watermarks when the label swap fails — the feedback must retry next cycle", async () => {
     vi.mocked(github.getPrMergeable).mockResolvedValue("CONFLICTING");
     vi.mocked(github.getPrFeedback).mockResolvedValue(feedback);
-    vi.mocked(github.swapLabel).mockRejectedValue(new Error("gh: rate limited"));
+    vi.mocked(github.setStatusLabel).mockRejectedValue(new Error("gh: rate limited"));
     const { ctx, state } = makeCtx(record());
 
     await addressReviews(ctx, project, openIssues).catch(() => undefined);
@@ -169,7 +169,7 @@ describe("addressReviews — conflict detection", () => {
     await addressReviews(ctx, project, openIssues);
 
     expect(runner.resumeTicket).not.toHaveBeenCalled();
-    expect(github.swapLabel).not.toHaveBeenCalled();
+    expect(github.setStatusLabel).not.toHaveBeenCalled();
   });
 
   it("falls back to UNKNOWN and does not resume when fetching mergeable state throws", async () => {

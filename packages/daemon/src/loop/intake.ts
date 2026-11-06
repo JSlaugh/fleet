@@ -1,6 +1,6 @@
 import { FLEET_LABELS, lintIntakeBody, PLAN_LABEL, SECTION_LABELS, type ProjectConfig } from "@fleet/shared";
 import { key, type LoopContext } from "./context.ts";
-import { swapLabel, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
+import { setStatusLabel, upsertStatusComment, type ReadyIssue } from "../github/github.ts";
 import { log, logError } from "../log.ts";
 
 export { lintIntakeBody, SECTION_LABELS };
@@ -47,7 +47,7 @@ export async function applyIntakeLint(ctx: LoopContext, project: ProjectConfig, 
     } catch (err) {
       logError("loop", `${scope}: could not post the intake-lint status comment`, err);
     }
-    await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.needsInput);
+    await setStatusLabel(project, issue.number, FLEET_LABELS.needsInput);
     log("loop", `${scope}: intake lint failed — missing ${missingList} — moved to fleet:needs-input`);
   }
   return passing;

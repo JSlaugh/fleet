@@ -31,8 +31,7 @@ import {
   parsePartOf,
   projectUrl,
   removeAssignee,
-  removeLabel,
-  swapLabel,
+  setStatusLabel,
   toBoardTicket,
   type ReadyIssue,
 } from "../github/github.ts";
@@ -67,8 +66,12 @@ async function fetchEpicContext(project: ProjectConfig, issue: ReadyIssue): Prom
 /** Fleet status labels that mean an issue has already moved past `fleet:ready`. */
 const POST_READY_STATUS_LABELS = [FLEET_LABELS.inProgress, FLEET_LABELS.needsInput, FLEET_LABELS.review];
 
-/** `TicketRecord` statuses that mean the daemon already knows this ticket is past ready, even if labels look clean. */
-const POST_READY_RECORD_STATUSES = new Set<TicketRecord["status"]>(["review", "needs-input"]);
+/**
+ * `TicketRecord` statuses that mean the daemon already knows this ticket is
+ * past ready, even if labels look clean. `running` is here so a stale
+ * `fleet:ready` on a running ticket (fleet#239) can never start a second run.
+ */
+const POST_READY_RECORD_STATUSES = new Set<TicketRecord["status"]>(["running", "review", "needs-input"]);
 
 /**
  * The `fleet:ready` issues that are actually claimable this cycle: not already
@@ -79,6 +82,10 @@ const POST_READY_RECORD_STATUSES = new Set<TicketRecord["status"]>(["review", "n
  * human), and with every `Depends-on` reference satisfied (closed, or
  * pointing at an issue number this repo has never had). Preserves the input
  * order, which callers sort by priority-then-number before this filter runs.
+ *
+ * A label or record conflict is logged once per issue while it persists
+ * (`conflictsLogged`, `LoopContext`-owned so it survives across cycles), not
+ * once per poll; it logs again if the conflict clears and later recurs.
  */
 export function selectEligibleReady(
   issues: ReadyIssue[],
@@ -89,40 +96,40 @@ export function selectEligibleReady(
     getRecord: (issueNumber: number) => TicketRecord | undefined;
     projectName: string;
     myLogin: string;
+    conflictsLogged?: Set<string>;
   },
 ): ReadyIssue[] {
+  const logConflictOnce = (scope: string, line: string) => {
+    if (opts.conflictsLogged?.has(scope)) return;
+    opts.conflictsLogged?.add(scope);
+    log("loop", `${scope}: ${line}`);
+  };
   return issues.filter((issue) => {
     if (!issue.labels.includes(FLEET_LABELS.ready)) return false;
     if (opts.isRunning(issue.number)) return false;
+    const scope = key(opts.projectName, issue.number);
 
     const others = (issue.assignees ?? []).filter((login) => login !== opts.myLogin);
     if (others.length > 0) {
-      log(
-        "loop",
-        `${key(opts.projectName, issue.number)}: assigned to ${others.join(", ")}, not this daemon — skipping claim`,
-      );
+      log("loop", `${scope}: assigned to ${others.join(", ")}, not this daemon — skipping claim`);
       return false;
     }
 
     const conflicting = POST_READY_STATUS_LABELS.filter((label) => issue.labels.includes(label));
     if (conflicting.length > 0) {
-      log(
-        "loop",
-        `${key(opts.projectName, issue.number)}: fleet:ready alongside ${conflicting.join(", ")} — inconsistent labels, skipping claim`,
-      );
+      logConflictOnce(scope, `fleet:ready alongside ${conflicting.join(", ")} — inconsistent labels, skipping claim`);
       return false;
     }
 
     const record = opts.getRecord(issue.number);
     if (record && (POST_READY_RECORD_STATUSES.has(record.status) || record.prUrl)) {
-      log(
-        "loop",
-        `${key(opts.projectName, issue.number)}: record already past ready (status=${record.status}${
-          record.prUrl ? `, prUrl=${record.prUrl}` : ""
-        }) — skipping claim`,
+      logConflictOnce(
+        scope,
+        `record already past ready (status=${record.status}${record.prUrl ? `, prUrl=${record.prUrl}` : ""}) — skipping claim`,
       );
       return false;
     }
+    opts.conflictsLogged?.delete(scope);
 
     const { blockedBy } = dependencyStatus(parseDependsOn(issue.body), opts.openIssueNumbers, opts.allIssueNumbers);
     return blockedBy.length === 0;
@@ -201,7 +208,7 @@ export async function healStaleReadyLabels(ctx: LoopContext, project: ProjectCon
       "loop",
       `${key(project.name, issue.number)}: removing stale fleet:ready label (already in review, PR ${record.prUrl})`,
     );
-    await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.review);
+    await setStatusLabel(project, issue.number, FLEET_LABELS.review);
   }
 }
 
@@ -343,6 +350,7 @@ export async function cycleProject(ctx: LoopContext, project: ProjectConfig): Pr
     getRecord: (issueNumber) => ctx.state.get(project.name, issueNumber),
     projectName: project.name,
     myLogin,
+    conflictsLogged: ctx.claimConflictsLogged,
   });
   ready = await applyContributorFloor(ctx, project, ready);
   ready = await applyIntakeLint(ctx, project, ready);
@@ -422,14 +430,9 @@ export async function processTicket(ctx: LoopContext, project: ProjectConfig, is
   log("loop", `claiming ${scope}: ${issue.title}`);
 
   try {
-    await swapLabel(project, issue.number, FLEET_LABELS.ready, FLEET_LABELS.inProgress);
-    // A backlog ticket released by hand on GitHub (adding `fleet:ready` without
-    // removing `fleet:backlog`) would otherwise carry the stale label forever.
-    if (issue.labels.includes(FLEET_LABELS.backlog)) {
-      await removeLabel(project, issue.number, FLEET_LABELS.backlog).catch((err) =>
-        logError("loop", `${scope}: could not remove stale ${FLEET_LABELS.backlog}`, err),
-      );
-    }
+    // Replaces every other status label in one edit — including a stale
+    // `fleet:backlog` left on a ticket released by hand on GitHub.
+    await setStatusLabel(project, issue.number, FLEET_LABELS.inProgress);
 
     const myLogin = await getAuthenticatedLogin();
     await addAssignee(project, issue.number, myLogin);
